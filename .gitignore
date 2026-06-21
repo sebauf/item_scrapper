@@ -3,9 +3,6 @@ node_modules/
 .venv/
 __pycache__/
 
-# Trained ML models
-pipeline/models/*.joblib
-
 # Build artifacts
 dist/
 .next/

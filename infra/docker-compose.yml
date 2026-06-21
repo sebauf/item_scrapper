@@ -117,7 +117,3 @@ networks:
 volumes:
   mongodb_data:
   airflow_postgres_data:
-  # Shared between the train/score DockerOperator tasks so the trained model
-  # survives independently of either container's lifetime — lets `score` be
-  # retried alone, without re-running `train`.
-  pipeline_models:
