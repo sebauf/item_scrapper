@@ -21,6 +21,8 @@ export interface Product {
   keyword: string | null;
   scrapedAt: string;
   dealScore?: number;
+  predictedPrice?: number;
+  trendDirection?: 'down' | 'up' | 'stable';
 }
 
 export interface KeywordSummary {

@@ -1,10 +1,8 @@
-"""Daily pipeline: scrape Amazon -> refine into price_history -> train the
-deal-scoring model -> score every product's current price.
+"""Daily pipeline: scrape Amazon -> refine into price_history -> score every
+product's current price against its own price history.
 
 Each step runs in its own ephemeral container, reusing the images already
-built by CI (.github/workflows/scrapper.yml and pipeline.yml). `train` and
-`score` share a volume so that a failed `score` run can be retried on its
-own, without re-training.
+built by CI (.github/workflows/scrapper.yml and pipeline.yml).
 
 Two execution backends are supported, picked at import time via the
 PIPELINE_EXECUTOR env var:
@@ -24,7 +22,6 @@ REGISTRY = os.environ.get("IMAGE_REGISTRY", "ghcr.io/YOUR_GITHUB_USERNAME/item_s
 MONGODB_URI = os.environ.get("MONGODB_URI", "")
 NAMESPACE = os.environ.get("AIRFLOW_K8S_NAMESPACE", "price-tracker")
 SECRET_NAME = os.environ.get("PIPELINE_SECRET_NAME", "price-tracker-secrets")
-MODEL_VOLUME_NAME = os.environ.get("PIPELINE_MODEL_VOLUME", "pipeline_models")
 
 default_args = {
     "owner": "airflow",
@@ -34,11 +31,9 @@ default_args = {
 }
 
 
-def _build_docker_task(task_id: str, image: str, command: list[str] | None, with_model_volume: bool):
-    from docker.types import Mount
+def _build_docker_task(task_id: str, image: str, command: list[str] | None):
     from airflow.providers.docker.operators.docker import DockerOperator
 
-    mounts = [Mount(source=MODEL_VOLUME_NAME, target="/app/models", type="volume")] if with_model_volume else []
     return DockerOperator(
         task_id=task_id,
         image=image,
@@ -47,21 +42,13 @@ def _build_docker_task(task_id: str, image: str, command: list[str] | None, with
         network_mode="item_scrapper_net",
         auto_remove="success",
         mount_tmp_dir=False,
-        mounts=mounts,
         environment={"MONGODB_URI": MONGODB_URI},
     )
 
 
-def _build_k8s_task(task_id: str, image: str, command: list[str] | None, with_model_volume: bool):
+def _build_k8s_task(task_id: str, image: str, command: list[str] | None):
     from kubernetes.client import models as k8s
     from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-
-    volumes, volume_mounts = [], []
-    if with_model_volume:
-        volumes = [k8s.V1Volume(name="models", persistent_volume_claim=k8s.V1PersistentVolumeClaimVolumeSource(
-            claim_name=MODEL_VOLUME_NAME,
-        ))]
-        volume_mounts = [k8s.V1VolumeMount(name="models", mount_path="/app/models")]
 
     return KubernetesPodOperator(
         task_id=task_id,
@@ -71,28 +58,26 @@ def _build_k8s_task(task_id: str, image: str, command: list[str] | None, with_mo
         cmds=command if command else None,
         env_from=[k8s.V1EnvFromSource(secret_ref=k8s.V1SecretEnvSource(name=SECRET_NAME))],
         image_pull_secrets=[k8s.V1LocalObjectReference(name="ghcr-pull-secret")],
-        volumes=volumes,
-        volume_mounts=volume_mounts,
         is_delete_operator_pod=True,
         get_logs=True,
         in_cluster=True,
     )
 
 
-def _build_task(task_id: str, image: str, command: list[str] | None = None, with_model_volume: bool = False):
+def _build_task(task_id: str, image: str, command: list[str] | None = None):
     if EXECUTOR == "kubernetes":
-        return _build_k8s_task(task_id, image, command, with_model_volume)
-    return _build_docker_task(task_id, image, command, with_model_volume)
+        return _build_k8s_task(task_id, image, command)
+    return _build_docker_task(task_id, image, command)
 
 
 with DAG(
     dag_id="price_pipeline_dag",
-    description="Scrape -> refine -> train -> score the deal-tracking pipeline",
+    description="Scrape -> refine -> score the deal-tracking pipeline",
     default_args=default_args,
     schedule="0 6 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["scrapper", "pipeline", "ml"],
+    tags=["scrapper", "pipeline"],
 ) as dag:
     scrape = _build_task("scrape", image=f"{REGISTRY}-scrapper:main")
 
@@ -100,18 +85,8 @@ with DAG(
         "refine", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.refine.build_price_history"]
     )
 
-    train = _build_task(
-        "train",
-        image=f"{REGISTRY}-pipeline:main",
-        command=["python", "-m", "src.scoring.train"],
-        with_model_volume=True,
-    )
-
     score = _build_task(
-        "score",
-        image=f"{REGISTRY}-pipeline:main",
-        command=["python", "-m", "src.scoring.score"],
-        with_model_volume=True,
+        "score", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.scoring.score"]
     )
 
-    scrape >> refine >> train >> score
+    scrape >> refine >> score

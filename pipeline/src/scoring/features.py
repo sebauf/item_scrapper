@@ -1,28 +1,15 @@
-"""Feature engineering for the price-prediction model.
+"""Per-product price history rows, used to compare a product's current
+price against its own past prices (never against other products).
 
-Each row corresponds to one (url, day) price observation. Every feature is
-computed strictly from *prior* days of that product's history, so the model
-never sees the day's own price as an input — it has to predict it from
-context (category, discount info, and how the price has moved before).
+Each row corresponds to one (url, day) price observation. `mean_price_30d`
+and `n_observations` are computed strictly from *prior* days of that same
+product's history, so they never include the day's own price.
 """
 from typing import Any
 
 import pandas as pd
 
-FEATURE_COLUMNS = [
-    "shop",
-    "keyword",
-    "unit_price_amount",
-    "crossed_out_price_amount",
-    "mean_price_7d",
-    "mean_price_30d",
-    "min_price_30d",
-    "max_price_30d",
-    "n_observations",
-    "days_since_first_seen",
-    "day_of_week",
-]
-TARGET_COLUMN = "price_amount"
+PRICE_COLUMN = "price_amount"
 
 
 def _amount(value: dict[str, Any] | None) -> float | None:
@@ -34,7 +21,6 @@ def extract_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
     if not history:
         return []
 
-    first_day = history[0]["day"]
     prior: list[tuple[Any, float | None]] = []
     rows = []
 
@@ -43,28 +29,17 @@ def extract_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
         price = snapshot.get("price")
         price_amount = _amount(price)
 
-        prior_7d = [amt for d, amt in prior if amt is not None and (day - d).days <= 7]
         prior_30d = [amt for d, amt in prior if amt is not None and (day - d).days <= 30]
 
         if price_amount is not None:
-            unit_price = snapshot.get("unitPrice")
             rows.append(
                 {
                     "url": doc["_id"],
                     "day": day,
-                    "shop": doc.get("shop") or "unknown",
-                    "keyword": doc.get("keyword") or "unknown",
-                    "unit_price_amount": unit_price["amount"] if unit_price else None,
-                    "crossed_out_price_amount": _amount(snapshot.get("crossedOutPrice")),
-                    "mean_price_7d": sum(prior_7d) / len(prior_7d) if prior_7d else None,
                     "mean_price_30d": sum(prior_30d) / len(prior_30d) if prior_30d else None,
-                    "min_price_30d": min(prior_30d) if prior_30d else None,
-                    "max_price_30d": max(prior_30d) if prior_30d else None,
                     "n_observations": len(prior),
-                    "days_since_first_seen": (day - first_day).days,
-                    "day_of_week": day.weekday(),
                     "currency": price["currency"],
-                    TARGET_COLUMN: price_amount,
+                    PRICE_COLUMN: price_amount,
                 }
             )
 

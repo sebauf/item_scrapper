@@ -15,7 +15,7 @@ async function getProducts(keyword: string): Promise<Product[]> {
       { $sort: { day: -1 } },
       { $group: { _id: '$url', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
-      { $match: { title: { $ne: '' } } },
+      { $match: { title: { $ne: '' }, price: { $ne: null } } },
       { $sort: { 'price.amount': 1 } },
     ])
     .toArray();
@@ -27,12 +27,25 @@ async function getProducts(keyword: string): Promise<Product[]> {
   })) as Product[];
 
   const scores = await db
-    .collection<{ _id: string; score: number }>('deal_scores')
+    .collection<{
+      _id: string;
+      score: number;
+      predictedPrice: number;
+      trendDirection?: 'down' | 'up' | 'stable';
+    }>('deal_scores')
     .find({ _id: { $in: products.map((p) => p.url) } })
     .toArray();
-  const scoreByUrl = new Map(scores.map((s) => [s._id, s.score]));
+  const scoreByUrl = new Map(scores.map((s) => [s._id, s]));
 
-  return products.map((p) => ({ ...p, dealScore: scoreByUrl.get(p.url) }));
+  return products.map((p) => {
+    const score = scoreByUrl.get(p.url);
+    return {
+      ...p,
+      dealScore: score?.score,
+      predictedPrice: score?.predictedPrice,
+      trendDirection: score?.trendDirection,
+    };
+  });
 }
 
 function formatPrice(amount: number, currency: string): string {
@@ -91,9 +104,24 @@ function PriceBlock({ product }: { product: Product }) {
         </p>
       )}
       {deliveryDate && <p className="text-xs text-gray-400 mt-0.5">Livraison : {deliveryDate}</p>}
+      {product.predictedPrice !== undefined && price && (
+        <p className="text-xs text-gray-400 mt-0.5">
+          Prix attendu : {formatPrice(product.predictedPrice, price.currency)}
+        </p>
+      )}
       {product.dealScore !== undefined && product.dealScore >= 10 && (
         <p className="text-xs font-semibold text-blue-700 bg-blue-50 inline-block px-1.5 py-0.5 rounded mt-1">
           Bonne affaire (-{Math.round(product.dealScore)}% vs prix attendu)
+        </p>
+      )}
+      {product.trendDirection === 'down' && (
+        <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 inline-block px-1.5 py-0.5 rounded mt-1">
+          ↓ Tendance à la baisse
+        </p>
+      )}
+      {product.trendDirection === 'up' && (
+        <p className="text-xs font-semibold text-orange-700 bg-orange-50 inline-block px-1.5 py-0.5 rounded mt-1">
+          ↑ Tendance à la hausse
         </p>
       )}
     </div>

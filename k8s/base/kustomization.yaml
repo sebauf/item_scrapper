@@ -7,7 +7,6 @@ resources:
   - frontend-service.yaml
   - ingress.yaml
   - postgres.yaml
-  - pipeline-models-pvc.yaml
   - airflow-rbac.yaml
   - airflow-init-job.yaml
   - airflow-webserver.yaml

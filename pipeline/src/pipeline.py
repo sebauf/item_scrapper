@@ -1,5 +1,5 @@
 """Orchestrates the full pipeline: refine raw scrapes into price history,
-retrain the deal-scoring model, then score every product's current price.
+then score every product's current price against its own history.
 
 Run manually after a scrapper run:
 
@@ -8,10 +8,9 @@ Run manually after a scrapper run:
 """
 from pymongo import MongoClient
 
-from src.config import DB_NAME, MODEL_PATH, MONGODB_URI
+from src.config import DB_NAME, MONGODB_URI
 from src.refine.build_price_history import build_price_history
 from src.scoring.score import score
-from src.scoring.train import train
 
 
 def run() -> None:
@@ -21,8 +20,7 @@ def run() -> None:
     refined = build_price_history(db)
     print(f"price_history: {refined} products refreshed")
 
-    train(db, MODEL_PATH)
-    scored = score(db, MODEL_PATH)
+    scored = score(db)
     print(f"deal_scores: {scored} products scored")
 
 
