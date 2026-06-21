@@ -54,8 +54,10 @@ interne `mongodb:27017`.
 ## Pré-requis
 
 - Un cluster Kubernetes accessible (`kubectl` configuré avec le bon contexte)
-- Un Ingress Controller installé (ex. `ingress-nginx`) — sinon `ingress.yaml`
-  n'aura aucun effet
+- Un Ingress Controller installé — `ingress.yaml` cible `ingressClassName: traefik`
+  (embarqué par défaut avec k3s) ; si ton cluster n'a pas Traefik, adapte ce
+  champ à ton Ingress Controller (ex. `nginx`), sinon `ingress.yaml` n'aura
+  aucun effet
 - `kustomize` (intégré à `kubectl` depuis la 1.14, `kubectl apply -k` suffit)
 - Les images GHCR poussées au moins une fois par les 4 workflows CI ci-dessus
 

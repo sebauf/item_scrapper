@@ -1,4 +1,4 @@
-# Nécessite un Ingress Controller (ex: ingress-nginx).
+# Nécessite un Ingress Controller (Traefik, embarqué par défaut avec k3s).
 # Remplacer REPLACE_DOMAIN.example.com par le vrai domaine.
 # Pour TLS avec cert-manager, décommenter la section tls et l'annotation.
 apiVersion: networking.k8s.io/v1
@@ -6,11 +6,10 @@ kind: Ingress
 metadata:
   name: price-tracker-frontend
   namespace: price-tracker
-  annotations:
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
-    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  # annotations:
+  #   cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
-  ingressClassName: nginx
+  ingressClassName: traefik
   rules:
     - host: REPLACE_DOMAIN.example.com
       http:
