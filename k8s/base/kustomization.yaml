@@ -1,0 +1,29 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - frontend-deployment.yaml
+  - frontend-service.yaml
+  - ingress.yaml
+  - postgres.yaml
+  - pipeline-models-pvc.yaml
+  - airflow-rbac.yaml
+  - airflow-init-job.yaml
+  - airflow-webserver.yaml
+  - airflow-scheduler.yaml
+
+configMapGenerator:
+  - name: price-tracker-config
+    envs:
+      - configmap.env
+
+secretGenerator:
+  # secrets.env n'est jamais commité — copier secrets.env.example -> secrets.env
+  # et renseigner les vraies valeurs avant `kubectl apply -k`.
+  - name: price-tracker-secrets
+    envs:
+      - secrets.env
+
+generatorOptions:
+  disableNameSuffixHash: true

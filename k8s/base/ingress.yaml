@@ -1,5 +1,5 @@
 # Nécessite un Ingress Controller (ex: ingress-nginx).
-# Remplacer prices.example.com par le vrai domaine.
+# Remplacer REPLACE_DOMAIN.example.com par le vrai domaine.
 # Pour TLS avec cert-manager, décommenter la section tls et l'annotation.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -12,7 +12,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: prices.example.com
+    - host: REPLACE_DOMAIN.example.com
       http:
         paths:
           - path: /
@@ -24,5 +24,5 @@ spec:
                   number: 80
   # tls:
   #   - hosts:
-  #       - prices.example.com
+  #       - REPLACE_DOMAIN.example.com
   #     secretName: price-tracker-frontend-tls

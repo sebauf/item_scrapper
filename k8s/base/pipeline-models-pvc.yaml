@@ -1,0 +1,13 @@
+# Partagé entre les tasks `train` et `score` du DAG (KubernetesPodOperator),
+# pour que `score` puisse être rejoué seul sans relancer `train`.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pipeline-models
+  namespace: price-tracker
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

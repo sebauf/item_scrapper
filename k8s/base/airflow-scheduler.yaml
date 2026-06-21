@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow-scheduler
+  namespace: price-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airflow-scheduler
+  template:
+    metadata:
+      labels:
+        app: airflow-scheduler
+    spec:
+      # Doit pouvoir créer/surveiller des Pods (KubernetesPodOperator) :
+      # cf. airflow-rbac.yaml.
+      serviceAccountName: airflow-scheduler
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: scheduler
+          image: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-airflow:main
+          imagePullPolicy: Always
+          command: ["airflow", "scheduler"]
+          envFrom:
+            - configMapRef:
+                name: price-tracker-config
+          env:
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: LocalExecutor
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "false"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_SQL_ALCHEMY_CONN
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_FERNET_KEY
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: MONGODB_URI
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"

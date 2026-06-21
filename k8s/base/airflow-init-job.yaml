@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: airflow-init
+  namespace: price-tracker
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: airflow-init
+          # Remplacer REPLACE_GITHUB_OWNER (cf. overlays/prod) — image construite
+          # par .github/workflows/airflow.yml
+          image: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-airflow:main
+          imagePullPolicy: Always
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              airflow db migrate
+              airflow users create \
+                --username "$AIRFLOW_ADMIN_USERNAME" \
+                --password "$AIRFLOW_ADMIN_PASSWORD" \
+                --firstname Admin \
+                --lastname Admin \
+                --role Admin \
+                --email admin@example.com || true
+          envFrom:
+            - configMapRef:
+                name: price-tracker-config
+          env:
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: LocalExecutor
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "false"
+            - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_SQL_ALCHEMY_CONN
+            - name: AIRFLOW__CORE__FERNET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_FERNET_KEY
+            - name: AIRFLOW_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_ADMIN_USERNAME
+            - name: AIRFLOW_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_ADMIN_PASSWORD

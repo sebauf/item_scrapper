@@ -13,10 +13,14 @@ spec:
       labels:
         app: price-tracker-frontend
     spec:
+      # Requis seulement si les packages GHCR sont privés — voir k8s/README.md.
+      imagePullSecrets:
+        - name: ghcr-pull-secret
       containers:
         - name: frontend
-          # Remplacer YOUR_GITHUB_USERNAME par le nom d'utilisateur GitHub
-          image: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-frontend:main
+          # Owner/tag réécrits par l'overlay via le transformer `images:`
+          # (cf. overlays/prod/kustomization.yaml) — ne pas éditer à la main.
+          image: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-frontend:main
           imagePullPolicy: Always
           ports:
             - containerPort: 3000

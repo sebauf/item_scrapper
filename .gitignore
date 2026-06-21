@@ -1,15 +1,22 @@
 # Dépendances
 node_modules/
+.venv/
+__pycache__/
+
+# Trained ML models
+pipeline/models/*.joblib
 
 # Build artifacts
 dist/
 .next/
+*.tsbuildinfo
 
 # Env — ne jamais committer de vraies valeurs
 .env
 .env.local
 .env.production.local
 .env.development.local
+k8s/**/secrets.env
 
 # Crawlee storage (cache, sessions, request queues)
 storage/
