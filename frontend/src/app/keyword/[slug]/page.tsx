@@ -26,12 +26,77 @@ async function getProducts(keyword: string): Promise<Product[]> {
   })) as Product[];
 }
 
-function formatPrice(amount: number, currency: string) {
+function formatPrice(amount: number, currency: string): string {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(amount);
 }
 
-function discountPct(price: number, crossed: number) {
-  return Math.round((1 - price / crossed) * 100);
+function discountPercentage(price: number, crossedOutPrice: number): number {
+  return Math.round((1 - price / crossedOutPrice) * 100);
+}
+
+function ProductImage({ src, alt }: { src: string; alt: string }) {
+  return (
+    <div className="relative h-48 bg-gray-50">
+      <Image
+        src={src}
+        alt={alt}
+        fill
+        className="object-contain p-2"
+        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+      />
+    </div>
+  );
+}
+
+function PriceBlock({ product }: { product: Product }) {
+  const { price, crossedOutPrice, unitPrice, deliveryDate } = product;
+
+  return (
+    <div className="mt-auto">
+      <div className="flex items-baseline gap-2 flex-wrap">
+        {price && (
+          <span className="text-lg font-bold text-gray-900">
+            {formatPrice(price.amount, price.currency)}
+          </span>
+        )}
+        {crossedOutPrice && (
+          <>
+            <span className="text-sm text-gray-400 line-through">
+              {formatPrice(crossedOutPrice.amount, crossedOutPrice.currency)}
+            </span>
+            {price && (
+              <span className="text-xs font-semibold text-green-700 bg-green-50 px-1.5 py-0.5 rounded">
+                -{discountPercentage(price.amount, crossedOutPrice.amount)}%
+              </span>
+            )}
+          </>
+        )}
+      </div>
+      {unitPrice && price && (
+        <p className="text-xs text-gray-400 mt-0.5">
+          {formatPrice(unitPrice.amount, price.currency)}/{unitPrice.unit}
+        </p>
+      )}
+      {deliveryDate && <p className="text-xs text-gray-400 mt-0.5">Livraison : {deliveryDate}</p>}
+    </div>
+  );
+}
+
+function ProductCard({ product }: { product: Product }) {
+  return (
+    <a
+      href={product.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex flex-col rounded-xl border border-gray-200 hover:border-gray-400 hover:shadow-md transition-all overflow-hidden"
+    >
+      {product.images[0] && <ProductImage src={product.images[0]} alt={product.title} />}
+      <div className="p-4 flex flex-col gap-2 flex-1">
+        <p className="text-sm font-medium line-clamp-3 text-gray-800">{product.title}</p>
+        <PriceBlock product={product} />
+      </div>
+    </a>
+  );
 }
 
 export default async function KeywordPage({
@@ -57,58 +122,7 @@ export default async function KeywordPage({
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {products.map((p) => (
-          <a
-            key={p.url}
-            href={p.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex flex-col rounded-xl border border-gray-200 hover:border-gray-400 hover:shadow-md transition-all overflow-hidden"
-          >
-            {p.images[0] && (
-              <div className="relative h-48 bg-gray-50">
-                <Image
-                  src={p.images[0]}
-                  alt={p.title}
-                  fill
-                  className="object-contain p-2"
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-                />
-              </div>
-            )}
-            <div className="p-4 flex flex-col gap-2 flex-1">
-              <p className="text-sm font-medium line-clamp-3 text-gray-800">{p.title}</p>
-
-              <div className="mt-auto">
-                <div className="flex items-baseline gap-2 flex-wrap">
-                  {p.price && (
-                    <span className="text-lg font-bold text-gray-900">
-                      {formatPrice(p.price.amount, p.price.currency)}
-                    </span>
-                  )}
-                  {p.crossedOutPrice && (
-                    <>
-                      <span className="text-sm text-gray-400 line-through">
-                        {formatPrice(p.crossedOutPrice.amount, p.crossedOutPrice.currency)}
-                      </span>
-                      {p.price && (
-                        <span className="text-xs font-semibold text-green-700 bg-green-50 px-1.5 py-0.5 rounded">
-                          -{discountPct(p.price.amount, p.crossedOutPrice.amount)}%
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-                {p.unitPrice && p.price && (
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {formatPrice(p.unitPrice.amount, p.price.currency)}/{p.unitPrice.unit}
-                  </p>
-                )}
-                {p.deliveryDate && (
-                  <p className="text-xs text-gray-400 mt-0.5">Livraison : {p.deliveryDate}</p>
-                )}
-              </div>
-            </div>
-          </a>
+          <ProductCard key={p.url} product={p} />
         ))}
       </div>
     </main>
