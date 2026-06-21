@@ -1,0 +1,22 @@
+{
+  "name": "item-scrapper",
+  "version": "1.0.0",
+  "description": "Batch scraper for Amazon and other shops using Crawlee",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "build": "tsc",
+    "start:prod": "node dist/main.js"
+  },
+  "dependencies": {
+    "crawlee": "^3.11.0",
+    "dotenv": "^16.4.0",
+    "mongodb": "^6.8.0",
+    "playwright": "^1.48.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

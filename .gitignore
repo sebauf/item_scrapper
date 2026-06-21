@@ -1,0 +1,25 @@
+# Dépendances
+node_modules/
+
+# Build artifacts
+dist/
+.next/
+
+# Env — ne jamais committer de vraies valeurs
+.env
+.env.local
+.env.production.local
+.env.development.local
+
+# Crawlee storage (cache, sessions, request queues)
+storage/
+
+# Playwright
+playwright-report/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/

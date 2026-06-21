@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-tracker-frontend
+  namespace: price-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: price-tracker-frontend
+  template:
+    metadata:
+      labels:
+        app: price-tracker-frontend
+    spec:
+      containers:
+        - name: frontend
+          # Remplacer YOUR_GITHUB_USERNAME par le nom d'utilisateur GitHub
+          image: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-frontend:main
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3000
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: MONGODB_URI
+            - name: NODE_ENV
+              value: production
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3

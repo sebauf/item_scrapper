@@ -1,0 +1,28 @@
+# Nécessite un Ingress Controller (ex: ingress-nginx).
+# Remplacer prices.example.com par le vrai domaine.
+# Pour TLS avec cert-manager, décommenter la section tls et l'annotation.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: price-tracker-frontend
+  namespace: price-tracker
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: prices.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: price-tracker-frontend
+                port:
+                  number: 80
+  # tls:
+  #   - hosts:
+  #       - prices.example.com
+  #     secretName: price-tracker-frontend-tls
