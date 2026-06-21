@@ -2,6 +2,7 @@ import type { Page } from 'playwright';
 import type { PlaywrightCrawlingContext } from 'crawlee';
 import type { IProductRepository } from '../../../domain/product/IProductRepository.js';
 import { parsePrice, parseUnitPrice } from './PriceParser.js';
+import { toHighResImageUrls } from './ImageUrlParser.js';
 
 const SCROLL_MIN_PX = 400;
 const SCROLL_RANDOM_RANGE_PX = 300;
@@ -70,11 +71,12 @@ async function extractDeliveryDate(page: Page): Promise<string | null> {
 }
 
 async function extractImages(page: Page): Promise<string[]> {
-  return page
+  const thumbnails = await page
     .$$eval('#altImages img', (els) =>
       els.map((el) => el.getAttribute('src') ?? '').filter(Boolean),
     )
     .catch(() => [] as string[]);
+  return toHighResImageUrls(thumbnails);
 }
 
 export function createAmazonProductHandler(
@@ -86,6 +88,14 @@ export function createAmazonProductHandler(
     await simulateHumanScroll(page);
 
     const title = await extractTitle(page);
+
+    if (!title) {
+      log.warning('Skipped save: page failed to extract a title (likely blocked or unavailable)', {
+        url: request.url,
+      });
+      return;
+    }
+
     const priceText = await extractPriceText(page);
     const crossedOutPriceText = await extractCrossedOutPriceText(page);
     const unitPriceRaw = await extractUnitPriceRaw(page);

@@ -15,6 +15,7 @@ async function getProducts(keyword: string): Promise<Product[]> {
       { $sort: { day: -1 } },
       { $group: { _id: '$url', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
+      { $match: { title: { $ne: '' } } },
       { $sort: { 'price.amount': 1 } },
     ])
     .toArray();
@@ -27,7 +28,11 @@ async function getProducts(keyword: string): Promise<Product[]> {
 }
 
 function formatPrice(amount: number, currency: string): string {
-  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(amount);
+  try {
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(amount);
+  } catch {
+    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
+  }
 }
 
 function discountPercentage(price: number, crossedOutPrice: number): number {

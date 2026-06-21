@@ -6,7 +6,8 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "build": "tsc",
-    "start:prod": "node dist/main.js"
+    "start:prod": "node dist/main.js",
+    "migrate:legacy-data": "tsx src/scripts/migrateLegacyData.ts"
   },
   "dependencies": {
     "crawlee": "^3.11.0",
