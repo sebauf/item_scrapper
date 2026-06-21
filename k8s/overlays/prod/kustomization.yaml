@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Remplace ghcr.io/REPLACE_GITHUB_OWNER/<image> par le vrai repo GitHub.
+# Pour un autre owner/tag : `kustomize edit set image` dans ce dossier,
+# ou dupliquer cet overlay.
+images:
+  - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-frontend
+    newName: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-frontend
+    newTag: main
+  - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-airflow
+    newName: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-airflow
+    newTag: main
+
+# IMAGE_REGISTRY (utilisé par le DAG pour les images scrapper/pipeline lancées
+# dynamiquement par KubernetesPodOperator) doit suivre le même owner.
+configMapGenerator:
+  - name: price-tracker-config
+    behavior: merge
+    literals:
+      - IMAGE_REGISTRY=ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+patches:
+  - target:
+      kind: Ingress
+      name: price-tracker-frontend
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: prices.example.com

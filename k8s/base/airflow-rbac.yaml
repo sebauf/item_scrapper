@@ -1,0 +1,40 @@
+# Permissions nécessaires au scheduler pour lancer/surveiller les Pods
+# éphémères créés par KubernetesPodOperator (scrape/refine/train/score).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airflow-scheduler
+  namespace: price-tracker
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-pod-manager
+  namespace: price-tracker
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list", "get", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-pod-manager-binding
+  namespace: price-tracker
+subjects:
+  - kind: ServiceAccount
+    name: airflow-scheduler
+    namespace: price-tracker
+roleRef:
+  kind: Role
+  name: airflow-pod-manager
+  apiGroup: rbac.authorization.k8s.io

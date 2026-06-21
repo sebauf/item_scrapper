@@ -20,6 +20,7 @@ export interface Product {
   shop: string;
   keyword: string | null;
   scrapedAt: string;
+  dealScore?: number;
 }
 
 export interface KeywordSummary {

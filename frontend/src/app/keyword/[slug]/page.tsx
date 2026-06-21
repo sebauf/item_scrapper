@@ -20,11 +20,19 @@ async function getProducts(keyword: string): Promise<Product[]> {
     ])
     .toArray();
 
-  return results.map((r) => ({
+  const products = results.map((r) => ({
     ...r,
     _id: r._id.toString(),
     scrapedAt: r.scrapedAt instanceof Date ? r.scrapedAt.toISOString() : String(r.scrapedAt),
   })) as Product[];
+
+  const scores = await db
+    .collection<{ _id: string; score: number }>('deal_scores')
+    .find({ _id: { $in: products.map((p) => p.url) } })
+    .toArray();
+  const scoreByUrl = new Map(scores.map((s) => [s._id, s.score]));
+
+  return products.map((p) => ({ ...p, dealScore: scoreByUrl.get(p.url) }));
 }
 
 function formatPrice(amount: number, currency: string): string {
@@ -83,6 +91,11 @@ function PriceBlock({ product }: { product: Product }) {
         </p>
       )}
       {deliveryDate && <p className="text-xs text-gray-400 mt-0.5">Livraison : {deliveryDate}</p>}
+      {product.dealScore !== undefined && product.dealScore >= 10 && (
+        <p className="text-xs font-semibold text-blue-700 bg-blue-50 inline-block px-1.5 py-0.5 rounded mt-1">
+          Bonne affaire (-{Math.round(product.dealScore)}% vs prix attendu)
+        </p>
+      )}
     </div>
   );
 }

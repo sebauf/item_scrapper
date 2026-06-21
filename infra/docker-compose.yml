@@ -1,11 +1,41 @@
+x-airflow-common: &airflow-common
+  build: ../airflow
+  image: item_scrapper-airflow:local
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    # Passed through to the DockerOperator tasks (scrape/refine/train/score)
+    MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password@mongodb:27017/scrapper?authSource=admin}
+    PIPELINE_EXECUTOR: ${PIPELINE_EXECUTOR:-docker}
+    IMAGE_REGISTRY: ${IMAGE_REGISTRY:-ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-}
+  volumes:
+    - ../airflow/dags:/opt/airflow/dags
+    # Lets the scheduler (LocalExecutor runs tasks in-process) launch sibling
+    # containers on the host's Docker engine via DockerOperator.
+    - /var/run/docker.sock:/var/run/docker.sock
+  # Grants the (non-root) airflow user access to the docker.sock bind mount
+  # above, which on the host is owned by root:docker. Override DOCKER_GID if
+  # your host's docker group has a different GID (`stat -c '%g' /var/run/docker.sock`).
+  group_add:
+    - "${DOCKER_GID:-984}"
+  networks:
+    - app-network
+  depends_on:
+    postgres:
+      condition: service_healthy
+
 services:
   mongodb:
     image: mongo:7
     container_name: item_scrapper_mongo
     restart: unless-stopped
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-password}
       MONGO_INITDB_DATABASE: scrapper
     ports:
       - "27017:27017"
@@ -16,6 +46,78 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:16
+    container_name: item_scrapper_airflow_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AIRFLOW_DB_USER:-airflow}
+      POSTGRES_PASSWORD: ${AIRFLOW_DB_PASSWORD:-airflow}
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: item_scrapper_airflow_init
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USERNAME:-admin}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD:-admin}" \
+          --firstname Admin \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com || true
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: item_scrapper_airflow_webserver
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: item_scrapper_airflow_scheduler
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+networks:
+  app-network:
+    name: item_scrapper_net
 
 volumes:
   mongodb_data:
+  airflow_postgres_data:
+  # Shared between the train/score DockerOperator tasks so the trained model
+  # survives independently of either container's lifetime — lets `score` be
+  # retried alone, without re-running `train`.
+  pipeline_models:
