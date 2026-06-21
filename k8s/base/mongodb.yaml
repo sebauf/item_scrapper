@@ -67,3 +67,19 @@ spec:
     - port: 27017
       targetPort: 27017
   clusterIP: None
+---
+# Accès depuis le LAN (ex: MongoDB Compass) — pas de TLS, protégé par
+# mot de passe uniquement. Ne pas exposer ce NodePort au-delà du réseau local.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-external
+  namespace: price-tracker
+spec:
+  type: NodePort
+  selector:
+    app: mongodb
+  ports:
+    - port: 27017
+      targetPort: 27017
+      nodePort: 30017

@@ -51,6 +51,11 @@ PVC 5Gi) ; `MONGODB_URI` (construite à partir de `MONGO_ROOT_USERNAME` /
 `MONGO_ROOT_PASSWORD`, voir `secrets.env.example`) pointe sur le Service
 interne `mongodb:27017`.
 
+Un second Service `mongodb-external` (NodePort `30017`) expose Mongo sur le
+LAN pour un accès direct (ex. MongoDB Compass) via `<IP-du-nœud>:30017`,
+avec les identifiants `MONGO_ROOT_USERNAME`/`MONGO_ROOT_PASSWORD`. Pas de
+TLS sur cette connexion — à ne jamais exposer au-delà du réseau local.
+
 ## Pré-requis
 
 - Un cluster Kubernetes accessible (`kubectl` configuré avec le bon contexte)
