@@ -33,6 +33,7 @@ de bout en bout aujourd'hui** :
 ## Architecture déployée
 
 - `price-tracker-frontend` (Deployment + Service + Ingress) — lit Mongo directement
+- `mongodb` (StatefulSet) — DB applicative (`scrapper.items_raw`), volume persistant 5Gi
 - `airflow-postgres` (StatefulSet) — metadata DB d'Airflow, volume persistant 2Gi
 - `airflow-webserver` / `airflow-scheduler` (Deployments) — orchestrent le pipeline
 - `airflow-init` (Job, à lancer une fois) — `airflow db migrate` + création du compte admin
@@ -45,8 +46,10 @@ Le scraping n'a pas de CronJob k8s dédié : c'est le DAG Airflow
 `airflow/dags/price_pipeline_dag.py`) qui lance scrape → refine → train →
 score, chaque étape comme un Pod éphémère via `KubernetesPodOperator`.
 
-MongoDB n'est pas déployé ici (managé en externe — Atlas, etc.) ; seule
-`MONGODB_URI` est attendue via secret.
+MongoDB est déployé en cluster (`k8s/base/mongodb.yaml`, StatefulSet +
+PVC 5Gi) ; `MONGODB_URI` (construite à partir de `MONGO_ROOT_USERNAME` /
+`MONGO_ROOT_PASSWORD`, voir `secrets.env.example`) pointe sur le Service
+interne `mongodb:27017`.
 
 ## Pré-requis
 
@@ -72,7 +75,9 @@ Détail manuel équivalent, si tu préfères ne pas utiliser le script :
 # 1. Secrets — jamais commités, à remplir à la main
 cp k8s/base/secrets.env.example k8s/base/secrets.env
 # éditer k8s/base/secrets.env :
-#   - MONGODB_URI (Mongo externe)
+#   - MONGO_ROOT_USERNAME / MONGO_ROOT_PASSWORD (Mongo interne, déployé par mongodb.yaml)
+#     puis MONGODB_URI doit reprendre les mêmes valeurs :
+#     mongodb://<MONGO_ROOT_USERNAME>:<MONGO_ROOT_PASSWORD>@mongodb:27017/scrapper?authSource=admin
 #   - AIRFLOW_DB_USER / AIRFLOW_DB_PASSWORD (Postgres interne, déployé par postgres.yaml)
 #   - AIRFLOW_SQL_ALCHEMY_CONN (doit réutiliser les mêmes user/password que ci-dessus)
 #   - AIRFLOW_ADMIN_USERNAME / AIRFLOW_ADMIN_PASSWORD (compte créé par le Job airflow-init)

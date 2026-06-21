@@ -126,7 +126,10 @@ fi
 SKIP_SECRETS="${SKIP_SECRETS:-false}"
 
 if [[ "$SKIP_SECRETS" == "false" ]]; then
-  ask MONGODB_URI "MONGODB_URI (Mongo externe, ex: mongodb+srv://user:pass@host/scrapper)"
+  ask MONGO_ROOT_USERNAME "MONGO_ROOT_USERNAME (MongoDB interne, déployé par k8s/base/mongodb.yaml)" "admin"
+  ask_secret MONGO_ROOT_PASSWORD "MONGO_ROOT_PASSWORD"
+  MONGODB_URI="mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongodb:27017/scrapper?authSource=admin"
+
   ask AIRFLOW_DB_USER "AIRFLOW_DB_USER (Postgres interne Airflow)" "airflow"
   ask_secret AIRFLOW_DB_PASSWORD "AIRFLOW_DB_PASSWORD"
   ask AIRFLOW_ADMIN_USERNAME "AIRFLOW_ADMIN_USERNAME (compte admin webui Airflow)" "admin"
@@ -142,6 +145,8 @@ if [[ "$SKIP_SECRETS" == "false" ]]; then
 
   umask 077
   cat > "$SECRETS_FILE" <<EOF
+MONGO_ROOT_USERNAME=${MONGO_ROOT_USERNAME}
+MONGO_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD}
 MONGODB_URI=${MONGODB_URI}
 
 AIRFLOW_DB_USER=${AIRFLOW_DB_USER}

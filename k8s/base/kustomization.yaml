@@ -6,6 +6,7 @@ resources:
   - frontend-deployment.yaml
   - frontend-service.yaml
   - ingress.yaml
+  - mongodb.yaml
   - postgres.yaml
   - airflow-rbac.yaml
   - airflow-init-job.yaml
