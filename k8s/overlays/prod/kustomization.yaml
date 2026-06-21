@@ -34,3 +34,10 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: prices.example.com
+  - target:
+      kind: Ingress
+      name: airflow-webserver
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: airflow.prices.example.com
