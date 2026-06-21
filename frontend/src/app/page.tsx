@@ -9,7 +9,7 @@ async function getKeywords(): Promise<KeywordSummary[]> {
   const results = await db
     .collection('items_raw')
     .aggregate([
-      { $match: { keyword: { $ne: null }, title: { $ne: '' } } },
+      { $match: { keyword: { $ne: null }, title: { $ne: '' }, price: { $ne: null } } },
       {
         $group: {
           _id: '$keyword',
