@@ -11,6 +11,8 @@ const WAIT_RANDOM_RANGE_MS = 600;
 const UNIT_PRICE_LOOKUP_DEPTH = 5;
 const UNIT_PRICE_MAX_LENGTH = 100;
 const UNIT_PRICE_HINT_PATTERN = /par\s+\w|\/\s*\w/i;
+const PRODUCT_PATH_RE = /\/dp\/[A-Z0-9]{10}/i;
+const BLOCK_PATH_FRAGMENTS = ['/errors/validateCaptcha', '/ap/signin', '/ap/cvf'];
 
 async function simulateHumanScroll(page: Page): Promise<void> {
   await page.evaluate(
@@ -79,6 +81,14 @@ async function extractImages(page: Page): Promise<string[]> {
   return toHighResImageUrls(thumbnails);
 }
 
+function isBlockPage(url: string): boolean {
+  return BLOCK_PATH_FRAGMENTS.some((fragment) => url.includes(fragment));
+}
+
+function isDeadProductRedirect(originalUrl: string, finalUrl: string): boolean {
+  return PRODUCT_PATH_RE.test(originalUrl) && !PRODUCT_PATH_RE.test(finalUrl) && !isBlockPage(finalUrl);
+}
+
 export function createAmazonProductHandler(
   productRepository: IProductRepository,
 ): (context: PlaywrightCrawlingContext) => Promise<void> {
@@ -86,6 +96,15 @@ export function createAmazonProductHandler(
     const { keyword } = request.userData as { keyword?: string };
 
     await simulateHumanScroll(page);
+
+    if (isDeadProductRedirect(request.url, page.url())) {
+      log.info(`Dead product (redirected away), removing from tracking`, {
+        url: request.url,
+        finalUrl: page.url(),
+      });
+      await productRepository.deleteByUrl(request.url);
+      return;
+    }
 
     const title = await extractTitle(page);
 

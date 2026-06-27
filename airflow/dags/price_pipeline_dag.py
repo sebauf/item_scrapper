@@ -13,9 +13,12 @@ PIPELINE_EXECUTOR env var:
     the ServiceAccount permissions this needs).
 """
 import os
+import random
+import time
 from datetime import datetime, timedelta
 
 from airflow import DAG
+from airflow.operators.python import PythonOperator
 
 EXECUTOR = os.environ.get("PIPELINE_EXECUTOR", "docker").lower()
 REGISTRY = os.environ.get("IMAGE_REGISTRY", "ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper")
@@ -70,15 +73,30 @@ def _build_task(task_id: str, image: str, command: list[str] | None = None):
     return _build_docker_task(task_id, image, command)
 
 
+def _random_night_delay() -> None:
+    """Sleep a random amount so the scrape doesn't hit Amazon at a predictable time.
+
+    Triggered at 01:00; actual scrape starts between ~01:05 and ~04:00.
+    """
+    delay_seconds = random.randint(5 * 60, 3 * 60 * 60)
+    print(f"Jitter delay: {delay_seconds // 60}m {delay_seconds % 60}s")
+    time.sleep(delay_seconds)
+
+
 with DAG(
     dag_id="price_pipeline_dag",
     description="Scrape -> refine -> score the deal-tracking pipeline",
     default_args=default_args,
-    schedule="0 6 * * *",
+    schedule="0 1 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     tags=["scrapper", "pipeline"],
 ) as dag:
+    jitter = PythonOperator(
+        task_id="random_delay",
+        python_callable=_random_night_delay,
+    )
+
     scrape = _build_task("scrape", image=f"{REGISTRY}-scrapper:main")
 
     refine = _build_task(
@@ -89,4 +107,4 @@ with DAG(
         "score", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.scoring.score"]
     )
 
-    scrape >> refine >> score
+    jitter >> scrape >> refine >> score
