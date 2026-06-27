@@ -1,13 +1,15 @@
-import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getDb } from '@/lib/mongodb';
-import type { Product } from '@/types/product';
+import { isGoodDeal } from '@/lib/constants';
+import type { Product, PriceHistoryEntry } from '@/types/product';
+import { ProductDashboard } from '@/components/ProductDashboard';
 
 export const dynamic = 'force-dynamic';
 
 async function getProducts(keyword: string): Promise<Product[]> {
   const db = await getDb();
+
   const results = await db
     .collection('items_raw')
     .aggregate([
@@ -16,9 +18,10 @@ async function getProducts(keyword: string): Promise<Product[]> {
       { $group: { _id: '$url', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } },
       { $match: { title: { $ne: '' }, price: { $ne: null } } },
-      { $sort: { 'price.amount': 1 } },
     ])
     .toArray();
+
+  if (results.length === 0) return [];
 
   const products = results.map((r) => ({
     ...r,
@@ -26,123 +29,37 @@ async function getProducts(keyword: string): Promise<Product[]> {
     scrapedAt: r.scrapedAt instanceof Date ? r.scrapedAt.toISOString() : String(r.scrapedAt),
   })) as Product[];
 
-  const scores = await db
-    .collection<{
-      _id: string;
-      score: number;
-      predictedPrice: number;
-      trendDirection?: 'down' | 'up' | 'stable';
-    }>('deal_scores')
-    .find({ _id: { $in: products.map((p) => p.url) } })
-    .toArray();
+  const urls = products.map((p) => p.url);
+
+  const [scores, histories] = await Promise.all([
+    db
+      .collection<{ _id: string; score: number; predictedPrice: number; trendDirection?: 'down' | 'up' | 'stable' }>('deal_scores')
+      .find({ _id: { $in: urls } })
+      .toArray(),
+    db
+      .collection<{ _id: string; history: Array<{ day: string; price: { amount: number; currency: string } | null; crossedOutPrice: { amount: number; currency: string } | null; unitPrice: { amount: number; unit: string } | null; scrapedAt: Date | string }> }>('price_history')
+      .find({ _id: { $in: urls } }, { projection: { history: 1 } })
+      .toArray(),
+  ]);
+
   const scoreByUrl = new Map(scores.map((s) => [s._id, s]));
+  const historyByUrl = new Map(histories.map((h) => [h._id, h.history ?? []]));
 
   return products.map((p) => {
     const score = scoreByUrl.get(p.url);
+    const priceHistory: PriceHistoryEntry[] = (historyByUrl.get(p.url) ?? []).map((entry) => ({
+      ...entry,
+      scrapedAt: entry.scrapedAt instanceof Date ? entry.scrapedAt.toISOString() : String(entry.scrapedAt),
+    }));
+
     return {
       ...p,
       dealScore: score?.score,
       predictedPrice: score?.predictedPrice,
       trendDirection: score?.trendDirection,
+      priceHistory,
     };
   });
-}
-
-function formatPrice(amount: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency }).format(amount);
-  } catch {
-    return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
-  }
-}
-
-function discountPercentage(price: number, crossedOutPrice: number): number {
-  return Math.round((1 - price / crossedOutPrice) * 100);
-}
-
-function ProductImage({ src, alt }: { src: string; alt: string }) {
-  return (
-    <div className="relative h-48 bg-gray-50">
-      <Image
-        src={src}
-        alt={alt}
-        fill
-        className="object-contain p-2"
-        sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
-      />
-    </div>
-  );
-}
-
-function PriceBlock({ product }: { product: Product }) {
-  const { price, crossedOutPrice, unitPrice, deliveryDate } = product;
-
-  return (
-    <div className="mt-auto">
-      <div className="flex items-baseline gap-2 flex-wrap">
-        {price && (
-          <span className="text-lg font-bold text-gray-900">
-            {formatPrice(price.amount, price.currency)}
-          </span>
-        )}
-        {crossedOutPrice && (
-          <>
-            <span className="text-sm text-gray-400 line-through">
-              {formatPrice(crossedOutPrice.amount, crossedOutPrice.currency)}
-            </span>
-            {price && (
-              <span className="text-xs font-semibold text-green-700 bg-green-50 px-1.5 py-0.5 rounded">
-                -{discountPercentage(price.amount, crossedOutPrice.amount)}%
-              </span>
-            )}
-          </>
-        )}
-      </div>
-      {unitPrice && price && (
-        <p className="text-xs text-gray-400 mt-0.5">
-          {formatPrice(unitPrice.amount, price.currency)}/{unitPrice.unit}
-        </p>
-      )}
-      {deliveryDate && <p className="text-xs text-gray-400 mt-0.5">Livraison : {deliveryDate}</p>}
-      {product.predictedPrice !== undefined && price && (
-        <p className="text-xs text-gray-400 mt-0.5">
-          Prix attendu : {formatPrice(product.predictedPrice, price.currency)}
-        </p>
-      )}
-      {product.dealScore !== undefined && product.dealScore >= 10 && (
-        <p className="text-xs font-semibold text-blue-700 bg-blue-50 inline-block px-1.5 py-0.5 rounded mt-1">
-          Bonne affaire (-{Math.round(product.dealScore)}% vs prix attendu)
-        </p>
-      )}
-      {product.trendDirection === 'down' && (
-        <p className="text-xs font-semibold text-emerald-700 bg-emerald-50 inline-block px-1.5 py-0.5 rounded mt-1">
-          ↓ Tendance à la baisse
-        </p>
-      )}
-      {product.trendDirection === 'up' && (
-        <p className="text-xs font-semibold text-orange-700 bg-orange-50 inline-block px-1.5 py-0.5 rounded mt-1">
-          ↑ Tendance à la hausse
-        </p>
-      )}
-    </div>
-  );
-}
-
-function ProductCard({ product }: { product: Product }) {
-  return (
-    <a
-      href={product.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex flex-col rounded-xl border border-gray-200 hover:border-gray-400 hover:shadow-md transition-all overflow-hidden"
-    >
-      {product.images[0] && <ProductImage src={product.images[0]} alt={product.title} />}
-      <div className="p-4 flex flex-col gap-2 flex-1">
-        <p className="text-sm font-medium line-clamp-3 text-gray-800">{product.title}</p>
-        <PriceBlock product={product} />
-      </div>
-    </a>
-  );
 }
 
 export default async function KeywordPage({
@@ -156,21 +73,34 @@ export default async function KeywordPage({
 
   if (products.length === 0) notFound();
 
-  return (
-    <main className="max-w-6xl mx-auto px-4 py-10">
-      <Link href="/" className="text-sm text-gray-500 hover:text-gray-700 mb-6 inline-block">
-        ← Retour
-      </Link>
-      <h1 className="text-2xl font-bold mb-1 capitalize">{keyword}</h1>
-      <p className="text-gray-500 mb-8">
-        {products.length} produit{products.length !== 1 ? 's' : ''}
-      </p>
+  const dealCount = products.filter((p) => isGoodDeal(p.dealScore)).length;
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {products.map((p) => (
-          <ProductCard key={p.url} product={p} />
-        ))}
+  return (
+    <main className="max-w-7xl mx-auto px-4 py-6">
+      <div className="flex items-center gap-4 mb-6">
+        <Link
+          href="/keywords"
+          className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-700 transition-colors shrink-0"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+          Mots-clés
+        </Link>
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-gray-900 truncate capitalize">{keyword}</h1>
+          <p className="text-sm text-gray-500">
+            {products.length} produit{products.length !== 1 ? 's' : ''}
+            {dealCount > 0 && (
+              <span className="ml-2 text-emerald-600 font-medium">
+                · {dealCount} bonne{dealCount > 1 ? 's' : ''} affaire{dealCount > 1 ? 's' : ''}
+              </span>
+            )}
+          </p>
+        </div>
       </div>
+
+      <ProductDashboard products={products} />
     </main>
   );
 }

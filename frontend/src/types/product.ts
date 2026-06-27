@@ -8,6 +8,14 @@ export interface UnitPrice {
   unit: string;
 }
 
+export interface PriceHistoryEntry {
+  day: string;
+  price: Price | null;
+  crossedOutPrice: Price | null;
+  unitPrice: UnitPrice | null;
+  scrapedAt: string;
+}
+
 export interface Product {
   _id: string;
   url: string;
@@ -23,10 +31,11 @@ export interface Product {
   dealScore?: number;
   predictedPrice?: number;
   trendDirection?: 'down' | 'up' | 'stable';
+  priceHistory?: PriceHistoryEntry[];
 }
 
 export interface KeywordSummary {
   keyword: string;
   productCount: number;
-  lastScrape: string;
+  lastScrape: string | null;
 }
