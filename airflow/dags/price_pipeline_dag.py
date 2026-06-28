@@ -95,6 +95,7 @@ with DAG(
     jitter = PythonOperator(
         task_id="random_delay",
         python_callable=_random_night_delay,
+        execution_timeout=None,
     )
 
     scrape = _build_task("scrape", image=f"{REGISTRY}-scrapper:main")
