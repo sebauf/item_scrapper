@@ -25,8 +25,10 @@ const links = [
 
 function isActive(linkHref: string, pathname: string): boolean {
   if (linkHref === '/') return pathname === '/';
-  // /keywords matches /keywords and /keyword/[slug]
-  if (linkHref === '/keywords') return pathname === '/keywords' || pathname.startsWith('/keyword/');
+  // /keywords matches /keywords, /keyword/[slug] and /product/[id] (reached from results)
+  if (linkHref === '/keywords') {
+    return pathname === '/keywords' || pathname.startsWith('/keyword/') || pathname.startsWith('/product/');
+  }
   return pathname.startsWith(linkHref);
 }
 
@@ -36,17 +38,18 @@ export function NavLinks() {
   return (
     <>
       {/* Desktop: inline nav in header */}
-      <nav className="hidden md:flex items-center gap-1 ml-6 border-l border-gray-100 pl-6">
+      <nav className="hidden md:flex items-center gap-1 ml-6 border-l border-border-subtle pl-6">
         {links.map((link) => {
           const active = isActive(link.href, pathname);
           return (
             <Link
               key={link.href}
               href={link.href}
+              aria-current={active ? 'page' : undefined}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 active
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+                  ? 'bg-accent-soft text-accent'
+                  : 'text-muted hover:text-foreground hover:bg-surface-hover'
               }`}
             >
               {link.label}
@@ -56,7 +59,7 @@ export function NavLinks() {
       </nav>
 
       {/* Mobile: fixed bottom tab bar */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-200 z-30 md:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-sm border-t border-border z-30 md:hidden pb-[env(safe-area-inset-bottom)]">
         <div className="flex">
           {links.map((link) => {
             const active = isActive(link.href, pathname);
@@ -64,11 +67,15 @@ export function NavLinks() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`flex-1 flex flex-col items-center gap-1 py-2.5 pb-safe transition-colors ${
-                  active ? 'text-indigo-600' : 'text-gray-400 hover:text-gray-600'
+                aria-current={active ? 'page' : undefined}
+                className={`relative flex-1 flex flex-col items-center gap-1 py-2.5 transition-colors ${
+                  active ? 'text-accent' : 'text-faint hover:text-muted'
                 }`}
               >
-                <span className={active ? 'text-indigo-600' : 'text-gray-400'}>{link.icon}</span>
+                {active && (
+                  <span className="absolute top-0 inset-x-6 h-0.5 rounded-full bg-accent" />
+                )}
+                <span>{link.icon}</span>
                 <span className="text-[11px] font-medium">{link.label}</span>
               </Link>
             );

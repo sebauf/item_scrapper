@@ -1,5 +1,68 @@
 @import "tailwindcss";
 
+@theme {
+  /* Light theme (default) */
+  --color-background: #f9fafb;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f3f4f6;
+  --color-border: #e5e7eb;
+  --color-border-subtle: #f3f4f6;
+  --color-ghost: #d1d5db;
+  --color-foreground: #111827;
+  --color-muted: #6b7280;
+  --color-faint: #9ca3af;
+  --color-accent: #4f46e5;
+  --color-accent-hover: #4338ca;
+  --color-accent-soft: #eef2ff;
+  --color-on-accent: #ffffff;
+  --color-deal: #047857;
+  --color-deal-strong: #10b981;
+  --color-deal-soft: #d1fae5;
+  --color-deal-border: #a7f3d0;
+  --color-warn: #b45309;
+  --color-warn-soft: #fef3c7;
+  --color-warn-border: #fde68a;
+  --color-danger: #e11d48;
+  --color-danger-soft: #ffe4e6;
+  /* Stays light in both themes: Amazon product shots have baked-in white backgrounds */
+  --color-image-bg: #f8fafc;
+  /* Chart series — validated (dataviz six checks) against both surfaces */
+  --color-chart-price: #4f46e5;
+  --color-chart-crossed: #d97706;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: #0b0f19;
+    --color-surface: #131a26;
+    --color-surface-hover: #1c2534;
+    --color-border: #2b3648;
+    --color-border-subtle: #1c2534;
+    --color-ghost: #3b475c;
+    --color-foreground: #edf1f7;
+    --color-muted: #97a3b6;
+    --color-faint: #64748b;
+    --color-accent: #8b95f8;
+    --color-accent-hover: #a8b1fb;
+    --color-accent-soft: #23294a;
+    --color-on-accent: #0b0f19;
+    --color-deal: #34d399;
+    --color-deal-strong: #10b981;
+    --color-deal-soft: #0c2f24;
+    --color-deal-border: #1a4d3c;
+    --color-warn: #fcd34d;
+    --color-warn-soft: #3a2a10;
+    --color-warn-border: #57431a;
+    --color-danger: #fb7185;
+    --color-danger-soft: #3f1824;
+    --color-chart-price: #6366f1;
+  }
+}
+
+html {
+  color-scheme: light dark;
+}
+
 @keyframes slideUp {
   from {
     opacity: 0;
