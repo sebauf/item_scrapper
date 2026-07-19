@@ -95,7 +95,10 @@ cp k8s/base/secrets.env.example k8s/base/secrets.env
 #    k8s/overlays/prod/kustomization.yaml :
 #      - remplacer YOUR_GITHUB_USERNAME (3 occurrences) par le vrai owner GitHub
 #        des images (ghcr.io/<owner>/item_scrapper-*)
-#      - remplacer prices.example.com par le vrai domaine
+#      - remplacer prices.example.com par le vrai domaine (utilisé uniquement
+#        pour l'ingress Airflow : airflow.<domaine>). L'ingress frontend est
+#        catch-all : il répond sur tous les hostnames (miniserver01.home,
+#        miniserver01.local, IP, ...), aucun domaine à configurer.
 
 # 3. Si les packages GHCR sont privés : namespace + pull secret
 kubectl create namespace price-tracker

@@ -1,6 +1,12 @@
 # Nécessite un Ingress Controller (Traefik, embarqué par défaut avec k3s).
-# Remplacer REPLACE_DOMAIN.example.com par le vrai domaine.
-# Pour TLS avec cert-manager, décommenter la section tls et l'annotation.
+# Règle volontairement SANS host : le frontend répond quel que soit le nom
+# utilisé (miniserver01.home, miniserver01.local, IP, etc.). Traefik transmet
+# le Host demandé dans x-forwarded-host, donc le contrôle CSRF des Server
+# Actions de Next.js (origin == x-forwarded-host) passe pour tous les noms.
+# L'ingress Airflow garde un host explicite : chez Traefik une règle avec host
+# est plus spécifique et gagne sur celle-ci.
+# Pour TLS avec cert-manager, décommenter la section tls et l'annotation
+# (le TLS, lui, exige un host explicite).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -11,8 +17,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: REPLACE_DOMAIN.example.com
-      http:
+    - http:
         paths:
           - path: /
             pathType: Prefix

@@ -26,14 +26,9 @@ configMapGenerator:
 generatorOptions:
   disableNameSuffixHash: true
 
+# L'ingress frontend n'a volontairement pas de host (catch-all, cf.
+# base/ingress.yaml) — seul Airflow garde un host explicite.
 patches:
-  - target:
-      kind: Ingress
-      name: price-tracker-frontend
-    patch: |-
-      - op: replace
-        path: /spec/rules/0/host
-        value: prices.example.com
   - target:
       kind: Ingress
       name: airflow-webserver

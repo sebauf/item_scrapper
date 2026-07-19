@@ -89,7 +89,8 @@ fi
 # ---------------------------------------------------------------------------
 info "Étape 1 — Owner GitHub des images GHCR et domaine"
 ask GITHUB_OWNER "Owner GitHub des images (ghcr.io/<owner>/item_scrapper-*)"
-ask DOMAIN "Domaine public du frontend (ex: prices.mondomaine.com)"
+echo "Le frontend est servi en catch-all (tous les hostnames) — pas de domaine à saisir."
+ask DOMAIN "Domaine de base pour Airflow (le webserver sera sur airflow.<domaine>)"
 
 if grep -q "YOUR_GITHUB_USERNAME" "$KUSTOMIZATION_FILE" 2>/dev/null; then
   sed -i "s/YOUR_GITHUB_USERNAME/${GITHUB_OWNER}/g" "$KUSTOMIZATION_FILE"
@@ -100,7 +101,7 @@ fi
 
 if grep -q "prices.example.com" "$KUSTOMIZATION_FILE" 2>/dev/null; then
   sed -i "s/prices.example.com/${DOMAIN}/g" "$KUSTOMIZATION_FILE"
-  info "Domaine écrit dans $KUSTOMIZATION_FILE"
+  info "Domaine Airflow écrit dans $KUSTOMIZATION_FILE (airflow.${DOMAIN})"
 else
   warn "Placeholder prices.example.com absent de $KUSTOMIZATION_FILE (déjà édité ?) — vérifie manuellement."
 fi
@@ -202,7 +203,8 @@ bold "Récapitulatif avant apply :"
 echo "  Contexte kubectl : $CURRENT_CTX"
 echo "  Namespace         : $NAMESPACE"
 echo "  Owner GHCR        : $GITHUB_OWNER"
-echo "  Domaine            : $DOMAIN"
+echo "  Frontend           : catch-all (tous les hostnames)"
+echo "  Domaine Airflow    : airflow.$DOMAIN"
 echo "  secrets.env        : $([[ "$SKIP_SECRETS" == "true" ]] && echo "conservé" || echo "régénéré")"
 if ! confirm "Lancer 'kubectl apply -k k8s/overlays/prod' maintenant ?"; then
   warn "Apply non lancé. Tu peux le faire manuellement plus tard avec :"
