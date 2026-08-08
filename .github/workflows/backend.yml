@@ -1,9 +1,16 @@
 name: Build & Publish backend
 
+# Sur pull request : les tests seuls, pour savoir avant de merger.
+# Sur push main / tag : tests puis publication de l'image.
 on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'backend/**'
       - '.github/workflows/backend.yml'
@@ -42,6 +49,9 @@ jobs:
     # Le domaine et les use cases sont testables sans base ni serveur : il n'y a
     # aucune raison de publier une image dont les tests n'ont pas tourné.
     needs: test
+    # Une PR ne publie rien : son image porterait un tag de branche éphémère que
+    # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read

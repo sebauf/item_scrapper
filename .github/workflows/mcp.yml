@@ -1,9 +1,16 @@
 name: Build & Publish MCP server
 
+# Sur pull request : les tests seuls, pour savoir avant de merger.
+# Sur push main / tag : tests puis publication de l'image.
 on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    paths:
+      - 'mcp/**'
+      - '.github/workflows/mcp.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'mcp/**'
       - '.github/workflows/mcp.yml'
@@ -42,6 +49,9 @@ jobs:
 
   build-and-push:
     needs: test
+    # Une PR ne publie rien : son image porterait un tag de branche éphémère que
+    # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
