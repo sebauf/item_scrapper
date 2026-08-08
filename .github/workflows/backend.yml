@@ -21,6 +21,10 @@ env:
 
 jobs:
   test:
+    # Les checks d'une PR sont listés par nom de job, pas par workflow : sans
+    # nom explicite, les `test` du backend et du MCP s'affichent à l'identique
+    # et donnent l'impression d'un déclenchement en double.
+    name: Backend — tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -52,6 +56,7 @@ jobs:
     # Une PR ne publie rien : son image porterait un tag de branche éphémère que
     # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
     if: github.event_name == 'push'
+    name: Backend — build & push
     runs-on: ubuntu-latest
     permissions:
       contents: read

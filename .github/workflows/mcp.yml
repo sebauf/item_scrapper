@@ -21,6 +21,7 @@ env:
 
 jobs:
   test:
+    name: MCP — tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -52,6 +53,7 @@ jobs:
     # Une PR ne publie rien : son image porterait un tag de branche éphémère que
     # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
     if: github.event_name == 'push'
+    name: MCP — build & push
     runs-on: ubuntu-latest
     permissions:
       contents: read
