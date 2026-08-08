@@ -25,11 +25,10 @@ spec:
           ports:
             - containerPort: 3000
           env:
-            - name: MONGODB_URI
-              valueFrom:
-                secretKeyRef:
-                  name: price-tracker-secrets
-                  key: MONGODB_URI
+            # Le frontend n'ouvre plus de connexion MongoDB : il interroge
+            # l'API backend côté serveur, via son Service ClusterIP.
+            - name: BACKEND_URL
+              value: http://price-tracker-backend
             - name: NODE_ENV
               value: production
           resources:

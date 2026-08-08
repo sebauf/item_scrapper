@@ -1,0 +1,14 @@
+# ClusterIP uniquement : l'API n'est joignable que depuis l'intérieur du
+# cluster, à l'adresse http://price-tracker-backend (port 80).
+apiVersion: v1
+kind: Service
+metadata:
+  name: price-tracker-backend
+  namespace: price-tracker
+spec:
+  selector:
+    app: price-tracker-backend
+  ports:
+    - port: 80
+      targetPort: 3001
+  type: ClusterIP
