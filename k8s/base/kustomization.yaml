@@ -5,6 +5,9 @@ resources:
   - namespace.yaml
   - backend-deployment.yaml
   - backend-service.yaml
+  - mcp-deployment.yaml
+  - mcp-service.yaml
+  - mcp-ingress.yaml
   - frontend-deployment.yaml
   - frontend-service.yaml
   - ingress.yaml

@@ -1,0 +1,31 @@
+{
+  "name": "item-scrapper-mcp",
+  "version": "1.0.0",
+  "description": "Serveur MCP exposant l'API price tracker à un agent (Hermes)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start:dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "start:prod": "node dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test --import tsx \"src/**/*.spec.ts\"",
+    "gen:api": "openapi-typescript ${BACKEND_URL:-http://localhost:3001}/openapi.json -o src/backend/api-types.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openapi-typescript": "^7.13.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0"
+  },
+  "//overrides": "js-yaml <= 4.3.0 est vulnérable (DoS quadratique sur !!omap) ; il arrive ici via @redocly/openapi-core, dépendance de openapi-typescript. 4.3.1 corrige sans casser l'API, contrairement à la 5.x que Redocly ne supporte pas. Override porté au paquet parent pour ne pas contraindre d'autres consommateurs.",
+  "overrides": {
+    "@redocly/openapi-core": {
+      "js-yaml": "^4.3.1"
+    }
+  }
+}

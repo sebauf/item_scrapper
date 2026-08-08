@@ -8,10 +8,12 @@ fixe le owner GitHub réel et le domaine.
 Il y a deux étapes bien séparées, **aucune des deux entièrement automatisée
 de bout en bout aujourd'hui** :
 
-1. **CI (automatisée)** — 5 workflows GitHub Actions, un par image,
+1. **CI (automatisée)** — 6 workflows GitHub Actions, un par image,
    déclenchés sur push `main` (ou tag `v*.*.*`) quand leur dossier change :
    - `.github/workflows/backend.yml` → `ghcr.io/<owner>/item_scrapper-backend`
-     (seul à lancer typecheck + tests avant de publier)
+     (typecheck + tests avant de publier)
+   - `.github/workflows/mcp.yml` → `ghcr.io/<owner>/item_scrapper-mcp`
+     (typecheck + tests avant de publier)
    - `.github/workflows/frontend.yml` → `ghcr.io/<owner>/item_scrapper-frontend`
    - `.github/workflows/airflow.yml` → `ghcr.io/<owner>/item_scrapper-airflow`
    - `.github/workflows/scrapper.yml` → `ghcr.io/<owner>/item_scrapper-scrapper`
@@ -37,6 +39,11 @@ de bout en bout aujourd'hui** :
 - `price-tracker-backend` (Deployment + Service **ClusterIP, sans Ingress**) — API
   NestJS, seul composant applicatif qui lit Mongo pour l'affichage. Joignable
   uniquement depuis l'intérieur du cluster, à `http://price-tracker-backend`.
+- `price-tracker-mcp` (Deployment + Service + Ingress sur `/mcp`) — serveur MCP
+  pour l'agent externe. **Seul composant applicatif volontairement exposé hors
+  du cluster**, parce que l'agent n'y tourne pas. Il n'ouvre pas de connexion
+  Mongo : il appelle le backend comme le frontend. Sa seule protection est le
+  jeton `MCP_AUTH_TOKEN` du Secret — ne pas l'appliquer sans l'avoir renseigné.
 - `price-tracker-frontend` (Deployment + Service + Ingress) — Next.js ; appelle
   le backend côté serveur
 - `mongodb` (StatefulSet) — DB applicative (`scrapper.items_raw`), volume persistant 5Gi
