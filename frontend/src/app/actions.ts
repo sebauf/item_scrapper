@@ -1,38 +1,47 @@
 'use server';
 import { revalidatePath } from 'next/cache';
-import { getDb } from '@/lib/mongodb';
+import { ApiError, trackKeyword, untrackKeyword } from '@/lib/api';
+
+/**
+ * Server Actions — elles n'écrivent plus en base, elles appellent l'API.
+ *
+ * Les messages d'erreur affichés à l'utilisateur viennent désormais du backend
+ * (`catalog`/`keyword` domain errors), ce qui évite d'avoir deux formulations
+ * différentes pour la même règle selon le point d'entrée.
+ */
 
 export async function addKeyword(
   _prev: { error?: string; success?: boolean },
   formData: FormData,
 ): Promise<{ error?: string; success?: boolean }> {
   const raw = formData.get('keyword');
-  const keyword = typeof raw === 'string' ? raw.trim() : '';
+  const keyword = typeof raw === 'string' ? raw : '';
 
-  if (!keyword) return { error: 'Le mot-clé ne peut pas être vide.' };
-  if (keyword.length > 100) return { error: 'Trop long (max 100 caractères).' };
-
-  const db = await getDb();
-  const existing = await db.collection('keywords').findOne({ keyword });
-
-  if (existing) {
-    if (existing.enabled === false) {
-      await db.collection('keywords').updateOne({ keyword }, { $set: { enabled: true } });
-    } else {
-      return { error: 'Ce mot-clé est déjà suivi.' };
-    }
-  } else {
-    await db.collection('keywords').insertOne({ keyword, enabled: true });
+  try {
+    await trackKeyword(keyword);
+  } catch (error) {
+    if (error instanceof ApiError && error.status < 500) return { error: error.message };
+    console.error('addKeyword', error);
+    return { error: 'Le service est momentanément indisponible. Réessayez.' };
   }
 
   revalidatePath('/');
+  revalidatePath('/keywords');
   return { success: true };
 }
 
 export async function deleteKeyword(keyword: string): Promise<void> {
   if (!keyword) return;
-  const db = await getDb();
-  await db.collection('keywords').updateOne({ keyword }, { $set: { enabled: false } });
+
+  try {
+    await untrackKeyword(keyword);
+  } catch (error) {
+    // Un mot-clé déjà absent n'est pas un échec du point de vue de l'utilisateur :
+    // l'état voulu est atteint. Le reste doit remonter.
+    if (!(error instanceof ApiError && error.status === 404)) throw error;
+  }
+
   revalidatePath('/');
+  revalidatePath('/keywords');
   revalidatePath(`/keyword/${encodeURIComponent(keyword)}`);
 }

@@ -2,14 +2,18 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
-import { decodeProductId } from '@/lib/encoding';
-import { fetchProductDetail, type ProductDetail } from '@/lib/queries';
+import { cache } from 'react';
+import { getProduct, type ProductDetail } from '@/lib/api';
 import { formatPrice } from '@/lib/format';
-import { isGoodDeal } from '@/lib/constants';
 import { PriceChart, type PricePoint } from '@/components/PriceChart';
 import { TrendBadge } from '@/components/ProductCard';
 
 export const dynamic = 'force-dynamic';
+
+// La page et generateMetadata demandent le même produit : cache() déduplique
+// l'appel réseau le temps du rendu (l'ancien code déduplique déjà la requête
+// Mongo de la même façon).
+const loadProduct = cache(getProduct);
 
 export async function generateMetadata({
   params,
@@ -17,9 +21,7 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const url = decodeProductId(id);
-  if (!url) return { title: 'Produit – Price Tracker' };
-  const detail = await fetchProductDetail(url);
+  const detail = await loadProduct(id);
   return { title: detail?.title ? `${detail.title} – Price Tracker` : 'Produit – Price Tracker' };
 }
 
@@ -93,14 +95,11 @@ function HistoryTable({ detail, currency }: { detail: ProductDetail; currency: s
 
 export default async function ProductPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const url = decodeProductId(id);
-  if (!url) notFound();
-
-  const detail = await fetchProductDetail(url);
+  const detail = await loadProduct(id);
   if (!detail) notFound();
 
   const currency = detail.price?.currency ?? detail.history.find((e) => e.price)?.price?.currency ?? 'EUR';
-  const hasDeal = isGoodDeal(detail.dealScore);
+  const hasDeal = detail.isDeal;
   const stats = historyStats(detail);
 
   const chartData: PricePoint[] = detail.history.map((entry) => ({
@@ -144,9 +143,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 </svg>
               </div>
             )}
-            {hasDeal && (
+            {hasDeal && detail.dealScore !== null && (
               <div className="absolute top-3 left-3 bg-deal-strong text-white text-sm font-bold px-3 py-1.5 rounded-lg shadow-sm">
-                🔥 −{Math.round(detail.dealScore!)}%
+                🔥 −{Math.round(detail.dealScore)}%
               </div>
             )}
           </div>
@@ -195,7 +194,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
                 {formatPrice(detail.unitPrice.amount, currency)}/{detail.unitPrice.unit}
               </p>
             )}
-            {detail.predictedPrice !== undefined && (
+            {detail.predictedPrice !== null && (
               <p>
                 Prix attendu :{' '}
                 <span className="font-semibold text-foreground">
@@ -257,7 +256,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
         {chartablePoints >= 2 ? (
           <PriceChart
             data={chartData}
-            predictedPrice={detail.predictedPrice}
+            predictedPrice={detail.predictedPrice ?? undefined}
             currency={currency}
           />
         ) : (

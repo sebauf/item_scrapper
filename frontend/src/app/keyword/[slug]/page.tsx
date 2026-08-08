@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { fetchProductsPage } from '@/lib/queries';
+import { searchProducts } from '@/lib/api';
 import {
   buildQueryString,
   hasActiveFilters,
@@ -28,8 +28,11 @@ export default async function KeywordPage({
     notFound();
   }
 
+  // parseProductListParams reste indulgent : il lit une URL tapée par un humain
+  // et retombe sur les valeurs par défaut. buildQueryString le renormalise
+  // ensuite pour l'API, qui, elle, refuse toute valeur aberrante.
   const listParams = parseProductListParams(await searchParams);
-  const data = await fetchProductsPage(keyword, listParams);
+  const data = await searchProducts(keyword, buildQueryString(listParams));
 
   if (data.keywordTotal === 0) notFound();
 

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { fetchDashboardData, type KeywordDeals } from '@/lib/queries';
+import { getDashboard, type KeywordDeals } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import { ProductCard } from '@/components/ProductCard';
 import { StatCard } from '@/components/StatCard';
@@ -63,7 +63,7 @@ function QuietKeywordsCard({ groups }: { groups: KeywordDeals[] }) {
 
 export default async function DashboardPage() {
   const { keywordCount, productCount, dealCount, lastUpdate, dealsByKeyword } =
-    await fetchDashboardData();
+    await getDashboard();
 
   const withDeals = dealsByKeyword.filter((g) => g.totalDeals > 0);
   const withoutDeals = dealsByKeyword.filter((g) => g.totalDeals === 0);

@@ -1,7 +1,7 @@
 'use client';
 import { useState, useMemo, useTransition } from 'react';
 import Link from 'next/link';
-import type { KeywordSummary } from '@/types/product';
+import type { KeywordSummary } from '@/lib/api';
 import { deleteKeyword } from '@/app/actions';
 import { AddKeywordModal } from './AddKeywordModal';
 
