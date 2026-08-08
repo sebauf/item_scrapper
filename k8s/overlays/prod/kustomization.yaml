@@ -11,6 +11,9 @@ images:
   - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-backend
     newName: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-backend
     newTag: main
+  - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-mcp
+    newName: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-mcp
+    newTag: main
   - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-frontend
     newName: ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper-frontend
     newTag: main

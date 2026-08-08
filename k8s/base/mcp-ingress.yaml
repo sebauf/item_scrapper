@@ -1,0 +1,27 @@
+# Ingress du serveur MCP, joignable sur <n'importe quel nom du cluster>/mcp.
+#
+# Comme celui du frontend, la règle est volontairement SANS host : rien de codé
+# en dur, l'agent peut viser l'IP, le nom .home, le nom .local, peu importe.
+# Traefik classe les règles par spécificité et le préfixe « /mcp » est plus
+# spécifique que le « / » du frontend : c'est donc bien ce backend qui gagne.
+#
+# L'exposition est assumée : c'est la raison d'être du service. La protection
+# est le jeton porteur exigé par le serveur (MCP_AUTH_TOKEN) — pas le réseau.
+# Ne pas déployer ceci sans avoir renseigné le secret.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: price-tracker-mcp
+  namespace: price-tracker
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: price-tracker-mcp
+                port:
+                  number: 80

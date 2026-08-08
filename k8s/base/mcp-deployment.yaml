@@ -1,0 +1,71 @@
+# Serveur MCP — expose l'API price tracker à un agent externe (Hermes).
+#
+# Contrairement au backend, il est bien exposé par un Ingress : l'agent tourne
+# hors du cluster. C'est aussi pourquoi il exige un jeton porteur — il porte des
+# outils d'écriture (suivre / retirer un mot-clé).
+#
+# Il ne parle jamais à MongoDB : il appelle le backend par son Service
+# ClusterIP, exactement comme le frontend.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-tracker-mcp
+  namespace: price-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: price-tracker-mcp
+  template:
+    metadata:
+      labels:
+        app: price-tracker-mcp
+    spec:
+      # Requis seulement si les packages GHCR sont privés — voir k8s/README.md.
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: mcp
+          # Owner/tag réécrits par l'overlay via le transformer `images:`
+          # (cf. overlays/prod/kustomization.yaml) — ne pas éditer à la main.
+          image: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-mcp:main
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3010
+          env:
+            - name: BACKEND_URL
+              value: http://price-tracker-backend
+            - name: MCP_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: MCP_AUTH_TOKEN
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3010"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+          # /health/live ne teste que le processus : un backend en panne ne doit
+          # pas provoquer un redémarrage en boucle qui ne réparerait rien.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3010
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          # /health/ready interroge le backend : tant qu'il est injoignable, le
+          # pod sort du Service plutôt que de renvoyer des erreurs à l'agent.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3010
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3

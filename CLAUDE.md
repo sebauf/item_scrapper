@@ -9,6 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Airflow** (`airflow/`): orchestrates the daily scrape → refine → score pipeline via a single DAG
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
 - **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4 — **no DB driver**; calls the backend API server-side (`BACKEND_URL`)
+- **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend
 - **Infrastructure** (`infra/`): MongoDB 7 in Docker with a named volume for persistence (local dev)
 - **Kubernetes** (`k8s/`): Kustomize manifests deploying the full stack (frontend, Airflow, MongoDB, Postgres) in a `price-tracker` namespace
 
@@ -58,6 +59,20 @@ npm run build && npm run start:prod
 ```
 
 See `backend/README.md` for the layering rules and the API contract.
+
+### MCP server
+
+```bash
+cd mcp
+npm install
+cp .env.example .env               # MCP_AUTH_TOKEN is required (openssl rand -hex 32)
+npm run start:dev                  # :3010, MCP endpoint on /mcp — needs the backend running
+npm test                           # unit tests (node:test) — no backend, no DB
+npm run build && npm run start:prod
+npm run gen:api                    # regenerate src/backend/api-types.ts from /openapi.json
+```
+
+See `mcp/README.md` for the tool catalogue and the security model.
 
 ### Frontend
 
@@ -174,6 +189,32 @@ The frontend owns no business rule: `isDeal` and the product `id` arrive
 already computed from the backend. Scoring fields are `null` when absent (never
 `undefined`), so test them with `!== null`.
 
+### MCP server — tools over the API
+
+```
+src/config.ts     McpConfig — env vars validated at startup (same idea as backend AppConfig)
+src/http.ts       HTTP facade: /mcp (Streamable HTTP, stateless), /health/live, /health/ready
+src/server.ts     MCP server factory + the instructions sent to the model on initialize
+src/format.ts     backend DTOs → compact text for the model (never raw JSON)
+src/backend/      typed HTTP client over the API + api-types.ts (**generated**, do not edit)
+src/tools/        tool definitions, split by bounded context (catalog / keywords)
+```
+
+Six tools: `get_dashboard`, `list_keywords`, `search_products`, `get_product`
+(read-only), `track_keyword`, `untrack_keyword` (write, `untrack` is annotated
+destructive — clients use those annotations to prompt for confirmation).
+
+Tools return text, not JSON: the API payload is shaped for a GUI and would cost
+tokens for nothing. `format.ts` always keeps the opaque product `id`, the only
+key that lets the agent call `get_product` afterwards. Backend errors come back
+as `isError: true` tool results, not protocol exceptions, so the agent can fix
+its call.
+
+Transport is stateless: a fresh `McpServer` + transport per request, closed with
+the response. Auth is a bearer token (`MCP_AUTH_TOKEN`), compared in constant
+time; the server refuses to start without it unless `MCP_ALLOW_ANONYMOUS=true`.
+This is the only applicative component deliberately exposed outside the cluster.
+
 ### MongoDB
 
 - DB: `scrapper`
@@ -189,6 +230,7 @@ Managed with Kustomize. Namespace: `price-tracker`.
 
 Key resources in `k8s/base/`:
 - `backend-deployment.yaml` + `backend-service.yaml` — NestJS API, **ClusterIP only, no ingress**: reachable in-cluster at `http://price-tracker-backend`
+- `mcp-deployment.yaml` + `mcp-service.yaml` + `mcp-ingress.yaml` — MCP server, **exposed on purpose** (the agent is off-cluster) on the `/mcp` path prefix; hostless ingress, Traefik prefers it over the frontend's `/`. Protected by `MCP_AUTH_TOKEN` from the secret, nothing else
 - `frontend-deployment.yaml` + `frontend-service.yaml` + `ingress.yaml` — Next.js frontend behind Traefik ingress
 - `mongodb.yaml` — MongoDB StatefulSet (in-cluster), ClusterIP service + `mongodb-external` NodePort for LAN access
 - `postgres.yaml` — Postgres for Airflow metadata
@@ -200,8 +242,9 @@ Key resources in `k8s/base/`:
 
 ### CI/CD (`.github/workflows/`)
 
-Five workflows, each triggered on changes to their respective directory:
+Six workflows, each triggered on changes to their respective directory:
 - `backend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-backend:<tag>`
+- `mcp.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-mcp:<tag>`
 - `scrapper.yml` — builds and pushes `ghcr.io/<repo>-scrapper:<tag>`
 - `pipeline.yml` — builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
 - `frontend.yml` — builds and pushes `ghcr.io/<repo>-frontend:<tag>`
