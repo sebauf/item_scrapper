@@ -146,6 +146,7 @@ poussée par la CI :
 
 ```bash
 kubectl -n price-tracker rollout restart deployment price-tracker-backend
+kubectl -n price-tracker rollout restart deployment price-tracker-mcp
 kubectl -n price-tracker rollout restart deployment price-tracker-frontend
 kubectl -n price-tracker rollout restart deployment airflow-webserver
 kubectl -n price-tracker rollout restart deployment airflow-scheduler

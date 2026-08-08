@@ -236,6 +236,11 @@ if [[ "$GENERATE_SECRETS" == "true" ]]; then
   ask_secret AIRFLOW_FERNET_KEY "AIRFLOW_FERNET_KEY" "$(gen_fernet_key)"
   ask_secret AIRFLOW_SECRET_KEY "AIRFLOW_SECRET_KEY" "$(gen_hex_key)"
 
+  # Seule protection de l'Ingress /mcp, qui porte des outils d'écriture : le
+  # Deployment MCP le lit en secretKeyRef non optionnel, sans lui le pod ne
+  # démarre pas. À recopier ensuite dans la configuration de l'agent.
+  ask_secret MCP_AUTH_TOKEN "MCP_AUTH_TOKEN (jeton porteur du serveur MCP)" "$(gen_hex_key)"
+
   AIRFLOW_SQL_ALCHEMY_CONN="postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow"
 
   umask 077
@@ -253,9 +258,22 @@ AIRFLOW_ADMIN_PASSWORD=${AIRFLOW_ADMIN_PASSWORD}
 
 AIRFLOW_FERNET_KEY=${AIRFLOW_FERNET_KEY}
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
+
+MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
 EOF
   chmod 600 "$SECRETS_FILE"
   info "$SECRETS_FILE écrit (permissions 600, non commité)."
+fi
+
+# Une installation antérieure au serveur MCP a un secrets.env sans
+# MCP_AUTH_TOKEN, et le conserver est le choix par défaut : sans ce rattrapage
+# le pod MCP resterait en CreateContainerConfigError après la mise à jour.
+# Un jeton déjà présent n'est jamais régénéré — il est connu de l'agent.
+if ! grep -q '^MCP_AUTH_TOKEN=' "$SECRETS_FILE"; then
+  printf '\nMCP_AUTH_TOKEN=%s\n' "$(gen_hex_key)" >> "$SECRETS_FILE"
+  warn "MCP_AUTH_TOKEN était absent de $SECRETS_FILE : un jeton a été généré."
+  warn "Récupère-le pour la configuration de l'agent :"
+  echo "    grep MCP_AUTH_TOKEN $SECRETS_FILE"
 fi
 
 # ---------------------------------------------------------------------------
@@ -273,6 +291,9 @@ resources:
 images:
   - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-backend
     newName: ghcr.io/${GITHUB_OWNER}/item_scrapper-backend
+    newTag: "${IMAGE_TAG}"
+  - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-mcp
+    newName: ghcr.io/${GITHUB_OWNER}/item_scrapper-mcp
     newTag: "${IMAGE_TAG}"
   - name: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-frontend
     newName: ghcr.io/${GITHUB_OWNER}/item_scrapper-frontend
@@ -331,6 +352,7 @@ echo "  Namespace         : $NAMESPACE"
 echo "  Images            : ghcr.io/${GITHUB_OWNER}/item_scrapper-* : ${IMAGE_TAG}"
 echo "  Frontend          : catch-all (tous les hostnames)"
 echo "  Backend           : interne au cluster (ClusterIP, aucun ingress)"
+echo "  MCP               : exposé sur <n'importe quel hostname>/mcp, jeton requis"
 echo "  Airflow           : ${AIRFLOW_DOMAIN:+ingress airflow.$AIRFLOW_DOMAIN + }NodePort 30808"
 echo "  secrets.env       : $([[ "$GENERATE_SECRETS" == "true" ]] && echo "régénéré" || echo "conservé")"
 if ! confirm "Lancer 'kubectl apply -k k8s/overlays/local' maintenant ?" y; then
@@ -358,7 +380,9 @@ fi
 
 # ---------------------------------------------------------------------------
 if [[ "$DO_RESTART" == "true" ]] || confirm "Rollout restart des deployments (tirer les images '${IMAGE_TAG}' fraîchement buildées) ?"; then
-  kubectl -n "$NAMESPACE" rollout restart deployment price-tracker-backend price-tracker-frontend airflow-webserver airflow-scheduler
+  kubectl -n "$NAMESPACE" rollout restart deployment \
+    price-tracker-backend price-tracker-mcp price-tracker-frontend \
+    airflow-webserver airflow-scheduler
   info "Rollout restart lancé."
 fi
 
