@@ -1,15 +1,13 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import type { Product } from '@/types/product';
+import type { ProductSummary, TrendDirection } from '@/lib/api';
 import { formatPrice } from '@/lib/format';
-import { isGoodDeal } from '@/lib/constants';
-import { encodeProductId } from '@/lib/encoding';
 
 function discountPct(price: number, crossed: number): number {
   return Math.round((1 - price / crossed) * 100);
 }
 
-export function TrendBadge({ trend }: { trend: 'up' | 'down' | 'stable' }) {
+export function TrendBadge({ trend }: { trend: TrendDirection }) {
   if (trend === 'down')
     return (
       <span className="inline-flex items-center gap-1 text-xs font-semibold text-deal bg-deal-soft px-2 py-0.5 rounded-full">
@@ -25,15 +23,17 @@ export function TrendBadge({ trend }: { trend: 'up' | 'down' | 'stable' }) {
   return null;
 }
 
-export function ProductCard({ product }: { product: Product }) {
+export function ProductCard({ product }: { product: ProductSummary }) {
   const { price, crossedOutPrice, unitPrice, deliveryDate, dealScore, predictedPrice, trendDirection } =
     product;
 
-  const hasDeal = isGoodDeal(dealScore);
+  // Le seuil de « bonne affaire » est une décision métier : elle appartient au
+  // backend (catalog/domain/deal-policy.ts), qui renvoie le verdict déjà calculé.
+  const hasDeal = product.isDeal;
 
   return (
     <Link
-      href={`/product/${encodeProductId(product.url)}`}
+      href={`/product/${product.id}`}
       className={`flex flex-col rounded-2xl border transition-all duration-200 overflow-hidden group hover:shadow-xl ${
         hasDeal
           ? 'border-deal-border bg-deal-soft/20 hover:border-deal-strong/60'
@@ -56,9 +56,9 @@ export function ProductCard({ product }: { product: Product }) {
             </svg>
           </div>
         )}
-        {hasDeal && (
+        {hasDeal && dealScore !== null && (
           <div className="absolute top-2 left-2 bg-deal-strong text-white text-xs font-bold px-2.5 py-1 rounded-lg shadow-sm">
-            🔥 −{Math.round(dealScore!)}%
+            🔥 −{Math.round(dealScore)}%
           </div>
         )}
         {trendDirection && trendDirection !== 'stable' && (
@@ -100,7 +100,7 @@ export function ProductCard({ product }: { product: Product }) {
 
           {deliveryDate && <p className="text-xs text-faint">📦 {deliveryDate}</p>}
 
-          {predictedPrice !== undefined && price && (
+          {predictedPrice !== null && price && (
             <p className="text-xs text-muted">
               Prix attendu :{' '}
               <span className="font-semibold">{formatPrice(predictedPrice, price.currency)}</span>

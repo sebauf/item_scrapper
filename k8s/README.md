@@ -8,8 +8,10 @@ fixe le owner GitHub réel et le domaine.
 Il y a deux étapes bien séparées, **aucune des deux entièrement automatisée
 de bout en bout aujourd'hui** :
 
-1. **CI (automatisée)** — 4 workflows GitHub Actions, un par image,
+1. **CI (automatisée)** — 5 workflows GitHub Actions, un par image,
    déclenchés sur push `main` (ou tag `v*.*.*`) quand leur dossier change :
+   - `.github/workflows/backend.yml` → `ghcr.io/<owner>/item_scrapper-backend`
+     (seul à lancer typecheck + tests avant de publier)
    - `.github/workflows/frontend.yml` → `ghcr.io/<owner>/item_scrapper-frontend`
    - `.github/workflows/airflow.yml` → `ghcr.io/<owner>/item_scrapper-airflow`
    - `.github/workflows/scrapper.yml` → `ghcr.io/<owner>/item_scrapper-scrapper`
@@ -32,7 +34,11 @@ de bout en bout aujourd'hui** :
 
 ## Architecture déployée
 
-- `price-tracker-frontend` (Deployment + Service + Ingress) — lit Mongo directement
+- `price-tracker-backend` (Deployment + Service **ClusterIP, sans Ingress**) — API
+  NestJS, seul composant applicatif qui lit Mongo pour l'affichage. Joignable
+  uniquement depuis l'intérieur du cluster, à `http://price-tracker-backend`.
+- `price-tracker-frontend` (Deployment + Service + Ingress) — Next.js ; appelle
+  le backend côté serveur
 - `mongodb` (StatefulSet) — DB applicative (`scrapper.items_raw`), volume persistant 5Gi
 - `airflow-postgres` (StatefulSet) — metadata DB d'Airflow, volume persistant 2Gi
 - `airflow-webserver` / `airflow-scheduler` (Deployments) — orchestrent le pipeline
@@ -132,6 +138,7 @@ Kubernetes — il faut forcer un rollout pour récupérer la dernière image
 poussée par la CI :
 
 ```bash
+kubectl -n price-tracker rollout restart deployment price-tracker-backend
 kubectl -n price-tracker rollout restart deployment price-tracker-frontend
 kubectl -n price-tracker rollout restart deployment airflow-webserver
 kubectl -n price-tracker rollout restart deployment airflow-scheduler

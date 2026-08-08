@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Scrapper** (`scrapper/`): Node.js + TypeScript, clean architecture (domain / application / infrastructure), [Crawlee](https://crawlee.dev/) with `PlaywrightCrawler`, MongoDB driver v6
 - **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB
 - **Airflow** (`airflow/`): orchestrates the daily scrape → refine → score pipeline via a single DAG
-- **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4, MongoDB driver v6 (reads directly from DB)
+- **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
+- **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4 — **no DB driver**; calls the backend API server-side (`BACKEND_URL`)
 - **Infrastructure** (`infra/`): MongoDB 7 in Docker with a named volume for persistence (local dev)
 - **Kubernetes** (`k8s/`): Kustomize manifests deploying the full stack (frontend, Airflow, MongoDB, Postgres) in a `price-tracker` namespace
 
@@ -45,15 +46,33 @@ python -m src.refine.build_price_history   # refine only
 python -m src.scoring.score                # score only
 ```
 
+### Backend
+
+```bash
+cd backend
+npm install
+cp .env.example .env               # set MONGODB_URI
+npm run start:dev                  # :3001, Swagger UI on /docs, contract on /openapi.json
+npm test                           # unit tests (Jest) — domain + use cases, no DB needed
+npm run build && npm run start:prod
+```
+
+See `backend/README.md` for the layering rules and the API contract.
+
 ### Frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env               # set MONGODB_URI
-npm run dev                        # dev server on :3000
+cp .env.example .env               # set BACKEND_URL (defaults to http://localhost:3001)
+npm run dev                        # dev server on :3000 — needs the backend running
 npm run build && npm run start     # production
+npm run gen:api                    # regenerate src/lib/api-types.ts from the backend's /openapi.json
 ```
+
+`src/lib/api-types.ts` is generated and committed; rerun `gen:api` (with the
+backend running) whenever a DTO changes, otherwise the frontend types drift
+from the contract.
 
 The frontend has a Dockerfile for containerised deployment.
 
@@ -118,12 +137,42 @@ Supports two execution backends via `PIPELINE_EXECUTOR` env var:
 - `docker` (default, local dev): `DockerOperator`, launches sibling containers on the host's Docker socket
 - `kubernetes`: `KubernetesPodOperator`, launches Pods in-cluster (used in k8s deployment)
 
+### Backend — DDD + CQRS-lite
+
+```
+src/modules/keyword/   write context: Keyword aggregate, KeywordName value object,
+                       KeywordRepository port, TrackKeyword / UntrackKeyword commands
+src/modules/catalog/   read-only context: ProductId / ProductQuery value objects,
+                       DealPolicy, read models over items_raw / price_history / deal_scores
+src/shared/            DomainError families (400/409/404), Mongo connection + required indexes
+```
+
+Dependency rule: `domain` imports nothing, `application` imports only `domain`,
+`infrastructure` and `interface` may import anything. No file under `domain/`
+imports `@nestjs/*` or `mongodb`.
+
+Write side goes through the aggregate (it protects invariants). Read side goes
+straight to Mongo aggregations and returns flat DTOs — `items_raw`,
+`price_history` and `deal_scores` are written by the scrapper and pipeline, the
+backend never mutates them, so there is no invariant to defend.
+
+Routes are prefixed `/api/v1` except the probes (`/health/live`, `/health/ready`).
+`DEAL_SCORE_THRESHOLD` lives in `catalog/domain/deal-policy.ts` — it is the single
+owner of the "good deal" policy.
+
 ### Key frontend files
 
-- `src/app/page.tsx` — home: lists tracked keywords with product count + last scrape date (excludes products without a price)
-- `src/app/keyword/[slug]/page.tsx` — keyword detail: product grid with price, crossed-out price, unit price, discount %, delivery date, deal score + trend
-- `src/lib/mongodb.ts` — shared `MongoClient` singleton for Next.js
-- `src/types/product.ts` — `Product` (with `dealScore`, `predictedPrice`, `trendDirection`) and `KeywordSummary` types
+- `src/app/page.tsx` — dashboard: global counters + best deals per keyword
+- `src/app/keywords/page.tsx` — tracked keywords, add/remove via Server Actions
+- `src/app/keyword/[slug]/page.tsx` — product grid, server-side filter/sort/paginate
+- `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
+- `src/lib/api.ts` — the single data access point: typed client over the backend API
+- `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
+- `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
+
+The frontend owns no business rule: `isDeal` and the product `id` arrive
+already computed from the backend. Scoring fields are `null` when absent (never
+`undefined`), so test them with `!== null`.
 
 ### MongoDB
 
@@ -139,6 +188,7 @@ Supports two execution backends via `PIPELINE_EXECUTOR` env var:
 Managed with Kustomize. Namespace: `price-tracker`.
 
 Key resources in `k8s/base/`:
+- `backend-deployment.yaml` + `backend-service.yaml` — NestJS API, **ClusterIP only, no ingress**: reachable in-cluster at `http://price-tracker-backend`
 - `frontend-deployment.yaml` + `frontend-service.yaml` + `ingress.yaml` — Next.js frontend behind Traefik ingress
 - `mongodb.yaml` — MongoDB StatefulSet (in-cluster), ClusterIP service + `mongodb-external` NodePort for LAN access
 - `postgres.yaml` — Postgres for Airflow metadata
@@ -150,7 +200,8 @@ Key resources in `k8s/base/`:
 
 ### CI/CD (`.github/workflows/`)
 
-Four workflows, each triggered on changes to their respective directory:
+Five workflows, each triggered on changes to their respective directory:
+- `backend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-backend:<tag>`
 - `scrapper.yml` — builds and pushes `ghcr.io/<repo>-scrapper:<tag>`
 - `pipeline.yml` — builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
 - `frontend.yml` — builds and pushes `ghcr.io/<repo>-frontend:<tag>`

@@ -1,0 +1,64 @@
+# API NestJS — seul composant applicatif qui lit MongoDB pour l'affichage.
+# Volontairement sans Ingress : le frontend l'appelle côté serveur, à
+# l'intérieur du cluster, via le Service ClusterIP. Rien ne l'expose au LAN.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-tracker-backend
+  namespace: price-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: price-tracker-backend
+  template:
+    metadata:
+      labels:
+        app: price-tracker-backend
+    spec:
+      # Requis seulement si les packages GHCR sont privés — voir k8s/README.md.
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: backend
+          # Owner/tag réécrits par l'overlay via le transformer `images:`
+          # (cf. overlays/prod/kustomization.yaml) — ne pas éditer à la main.
+          image: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-backend:main
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+          env:
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: MONGODB_URI
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3001"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          # /health/live ne teste que le processus : une coupure MongoDB ne doit
+          # pas déclencher un redémarrage en boucle qui ne réparerait rien.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 3
+          # /health/ready pingue MongoDB : tant qu'elle est injoignable, le pod
+          # sort du Service au lieu de renvoyer des 500 au frontend.
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
