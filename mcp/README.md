@@ -33,7 +33,7 @@ types dérivent du contrat.
 
 ## Ce que voit l'agent
 
-Six outils. Les noms, descriptions et schémas d'entrée sont ce que le modèle
+Douze outils. Les noms, descriptions et schémas d'entrée sont ce que le modèle
 lit pour décider quoi appeler — ils sont donc rédigés pour lui, pas pour un
 développeur.
 
@@ -45,10 +45,19 @@ développeur.
 | `get_product` | fiche produit + historique de prix | lecture seule |
 | `track_keyword` | ajoute un mot-clé au suivi | écriture |
 | `untrack_keyword` | retire un mot-clé du suivi | écriture, destructif |
+| `list_tracked_urls` | URLs produit suivies individuellement, dernier prix | lecture seule |
+| `track_product_url` | suit une fiche produit précise, hors mot-clé | écriture |
+| `untrack_product_url` | retire une URL du suivi individuel | écriture, destructif |
+| `list_favorites` | produits favoris + aperçu de leur évolution de prix | lecture seule |
+| `add_favorite` | met un produit en favori (garantit aussi son suivi) | écriture, idempotent |
+| `remove_favorite` | retire un favori (le suivi de prix continue) | écriture, idempotent |
 
-Les annotations (`readOnlyHint`, `destructiveHint`) ne sont pas décoratives :
-un client MCP s'en sert pour demander une confirmation avant d'exécuter un
-appel. Un outil d'écriture annoncé en lecture seule serait un piège.
+Les annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) ne sont
+pas décoratives : un client MCP s'en sert pour décider s'il demande une
+confirmation. Un outil d'écriture annoncé en lecture seule serait un piège.
+`add_favorite`/`remove_favorite` sont annoncés `destructiveHint: false` — à la
+différence d'un `untrack_*`, retirer un favori n'arrête aucune collecte, ce
+n'est qu'un signet.
 
 À l'initialisation, le serveur envoie aussi des **instructions** (`server.ts`) :
 d'où viennent les données, à quelle fréquence elles changent, ce que « bonne

@@ -20,6 +20,7 @@ export type PriceHistoryEntry = Schemas['PriceHistoryEntryResponse'];
 export type ProductSearchResult = Schemas['ProductSearchResponse'];
 export type KeywordDeals = Schemas['KeywordDealsResponse'];
 export type Dashboard = Schemas['DashboardResponse'];
+export type TrackedUrlSummary = Schemas['TrackedUrlSummaryResponse'];
 
 /** Filtres de `/keywords/{keyword}/products`, déjà normalisés par l'outil MCP. */
 export interface ProductSearchParams {
@@ -93,6 +94,38 @@ export class BackendClient {
 
   getProduct(id: string): Promise<ProductDetail> {
     return this.request<ProductDetail>(`/products/${encodeURIComponent(id)}`);
+  }
+
+  listTrackedUrls(): Promise<TrackedUrlSummary[]> {
+    return this.request<TrackedUrlSummary[]>('/product-urls');
+  }
+
+  async trackProductUrl(url: string): Promise<void> {
+    await this.request<void>('/product-urls', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  async untrackProductUrl(id: string): Promise<void> {
+    await this.request<void>(`/product-urls/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  listFavorites(): Promise<ProductDetail[]> {
+    return this.request<ProductDetail[]>('/favorites');
+  }
+
+  async addFavorite(id: string): Promise<void> {
+    await this.request<void>('/favorites', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+  }
+
+  async removeFavorite(id: string): Promise<void> {
+    await this.request<void>(`/favorites/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   /** Sonde de disponibilité utilisée par `/health/ready`. */

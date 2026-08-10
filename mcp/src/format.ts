@@ -6,6 +6,7 @@ import type {
   ProductDetail,
   ProductSearchResult,
   ProductSummary,
+  TrackedUrlSummary,
   UnitPrice,
 } from './backend/client.js';
 
@@ -124,6 +125,41 @@ export function formatSearchResult(
     return `${header}\nAucun produit sur cette page.`;
   }
   return [header, '', ...result.items.map(formatProductSummary)].join('\n');
+}
+
+export function formatTrackedUrlSummaries(summaries: TrackedUrlSummary[]): string {
+  if (summaries.length === 0) {
+    return 'Aucune URL suivie individuellement. Utiliser track_product_url pour en ajouter une.';
+  }
+  const rows = summaries.map((summary) =>
+    [
+      `- ${summary.title ?? summary.url}`,
+      `  id: ${summary.id}`,
+      `  prix: ${formatMoney(summary.price)} | dernier relevé ${formatDay(summary.lastScrape)}`,
+      `  url: ${summary.url}`,
+    ].join('\n'),
+  );
+  return [`${summaries.length} URL(s) suivie(s) individuellement :`, ...rows].join('\n');
+}
+
+/**
+ * Historique court par favori, pas la fiche complète : l'agent voit la
+ * tendance récente de chacun sans payer le coût de plusieurs get_product.
+ * Il peut toujours creuser un favori précis avec get_product(id).
+ */
+const FAVORITES_HISTORY_LIMIT = 7;
+
+export function formatFavorites(favorites: ProductDetail[]): string {
+  if (favorites.length === 0) {
+    return "Aucun favori. Utiliser add_favorite avec l'id d'un produit (renvoyé par " +
+      'search_products, get_product ou list_tracked_urls) pour en ajouter un.';
+  }
+  const blocks = favorites.map((product) =>
+    [formatProductSummary(product), formatHistory(product.history, FAVORITES_HISTORY_LIMIT)].join(
+      '\n',
+    ),
+  );
+  return [`${favorites.length} produit(s) favori(s) :`, ...blocks].join('\n\n');
 }
 
 export function formatDashboard(dashboard: Dashboard): string {
