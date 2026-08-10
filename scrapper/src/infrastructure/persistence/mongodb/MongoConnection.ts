@@ -10,6 +10,7 @@ export class MongoConnection {
     this._db = this.client.db('scrapper');
     await this._db.collection('items_raw').createIndex({ url: 1, day: 1 }, { unique: true });
     await this._db.collection('keywords').createIndex({ keyword: 1 }, { unique: true });
+    await this._db.collection('tracked_urls').createIndex({ url: 1 }, { unique: true });
   }
 
   get db(): Db {

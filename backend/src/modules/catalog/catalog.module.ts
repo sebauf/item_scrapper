@@ -29,5 +29,8 @@ import {
     { provide: DashboardReadModel, useClass: MongoDashboardReadModel },
     { provide: ProductReadModel, useClass: MongoProductReadModel },
   ],
+  // ProductReadModel : réutilisé par FavoriteModule pour la fiche complète
+  // (historique inclus) des produits favoris.
+  exports: [ProductReadModel],
 })
 export class CatalogModule {}

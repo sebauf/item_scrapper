@@ -3,10 +3,11 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { cache } from 'react';
-import { getProduct, type ProductDetail } from '@/lib/api';
+import { getProduct, isFavorite, type ProductDetail } from '@/lib/api';
 import { formatPrice } from '@/lib/format';
 import { PriceChart, type PricePoint } from '@/components/PriceChart';
 import { TrendBadge } from '@/components/ProductCard';
+import { FavoriteButton } from '@/components/FavoriteButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -97,6 +98,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const detail = await loadProduct(id);
   if (!detail) notFound();
+  const favorite = await isFavorite(id);
 
   const currency = detail.price?.currency ?? detail.history.find((e) => e.price)?.price?.currency ?? 'EUR';
   const hasDeal = detail.isDeal;
@@ -206,17 +208,20 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
             {detail.deliveryDate && <p>📦 {detail.deliveryDate}</p>}
           </div>
 
-          <a
-            href={detail.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-accent text-on-accent font-semibold rounded-xl hover:bg-accent-hover transition-colors shadow-sm mt-1 self-start"
-          >
-            Voir sur Amazon
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
-          </a>
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <a
+              href={detail.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-accent text-on-accent font-semibold rounded-xl hover:bg-accent-hover transition-colors shadow-sm self-start"
+            >
+              Voir sur Amazon
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+            <FavoriteButton productId={id} initialFavorite={favorite} />
+          </div>
 
           {stats && (
             <div className="grid grid-cols-3 gap-3 mt-2">
