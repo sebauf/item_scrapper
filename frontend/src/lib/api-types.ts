@@ -124,6 +124,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/product-urls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** URLs suivies individuellement, avec dernier prix connu */
+        get: operations["ProductTrackingController_list"];
+        put?: never;
+        /** Suivre une URL produit (ou réactiver une URL retirée) */
+        post: operations["ProductTrackingController_track"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/product-urls/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Retirer une URL du suivi individuel */
+        delete: operations["ProductTrackingController_untrack"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Produits favoris, fiche complète avec historique de prix */
+        get: operations["FavoriteController_list"];
+        put?: never;
+        /** Mettre un produit en favori (idempotent, suit aussi son prix) */
+        post: operations["FavoriteController_add"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/favorites/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vérifie si un produit est en favori */
+        get: operations["FavoriteController_check"];
+        put?: never;
+        post?: never;
+        /** Retirer un produit des favoris (idempotent) */
+        delete: operations["FavoriteController_remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -246,6 +317,34 @@ export interface components {
             history: components["schemas"]["PriceHistoryEntryResponse"][];
             firstSeen: string | null;
             lastSeen: string | null;
+        };
+        TrackedUrlPriceResponse: {
+            /** @example 12.99 */
+            amount: number;
+            /** @example EUR */
+            currency: string;
+        };
+        TrackedUrlSummaryResponse: {
+            /** @description Identifiant encodé, à utiliser dans /product-urls/{id} et /products/{id} */
+            id: string;
+            /** @example https://www.amazon.fr/dp/B0XXXXXXXX/ */
+            url: string;
+            title: string | null;
+            image: string | null;
+            price: components["schemas"]["TrackedUrlPriceResponse"] | null;
+            /** @description Dernier passage du scrapper, null si pas encore scrapée */
+            lastScrape: string | null;
+        };
+        TrackProductUrlDto: {
+            /** @example https://www.amazon.fr/dp/B0XXXXXXXX/ */
+            url: string;
+        };
+        FavoriteStatusResponse: {
+            isFavorite: boolean;
+        };
+        AddFavoriteDto: {
+            /** @description Identifiant produit encodé, renvoyé par /products/{id} ou une liste */
+            id: string;
         };
     };
     responses: never;
@@ -460,6 +559,201 @@ export interface operations {
             };
             /** @description Produit inconnu */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ProductTrackingController_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackedUrlSummaryResponse"][];
+                };
+            };
+        };
+    };
+    ProductTrackingController_track: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackProductUrlDto"];
+            };
+        };
+        responses: {
+            /** @description URL suivie */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description URL absente ou non reconnue comme fiche produit amazon.fr */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description URL déjà suivie */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ProductTrackingController_untrack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant encodé renvoyé par la liste */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description URL retirée */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identifiant mal formé */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description URL inconnue */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    FavoriteController_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProductDetailResponse"][];
+                };
+            };
+        };
+    };
+    FavoriteController_add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddFavoriteDto"];
+            };
+        };
+        responses: {
+            /** @description Produit favori */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identifiant mal formé */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    FavoriteController_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant encodé du produit */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FavoriteStatusResponse"];
+                };
+            };
+            /** @description Identifiant mal formé */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    FavoriteController_remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant encodé du produit */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Favori retiré */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identifiant mal formé */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

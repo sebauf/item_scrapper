@@ -4,7 +4,12 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { BackendClient } from './backend/client.js';
 import { createMcpServer } from './server.js';
-import { aDashboard, aProductDetail, aScoredProduct } from './testing/fixtures.js';
+import {
+  aDashboard,
+  aProductDetail,
+  aScoredProduct,
+  aTrackedUrlSummary,
+} from './testing/fixtures.js';
 
 /**
  * Tests de bout en bout du serveur MCP, sans HTTP ni backend : un vrai client
@@ -52,7 +57,7 @@ function textOf(result: unknown): string {
 }
 
 describe('serveur MCP', () => {
-  it('expose les six outils attendus', async () => {
+  it('expose les douze outils attendus', async () => {
     const { client } = await connect({});
 
     const { tools } = await client.listTools();
@@ -60,12 +65,18 @@ describe('serveur MCP', () => {
     assert.deepEqual(
       tools.map((tool) => tool.name).sort(),
       [
+        'add_favorite',
         'get_dashboard',
         'get_product',
+        'list_favorites',
         'list_keywords',
+        'list_tracked_urls',
+        'remove_favorite',
         'search_products',
         'track_keyword',
+        'track_product_url',
         'untrack_keyword',
+        'untrack_product_url',
       ],
     );
   });
@@ -81,6 +92,23 @@ describe('serveur MCP', () => {
     assert.equal(byName.get('search_products')?.readOnlyHint, true);
     assert.equal(byName.get('track_keyword')?.readOnlyHint, false);
     assert.equal(byName.get('untrack_keyword')?.destructiveHint, true);
+    assert.equal(byName.get('track_product_url')?.readOnlyHint, false);
+    assert.equal(byName.get('untrack_product_url')?.destructiveHint, true);
+  });
+
+  // add_favorite / remove_favorite sont idempotents et non destructifs :
+  // contrairement à untrack_keyword, retirer un favori ne coupe aucune collecte.
+  it('annonce add_favorite et remove_favorite comme idempotents et non destructifs', async () => {
+    const { client } = await connect({});
+
+    const { tools } = await client.listTools();
+    const byName = new Map(tools.map((tool) => [tool.name, tool.annotations]));
+
+    for (const name of ['add_favorite', 'remove_favorite']) {
+      assert.equal(byName.get(name)?.readOnlyHint, false);
+      assert.equal(byName.get(name)?.destructiveHint, false);
+      assert.equal(byName.get(name)?.idempotentHint, true);
+    }
   });
 
   it('rend le tableau de bord en texte lisible', async () => {
@@ -154,6 +182,67 @@ describe('serveur MCP', () => {
 
     assert.deepEqual(calls, ['DELETE /api/v1/keywords/caf%C3%A9%20en%20grains']);
     assert.match(textOf(result), /retiré du suivi/);
+  });
+
+  it('liste les URLs suivies individuellement', async () => {
+    const { client } = await connect({
+      '/api/v1/product-urls': { body: [aTrackedUrlSummary()] },
+    });
+
+    const result = await client.callTool({ name: 'list_tracked_urls', arguments: {} });
+
+    assert.match(textOf(result), /Lessive liquide 3 L/);
+  });
+
+  it('suit une URL produit', async () => {
+    const { client, calls } = await connect({ '/api/v1/product-urls': { status: 201, body: undefined } });
+
+    const result = await client.callTool({
+      name: 'track_product_url',
+      arguments: { url: 'https://www.amazon.fr/dp/B0TEST0001/' },
+    });
+
+    assert.deepEqual(calls, ['POST /api/v1/product-urls']);
+    assert.match(textOf(result), /ajoutée au suivi individuel/);
+  });
+
+  it('retire une URL du suivi individuel', async () => {
+    const { client, calls } = await connect({
+      '/api/v1/product-urls/abc': { status: 204, body: undefined },
+    });
+
+    const result = await client.callTool({ name: 'untrack_product_url', arguments: { id: 'abc' } });
+
+    assert.deepEqual(calls, ['DELETE /api/v1/product-urls/abc']);
+    assert.match(textOf(result), /retirée du suivi individuel/);
+  });
+
+  it('liste les favoris avec un aperçu de leur historique', async () => {
+    const { client } = await connect({ '/api/v1/favorites': { body: [aProductDetail()] } });
+
+    const result = await client.callTool({ name: 'list_favorites', arguments: {} });
+
+    assert.match(textOf(result), /1 produit\(s\) favori\(s\)/);
+  });
+
+  it('ajoute un favori', async () => {
+    const { client, calls } = await connect({ '/api/v1/favorites': { status: 201, body: undefined } });
+
+    const result = await client.callTool({ name: 'add_favorite', arguments: { id: 'abc' } });
+
+    assert.deepEqual(calls, ['POST /api/v1/favorites']);
+    assert.match(textOf(result), /ajouté aux favoris/);
+  });
+
+  it('retire un favori', async () => {
+    const { client, calls } = await connect({
+      '/api/v1/favorites/abc': { status: 204, body: undefined },
+    });
+
+    const result = await client.callTool({ name: 'remove_favorite', arguments: { id: 'abc' } });
+
+    assert.deepEqual(calls, ['DELETE /api/v1/favorites/abc']);
+    assert.match(textOf(result), /retiré des favoris/);
   });
 
   // Une erreur métier doit revenir comme un résultat d'outil en échec : l'agent

@@ -1,4 +1,9 @@
-import type { Dashboard, ProductDetail, ProductSummary } from '../backend/client.js';
+import type {
+  Dashboard,
+  ProductDetail,
+  ProductSummary,
+  TrackedUrlSummary,
+} from '../backend/client.js';
 
 /**
  * Jeux de données de test.
@@ -66,6 +71,18 @@ export function aProductDetail(overrides: Partial<ProductDetail> = {}): ProductD
         scrapedAt: '2026-08-08T06:00:00.000Z',
       },
     ],
+    ...overrides,
+  };
+}
+
+export function aTrackedUrlSummary(overrides: Partial<TrackedUrlSummary> = {}): TrackedUrlSummary {
+  return {
+    id: 'aHR0cHM6Ly9leGVtcGxl',
+    url: 'https://www.amazon.fr/dp/B0TEST0001/',
+    title: 'Lessive liquide 3 L',
+    image: 'https://img.example/1.jpg',
+    price: { amount: 12.99, currency: 'EUR' },
+    lastScrape: '2026-08-08T06:00:00.000Z',
     ...overrides,
   };
 }

@@ -26,6 +26,7 @@ export type ProductSearchResult = Schemas['ProductSearchResponse'];
 export type KeywordDeals = Schemas['KeywordDealsResponse'];
 export type Dashboard = Schemas['DashboardResponse'];
 export type TrendDirection = NonNullable<ProductSummary['trendDirection']>;
+export type TrackedUrlSummary = Schemas['TrackedUrlSummaryResponse'];
 
 const BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
 const API = `${BASE_URL}/api/v1`;
@@ -123,4 +124,40 @@ export async function getProduct(id: string): Promise<ProductDetail | null> {
     if (error instanceof ApiError && (error.status === 404 || error.status === 400)) return null;
     throw error;
   }
+}
+
+export function getTrackedUrls(): Promise<TrackedUrlSummary[]> {
+  return request<TrackedUrlSummary[]>('/product-urls');
+}
+
+export function trackProductUrl(url: string): Promise<void> {
+  return request<void>('/product-urls', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+}
+
+export function untrackProductUrl(id: string): Promise<void> {
+  return request<void>(`/product-urls/${id}`, { method: 'DELETE' });
+}
+
+export function getFavorites(): Promise<ProductDetail[]> {
+  return request<ProductDetail[]>('/favorites');
+}
+
+export function isFavorite(id: string): Promise<boolean> {
+  return request<{ isFavorite: boolean }>(`/favorites/${id}`).then((r) => r.isFavorite);
+}
+
+export function addFavorite(id: string): Promise<void> {
+  return request<void>('/favorites', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id }),
+  });
+}
+
+export function removeFavorite(id: string): Promise<void> {
+  return request<void>(`/favorites/${id}`, { method: 'DELETE' });
 }

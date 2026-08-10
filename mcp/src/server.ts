@@ -1,7 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { BackendClient } from './backend/client.js';
 import { registerCatalogTools } from './tools/catalog.js';
+import { registerFavoriteTools } from './tools/favorites.js';
 import { registerKeywordTools } from './tools/keywords.js';
+import { registerProductTrackingTools } from './tools/product-tracking.js';
 
 export const SERVER_NAME = 'price-tracker';
 export const SERVER_VERSION = '1.0.0';
@@ -31,7 +33,16 @@ inutile de rappeler les outils en boucle. Commencer par get_dashboard pour
 savoir ce qui est suivi, puis search_products pour creuser un mot-clé.
 
 Ajouter un mot-clé ne produit aucun résultat immédiat : le scrape suivant le
-prendra en compte.`;
+prendra en compte.
+
+Deux façons de suivre le prix d'un produit *précis*, en plus des mots-clés :
+- track_product_url suit une fiche produit amazon.fr directement, sans passer
+  par une recherche par mot-clé.
+- add_favorite suit l'évolution de prix d'un produit déjà connu (trouvé via
+  search_products, get_product ou list_tracked_urls) et le garde visible dans
+  list_favorites ; il garantit aussi la continuité de son suivi. Contrairement
+  à track_keyword/track_product_url, add_favorite et remove_favorite sont
+  idempotents.`;
 
 /**
  * Fabrique un serveur MCP neuf.
@@ -48,6 +59,8 @@ export function createMcpServer(backend: BackendClient): McpServer {
 
   registerCatalogTools(server, backend);
   registerKeywordTools(server, backend);
+  registerProductTrackingTools(server, backend);
+  registerFavoriteTools(server, backend);
 
   return server;
 }

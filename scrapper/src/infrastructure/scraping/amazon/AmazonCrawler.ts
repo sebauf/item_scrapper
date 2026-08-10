@@ -2,6 +2,7 @@ import { PlaywrightCrawler, createPlaywrightRouter } from 'crawlee';
 import type { IProductRepository } from '../../../domain/product/IProductRepository.js';
 import type { IShopScraper } from '../../../application/ports/IShopScraper.js';
 import type { Keyword } from '../../../domain/keyword/Keyword.js';
+import type { TrackedUrl } from '../../../domain/trackedUrl/TrackedUrl.js';
 import { amazonSearchHandler } from './AmazonSearchHandler.js';
 import { createAmazonProductHandler } from './AmazonProductHandler.js';
 
@@ -10,11 +11,12 @@ const KNOWN_PRODUCTS_LIMIT_PER_KEYWORD = 150;
 export class AmazonCrawler implements IShopScraper {
   constructor(private readonly productRepository: IProductRepository) {}
 
-  async scrape(keywords: readonly Keyword[]): Promise<void> {
+  async scrape(keywords: readonly Keyword[], trackedUrls: readonly TrackedUrl[]): Promise<void> {
     const crawler = this.buildCrawler();
     const requests = [
       ...this.buildSearchRequests(keywords),
       ...(await this.buildKnownProductRequests(keywords)),
+      ...this.buildDirectProductRequests(trackedUrls),
     ];
     await crawler.run(requests);
   }
@@ -73,5 +75,15 @@ export class AmazonCrawler implements IShopScraper {
       }),
     );
     return perKeyword.flat();
+  }
+
+  /**
+   * URLs suivies individuellement (hors recherche par mot-clé) : requêtées
+   * directement sur la page produit, routées par le handler par défaut.
+   * `userData` ne porte pas de `keyword` — le handler enregistre alors
+   * `keyword: null`, exactement comme pour un produit sans mot-clé source.
+   */
+  private buildDirectProductRequests(trackedUrls: readonly TrackedUrl[]) {
+    return trackedUrls.map((url) => ({ url, userData: {} }));
   }
 }

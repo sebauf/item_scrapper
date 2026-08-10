@@ -12,6 +12,7 @@ const UNIT_PRICE_LOOKUP_DEPTH = 5;
 const UNIT_PRICE_MAX_LENGTH = 100;
 const UNIT_PRICE_HINT_PATTERN = /par\s+\w|\/\s*\w/i;
 const PRODUCT_PATH_RE = /\/dp\/[A-Z0-9]{10}/i;
+const PRODUCT_ASIN_RE = /\/dp\/([A-Z0-9]{10})/i;
 const BLOCK_PATH_FRAGMENTS = ['/errors/validateCaptcha', '/ap/signin', '/ap/cvf'];
 
 async function simulateHumanScroll(page: Page): Promise<void> {
@@ -81,6 +82,31 @@ async function extractImages(page: Page): Promise<string[]> {
   return toHighResImageUrls(thumbnails);
 }
 
+async function extractVariantUrls(page: Page, currentAsin: string | null): Promise<string[]> {
+  const asins = await page
+    .evaluate((asin) => {
+      const container = document.querySelector(
+        '#twister, #twister-plus-inline-twister-view, #twisterContainer',
+      );
+      if (!container) return [] as string[];
+
+      const found = new Set<string>();
+      container.querySelectorAll('[data-asin]').forEach((el) => {
+        const value = el.getAttribute('data-asin');
+        if (value) found.add(value);
+      });
+      container.querySelectorAll('[data-dp-url]').forEach((el) => {
+        const match = (el.getAttribute('data-dp-url') ?? '').match(/\/dp\/([A-Z0-9]{10})/);
+        if (match) found.add(match[1]);
+      });
+      if (asin) found.delete(asin);
+      return Array.from(found);
+    }, currentAsin)
+    .catch(() => [] as string[]);
+
+  return asins.map((asin) => `https://www.amazon.fr/dp/${asin}/`);
+}
+
 function isBlockPage(url: string): boolean {
   return BLOCK_PATH_FRAGMENTS.some((fragment) => url.includes(fragment));
 }
@@ -92,7 +118,7 @@ function isDeadProductRedirect(originalUrl: string, finalUrl: string): boolean {
 export function createAmazonProductHandler(
   productRepository: IProductRepository,
 ): (context: PlaywrightCrawlingContext) => Promise<void> {
-  return async ({ page, request, log }) => {
+  return async ({ page, request, enqueueLinks, log }) => {
     const { keyword } = request.userData as { keyword?: string };
 
     await simulateHumanScroll(page);
@@ -135,5 +161,12 @@ export function createAmazonProductHandler(
       keyword: keyword ?? null,
       scrapedAt: new Date(),
     });
+
+    const currentAsin = request.url.match(PRODUCT_ASIN_RE)?.[1] ?? null;
+    const variantUrls = await extractVariantUrls(page, currentAsin);
+    if (variantUrls.length > 0) {
+      log.info(`Found ${variantUrls.length} variant(s)`, { url: request.url, variantUrls });
+      await enqueueLinks({ urls: variantUrls, userData: { keyword } });
+    }
   };
 }

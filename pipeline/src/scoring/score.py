@@ -10,8 +10,15 @@ average — i.e. a good deal relative to itself.
 Both the score and the trend require at least MIN_OBSERVATIONS prior
 observations; products scraped too few times are skipped rather than given
 an unreliable value.
+
+A product is also skipped if its latest priced observation is older than
+STALE_AFTER_DAYS: when a product goes unavailable, the scrapper stops
+recording a price for it, so "latest priced row" silently falls back to
+whatever price was last seen — without this check, a since-unavailable
+product would keep showing its last (possibly days-old) price as today's
+deal.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 from pymongo import UpdateOne
@@ -21,6 +28,7 @@ from src.scoring.features import PRICE_COLUMN, build_frame, latest_rows_only
 
 MIN_OBSERVATIONS = 5
 TREND_THRESHOLD_PCT_PER_DAY = 0.5
+STALE_AFTER_DAYS = 2
 
 
 def _trend_direction(frame, url: str) -> str:
@@ -46,12 +54,18 @@ def score(db: Database) -> int:
     docs = list(db["price_history"].find({}))
     frame = build_frame(docs)
 
+    now = datetime.now(timezone.utc)
+    stale_cutoff = now.replace(tzinfo=None) - timedelta(days=STALE_AFTER_DAYS)
+
     scoreable = frame.iloc[0:0]
     if not frame.empty:
         latest = latest_rows_only(frame)
-        scoreable = latest[(latest["n_observations"] >= MIN_OBSERVATIONS) & latest["mean_price_30d"].notna()]
+        scoreable = latest[
+            (latest["n_observations"] >= MIN_OBSERVATIONS)
+            & latest["mean_price_30d"].notna()
+            & (latest["day"] >= stale_cutoff)
+        ]
 
-    now = datetime.now(timezone.utc)
     operations = []
     for row in scoreable.to_dict("records"):
         url = row["url"]

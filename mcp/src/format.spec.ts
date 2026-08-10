@@ -2,13 +2,21 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatDashboard,
+  formatFavorites,
   formatHistory,
   formatKeywordSummaries,
   formatProductDetail,
   formatProductSummary,
   formatSearchResult,
+  formatTrackedUrlSummaries,
 } from './format.js';
-import { aDashboard, aProduct, aProductDetail, aScoredProduct } from './testing/fixtures.js';
+import {
+  aDashboard,
+  aProduct,
+  aProductDetail,
+  aScoredProduct,
+  aTrackedUrlSummary,
+} from './testing/fixtures.js';
 
 describe('formatProductSummary', () => {
   // L'id opaque est la seule clé qui permet ensuite d'appeler get_product :
@@ -113,6 +121,42 @@ describe('formatSearchResult', () => {
 
     assert.match(text, /Aucun produit sur cette page/);
     assert.match(text, /page 1\/1/);
+  });
+});
+
+describe('formatTrackedUrlSummaries', () => {
+  it('oriente vers track_product_url quand rien n\'est suivi', () => {
+    assert.match(formatTrackedUrlSummaries([]), /track_product_url/);
+  });
+
+  it("expose l'identifiant, nécessaire à untrack_product_url", () => {
+    const text = formatTrackedUrlSummaries([aTrackedUrlSummary()]);
+
+    assert.match(text, /id: aHR0cHM6Ly9leGVtcGxl/);
+    assert.match(text, /12\.99 EUR/);
+  });
+
+  it("retombe sur l'URL quand le titre n'est pas encore connu", () => {
+    const text = formatTrackedUrlSummaries([
+      aTrackedUrlSummary({ title: null, price: null, lastScrape: null }),
+    ]);
+
+    assert.match(text, /- https:\/\/www\.amazon\.fr\/dp\/B0TEST0001\//);
+    assert.match(text, /dernier relevé jamais/);
+  });
+});
+
+describe('formatFavorites', () => {
+  it("oriente vers add_favorite quand rien n'est favori", () => {
+    assert.match(formatFavorites([]), /add_favorite/);
+  });
+
+  it('rend un aperçu court plutôt que la fiche complète', () => {
+    const text = formatFavorites([aProductDetail()]);
+
+    assert.match(text, /1 produit\(s\) favori\(s\)/);
+    assert.match(text, /id: aHR0cHM6Ly9leGVtcGxl/);
+    assert.match(text, /Historique de prix \(3 relevés\)/);
   });
 });
 
