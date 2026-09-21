@@ -143,6 +143,7 @@ Scoring logic (no trained model, no cross-product comparison):
 - Requires `MIN_OBSERVATIONS = 5` prior observations; products with fewer are skipped
 - `trendDirection` computed via linear regression on the product's own price history (`up` / `down` / `stable`)
 - Stale/unreliable scores are deleted from `deal_scores` after each run
+- Products flagged `unavailable` in `price_history` (page redirected away on last visit) are skipped outright, whatever their price freshness
 
 ### Airflow DAG
 
@@ -219,7 +220,7 @@ This is the only applicative component deliberately exposed outside the cluster.
 
 - DB: `scrapper`
 - `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`
-- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`
+- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`

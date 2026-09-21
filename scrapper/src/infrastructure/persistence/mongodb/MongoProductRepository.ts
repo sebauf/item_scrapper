@@ -18,9 +18,19 @@ export class MongoProductRepository implements IProductRepository {
 
   async save(product: Product): Promise<void> {
     const day = startOfDayUtc(product.scrapedAt);
-    await this.db
-      .collection(COLLECTION_ITEMS_RAW)
-      .updateOne({ url: product.url, day }, { $set: { ...product, day } }, { upsert: true });
+    await Promise.all([
+      this.db
+        .collection(COLLECTION_ITEMS_RAW)
+        .updateOne({ url: product.url, day }, { $set: { ...product, day } }, { upsert: true }),
+      // Le produit a été scrapé avec succès (page existante, plus de
+      // redirection) : s'il avait été marqué indisponible, il est de retour.
+      this.db
+        .collection<UrlKeyedDoc>(COLLECTION_PRICE_HISTORY)
+        .updateOne(
+          { _id: product.url },
+          { $set: { unavailable: false }, $unset: { unavailableSince: '' } },
+        ),
+    ]);
   }
 
   async findKnownUrlsByKeyword(keyword: string, limit: number): Promise<string[]> {
@@ -33,10 +43,16 @@ export class MongoProductRepository implements IProductRepository {
     return docs.map((doc) => doc._id);
   }
 
-  async deleteByUrl(url: string): Promise<void> {
+  async markUnavailable(url: string): Promise<void> {
     await Promise.all([
-      this.db.collection(COLLECTION_ITEMS_RAW).deleteMany({ url }),
-      this.db.collection<UrlKeyedDoc>(COLLECTION_PRICE_HISTORY).deleteOne({ _id: url }),
+      // items_raw et price_history.history ne sont jamais purgés ici : le
+      // produit peut redevenir disponible (rupture de stock, retrait
+      // temporaire) et son historique de prix reste pertinent.
+      this.db
+        .collection<UrlKeyedDoc>(COLLECTION_PRICE_HISTORY)
+        .updateOne({ _id: url }, { $set: { unavailable: true, unavailableSince: new Date() } }),
+      // Sort immédiatement du tableau de bord : un produit indisponible
+      // n'est plus une bonne affaire, même si son ancien score l'était.
       this.db.collection<UrlKeyedDoc>(COLLECTION_DEAL_SCORES).deleteOne({ _id: url }),
     ]);
   }

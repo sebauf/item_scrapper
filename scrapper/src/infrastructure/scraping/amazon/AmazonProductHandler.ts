@@ -124,11 +124,11 @@ export function createAmazonProductHandler(
     await simulateHumanScroll(page);
 
     if (isDeadProductRedirect(request.url, page.url())) {
-      log.info(`Dead product (redirected away), removing from tracking`, {
+      log.info(`Dead product (redirected away), marking unavailable`, {
         url: request.url,
         finalUrl: page.url(),
       });
-      await productRepository.deleteByUrl(request.url);
+      await productRepository.markUnavailable(request.url);
       return;
     }
 
