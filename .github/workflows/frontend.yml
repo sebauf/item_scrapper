@@ -1,9 +1,16 @@
 name: Build & Publish frontend
 
+# Sur pull request : les tests seuls, pour savoir avant de merger.
+# Sur push main / tag : tests puis publication de l'image.
 on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend.yml'
@@ -13,7 +20,44 @@ env:
   IMAGE_NAME: ${{ github.repository }}-frontend
 
 jobs:
+  test:
+    # Les checks d'une PR sont listés par nom de job, pas par workflow : sans
+    # nom explicite, les `test` des différents composants s'affichent à
+    # l'identique et donnent l'impression d'un déclenchement en double.
+    name: Frontend — tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ./frontend
+        run: npm run typecheck
+
+      # Vitest + Testing Library, en jsdom : `fetch` est bouchonné, donc ni
+      # backend ni base ne sont nécessaires.
+      - name: Unit tests
+        working-directory: ./frontend
+        run: npm test
+
   build-and-push:
+    # `next build` ne vérifie que la compilation : publier une image dont les
+    # tests n'ont pas tourné reviendrait à déployer un rendu jamais exercé.
+    needs: test
+    # Une PR ne publie rien : son image porterait un tag de branche éphémère que
+    # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
+    if: github.event_name == 'push'
     name: Frontend — build & push
     runs-on: ubuntu-latest
     permissions:

@@ -45,7 +45,13 @@ cp .env.example .env               # set MONGODB_URI
 python -m src.pipeline             # run full pipeline (refine + score)
 python -m src.refine.build_price_history   # refine only
 python -m src.scoring.score                # score only
+
+pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
+python -m pytest                      # unit tests — no MongoDB needed
 ```
+
+Tests run the real aggregation pipelines against `mongomock`, so a `$group` or
+`$match` written wrong fails in CI rather than in production.
 
 ### Backend
 
@@ -81,6 +87,8 @@ cd frontend
 npm install
 cp .env.example .env               # set BACKEND_URL (defaults to http://localhost:3001)
 npm run dev                        # dev server on :3000 — needs the backend running
+npm test                           # unit tests (Vitest + Testing Library, jsdom) — no backend, no DB
+npm run typecheck                  # tsc --noEmit
 npm run build && npm run start     # production
 npm run gen:api                    # regenerate src/lib/api-types.ts from the backend's /openapi.json
 ```
@@ -246,10 +254,14 @@ Key resources in `k8s/base/`:
 Six workflows, each triggered on changes to their respective directory:
 - `backend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-backend:<tag>`
 - `mcp.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-mcp:<tag>`
-- `scrapper.yml` — builds and pushes `ghcr.io/<repo>-scrapper:<tag>`
-- `pipeline.yml` — builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
-- `frontend.yml` — builds and pushes `ghcr.io/<repo>-frontend:<tag>`
+- `frontend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-frontend:<tag>`
+- `pipeline.yml` — tests, then builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
+- `scrapper.yml` — builds and pushes `ghcr.io/<repo>-scrapper:<tag>` (no test suite yet)
 - `airflow.yml` — builds and pushes the custom Airflow image
+
+Every workflow that has tests runs them in a `test` job that the
+`build-and-push` job declares as `needs:` — a red suite stops the publication.
+Those workflows also run on pull requests (tests only, no image pushed).
 
 ### Adding a crawler for a new shop
 
