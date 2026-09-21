@@ -1,9 +1,16 @@
 name: Build & Publish pipeline
 
+# Sur pull request : les tests seuls, pour savoir avant de merger.
+# Sur push main / tag : tests puis publication de l'image.
 on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    paths:
+      - 'pipeline/**'
+      - '.github/workflows/pipeline.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'pipeline/**'
       - '.github/workflows/pipeline.yml'
@@ -13,7 +20,41 @@ env:
   IMAGE_NAME: ${{ github.repository }}-pipeline
 
 jobs:
+  test:
+    name: Pipeline — tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Même version que l'image du pipeline (cf. pipeline/Dockerfile) : tester
+      # sur un autre interpréteur que celui qui tourne en production laisserait
+      # passer une différence de comportement pandas/numpy.
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pipeline/requirements*.txt
+
+      - name: Install
+        working-directory: ./pipeline
+        run: pip install -r requirements-dev.txt
+
+      # mongomock exécute les agrégations en mémoire : pas de service MongoDB
+      # à lancer, et le pipeline d'agrégation est réellement traversé.
+      - name: Unit tests
+        working-directory: ./pipeline
+        run: python -m pytest
+
   build-and-push:
+    # Le scoring décide de ce que le site affiche comme « bonne affaire » :
+    # publier une image dont les tests n'ont pas tourné, c'est risquer des
+    # scores faux en production pendant 24 h, jusqu'au prochain DAG.
+    needs: test
+    # Une PR ne publie rien : son image porterait un tag de branche éphémère que
+    # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
+    if: github.event_name == 'push'
     name: Pipeline — build & push
     runs-on: ubuntu-latest
     permissions:

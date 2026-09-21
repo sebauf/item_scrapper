@@ -8,6 +8,10 @@ dist/
 .next/
 *.tsbuildinfo
 
+# Caches de test
+.pytest_cache/
+coverage/
+
 # Env — ne jamais committer de vraies valeurs
 .env
 .env.local
