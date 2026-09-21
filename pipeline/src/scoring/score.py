@@ -17,6 +17,14 @@ recording a price for it, so "latest priced row" silently falls back to
 whatever price was last seen — without this check, a since-unavailable
 product would keep showing its last (possibly days-old) price as today's
 deal.
+
+A product the scrapper has explicitly flagged `unavailable` (its product
+page redirected away on the last visit) is skipped outright, regardless of
+how recent its last price is: that flag is a stronger, direct signal than
+staleness-by-age, and would otherwise keep resurfacing as a deal for up to
+STALE_AFTER_DAYS after being confirmed gone. Its price_history is left
+untouched — the product may come back into stock, at which point the
+scrapper clears the flag on its next successful scrape.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -51,7 +59,7 @@ def _trend_direction(frame, url: str) -> str:
 
 
 def score(db: Database) -> int:
-    docs = list(db["price_history"].find({}))
+    docs = list(db["price_history"].find({"unavailable": {"$ne": True}}))
     frame = build_frame(docs)
 
     now = datetime.now(timezone.utc)
