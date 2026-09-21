@@ -35,6 +35,7 @@ export class MongoProductRepository implements IProductRepository {
 
   async deleteByUrl(url: string): Promise<void> {
     await Promise.all([
+      this.db.collection(COLLECTION_ITEMS_RAW).deleteMany({ url }),
       this.db.collection<UrlKeyedDoc>(COLLECTION_PRICE_HISTORY).deleteOne({ _id: url }),
       this.db.collection<UrlKeyedDoc>(COLLECTION_DEAL_SCORES).deleteOne({ _id: url }),
     ]);
