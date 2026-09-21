@@ -1,9 +1,16 @@
 name: Build & Publish scrapper
 
+# Sur pull request : les tests seuls, pour savoir avant de merger.
+# Sur push main / tag : tests puis publication de l'image.
 on:
   push:
     branches: [main]
     tags: ['v*.*.*']
+    paths:
+      - 'scrapper/**'
+      - '.github/workflows/scrapper.yml'
+  pull_request:
+    branches: [main]
     paths:
       - 'scrapper/**'
       - '.github/workflows/scrapper.yml'
@@ -13,7 +20,39 @@ env:
   IMAGE_NAME: ${{ github.repository }}-scrapper
 
 jobs:
+  test:
+    name: Scrapper — tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: scrapper/package-lock.json
+
+      - name: Install
+        working-directory: ./scrapper
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: ./scrapper
+        run: npm run typecheck
+
+      # Les parseurs d'identité et de contenance sont des fonctions pures :
+      # ni navigateur, ni réseau, ni base ne sont nécessaires.
+      - name: Unit tests
+        working-directory: ./scrapper
+        run: npm test
+
   build-and-push:
+    needs: test
+    # Une PR ne publie rien : son image porterait un tag de branche éphémère que
+    # personne ne déploie, et elle graverait dans GHCR du code pas encore relu.
+    if: github.event_name == 'push'
     name: Scrapper — build & push
     runs-on: ubuntu-latest
     permissions:

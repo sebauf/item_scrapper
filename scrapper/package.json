@@ -7,7 +7,10 @@
     "start": "tsx src/main.ts",
     "build": "tsc",
     "start:prod": "node dist/main.js",
-    "migrate:legacy-data": "tsx src/scripts/migrateLegacyData.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx \"src/**/*.spec.ts\"",
+    "migrate:legacy-data": "tsx src/scripts/migrateLegacyData.ts",
+    "spike:jsonld": "tsx src/scripts/spikeJsonLd.ts"
   },
   "dependencies": {
     "crawlee": "^3.11.0",

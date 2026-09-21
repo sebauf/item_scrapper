@@ -181,8 +181,16 @@ Disponibilité attendue (à mesurer, cf. §6) :
 La plupart des sites marchands émettent, pour le SEO, un bloc
 `<script type="application/ld+json">` de type `Product` qui normalise
 `gtin13`, `brand`, `name`, `sku`, `mpn`, `offers.price`. Un seul parseur
-partagé remplace des dizaines de sélecteurs CSS fragiles, **y compris chez
-Amazon**. C'est aussi ce qui rend l'écriture du second crawler courte.
+partagé remplace des dizaines de sélecteurs CSS fragiles. C'est aussi ce qui
+rend l'écriture du second crawler courte.
+
+> **Nuance apportée depuis, par le spike** (`docs/spike-jsonld-amazon.md`) :
+> Amazon est le cas le plus faible pour le JSON-LD — il publie surtout du
+> balisage de navigation, et son EAN vit dans le tableau des
+> caractéristiques. L'ordre de la cascade d'identité est donc propre à chaque
+> enseigne : caractéristiques d'abord chez Amazon, JSON-LD d'abord chez un
+> distributeur alimentaire. Le parseur partagé reste justifié, mais c'est
+> d'abord un investissement **pour le concurrent**.
 
 **MPN / référence fabricant** — deuxième meilleur identifiant, mais ne vaut
 qu'associé à la marque (deux fabricants peuvent utiliser la même
@@ -540,7 +548,7 @@ de validation.
 | Phase | Contenu | Pourquoi à ce rang |
 |---|---|---|
 | **0 — Spike** (~1 j) | Relever 20 fiches sur 2-3 enseignes ; mesurer JSON-LD, EAN, dépendance magasin | Go/no-go et choix de l'enseigne. Tout le reste dépend du taux de couverture EAN. |
-| **1 — Enrichir l'extraction Amazon** | `JsonLdParser`, `QuantityParser`, champs `ean`/`brand`/`quantity` ; déplacement vers `scraping/shared/` | **Apporte de la valeur seule**, même si le magasin n'est jamais ajouté. Testable isolément. Prérequis absolu du matching. |
+| **1 — Enrichir l'extraction Amazon** | `JsonLdParser`, `QuantityParser`, champs `ean`/`brand`/`quantity` ; déplacement vers `scraping/shared/` — **parseurs livrés et testés**, cf. `docs/spike-jsonld-amazon.md` ; reste à mesurer la couverture puis à brancher en production | **Apporte de la valeur seule**, même si le magasin n'est jamais ajouté. Testable isolément. Prérequis absolu du matching. |
 | **2 — Second crawler** | `<concurrent>Crawler` + les 3 correctifs de portée boutique (§2.5) | Sans la phase 1, on obtient deux silos sans lien. |
 | **3 — Étage de matching** | `pipeline/src/matching/`, `product_matches`, gold set, DAG mis à jour | Sans gold set, la qualité est invérifiable. |
 | **4 — Exposition** | Module `comparison` backend, bloc fiche produit, badge enseigne, outil MCP | La donnée doit exister avant d'être affichée. |
