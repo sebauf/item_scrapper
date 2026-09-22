@@ -19,12 +19,15 @@
  * l'outil : l'asymétrie tranche.
  */
 
-export type QuantityUnit = 'L' | 'kg';
+import type { Quantity } from '../../../domain/product/Product.js';
 
-export interface Quantity {
-  amount: number;
-  unit: QuantityUnit;
-}
+export type { Quantity };
+
+/**
+ * L'unité de base vient du domaine : c'est lui qui décide de ce qui est
+ * comparable. L'infrastructure ne fait que reconnaître les écritures.
+ */
+export type QuantityUnit = Quantity['unit'];
 
 export interface ParsedQuantity {
   /** Contenance totale, multiplicateur de lot appliqué. */

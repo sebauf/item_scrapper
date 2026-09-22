@@ -13,7 +13,8 @@
 | Analyse structurelle des sources d'identité d'une fiche Amazon | ✅ fait |
 | Prototype d'extraction (JSON-LD, caractéristiques, contenance) | ✅ fait, testé — 48 tests verts |
 | Harnais de mesure exécutable sur un échantillon réel | ✅ livré (`npm run spike:jsonld`) |
-| **Mesure du taux de couverture réel de l'EAN** | ❌ **impossible ici** |
+| Branchement de l'extraction dans la collecte (§7) | ✅ fait |
+| **Mesure du taux de couverture réel de l'EAN** | ❌ **impossible ici** — se lit en base après quelques scrapes (§8) |
 
 **La mesure manque, et c'est le chiffre qui décide de la suite.** L'environnement
 d'exécution de cette session refuse les connexions sortantes vers
@@ -66,8 +67,8 @@ filet de sécurité.
 
 ## 3. Ce qui a été construit
 
-Cinq modules, tous couverts par des tests, aucun branché en production pour
-l'instant — un spike ne modifie pas le pipeline de collecte.
+Cinq modules, tous couverts par des tests, désormais branchés dans la
+collecte (cf. §7).
 
 ```
 scrapper/src/infrastructure/scraping/
@@ -206,12 +207,75 @@ atteignable en incluant la validation humaine. L'écart entre les deux lignes
 
 ---
 
-## 7. Prochaine étape recommandée
+## 7. Suite donnée : l'extraction est branchée en production
 
-1. Lancer `npm run spike:jsonld -- --limit=30` et lire la ligne EAN.
-2. Selon le résultat (§5), décider si l'on branche l'extraction en production —
-   c'est-à-dire ajouter `ean` / `brand` / `quantity` à l'entité `Product`,
-   appeler `extractAmazonIdentity` depuis `AmazonProductHandler`, et remonter
-   ces champs dans `price_history` via `build_price_history.py`.
-3. Ce branchement n'a de sens qu'après la mesure : si la couverture est
-   très faible, il faudra d'abord revoir d'où vient l'identité.
+Le harnais ne pouvant pas être exécuté ici, l'extraction a été **branchée dans
+le pipeline de collecte**, ce qui rend la mesure gratuite : chaque scrape
+nocturne enregistre désormais l'identité, et la couverture se lit directement
+en base (§8) sur le corpus réel plutôt que sur un échantillon de 30 fiches.
+
+Le branchement est sans risque : les champs sont facultatifs, une extraction
+qui échoue écrit `null`, et rien en aval ne les lit encore. Le backend ne les
+expose pas (c'est la phase 4 de l'étude), et son mappeur liste explicitement
+les champs qu'il projette — un ajout de colonne lui est donc inerte.
+
+| Fichier | Changement |
+|---|---|
+| `scrapper/src/domain/product/Product.ts` | `ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses` — tous nullables |
+| `scrapper/…/amazon/AmazonProductHandler.ts` | appelle `extractAmazonIdentity`, journalise les deux refus d'identité |
+| `pipeline/src/refine/build_price_history.py` | remonte l'identité sur le document produit |
+
+### La règle « dernière valeur non nulle »
+
+Un point de conception mérite d'être signalé, parce qu'il n'était pas dans
+l'étude et qu'il porte sur le champ dont tout dépend.
+
+Les métadonnées existantes (`title`, `images`) sont agrégées avec `$last` : un
+produit renommé ou re-photographié doit afficher sa version du jour. Appliquer
+la même règle à l'EAN serait une faute. Amazon rend régulièrement une page
+amputée de sa section « Informations sur le produit » — et un `$last` naïf
+effacerait alors le code-barres du produit, c'est-à-dire **sa seule clé de
+rapprochement**, à cause d'un unique relevé dégradé.
+
+Les champs d'identité sont donc réduits à leur **dernière valeur renseignée**.
+Un article ne change pas de code-barres ; son absence signale une page
+dégradée, pas un changement d'article. Une correction ultérieure écrase bien
+la valeur précédente — « dernière non nulle », pas « première ».
+
+Quatre tests couvrent ce comportement, dont le cas réel de la migration : les
+~1300 relevés déjà en base n'ont aucun champ d'identité et doivent ressortir à
+`null` *présent*, pas absent, pour que l'étage de rapprochement n'ait pas à
+distinguer « inconnu » de « pas encore relevé ».
+
+---
+
+## 8. Mesurer la couverture sur le corpus réel
+
+Une fois quelques scrapes passés, le chiffre décisif se lit sans harnais :
+
+```js
+// mongosh, base `scrapper`
+db.price_history.aggregate([
+  { $match: { shop: 'amazon', unavailable: { $ne: true } } },
+  { $group: {
+      _id: null,
+      produits:    { $sum: 1 },
+      avecEan:     { $sum: { $cond: [{ $ne: ['$ean', null] }, 1, 0] } },
+      avecMarque:  { $sum: { $cond: [{ $ne: ['$brand', null] }, 1, 0] } },
+      avecContenance: { $sum: { $cond: [{ $ne: ['$quantity', null] }, 1, 0] } },
+  } },
+  { $project: {
+      produits: 1,
+      tauxEan:        { $round: [{ $multiply: [{ $divide: ['$avecEan', '$produits'] }, 100] }, 1] },
+      tauxMarque:     { $round: [{ $multiply: [{ $divide: ['$avecMarque', '$produits'] }, 100] }, 1] },
+      tauxContenance: { $round: [{ $multiply: [{ $divide: ['$avecContenance', '$produits'] }, 100] }, 1] },
+  } },
+])
+```
+
+`tauxEan` se lit avec la grille du §5. Le harnais `npm run spike:jsonld` reste
+utile pour un point précis que la base ne dit pas : **d'où** vient l'EAN
+(JSON-LD ou caractéristiques), donc si l'attente du §2 se vérifie.
+
+Attendre au moins deux ou trois scrapes avant de conclure : sur un seul run,
+les pages bloquées par Amazon tirent artificiellement le taux vers le bas.

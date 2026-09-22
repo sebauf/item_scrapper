@@ -10,28 +10,80 @@ from datetime import datetime, timezone
 from pymongo import UpdateOne
 from pymongo.database import Database
 
+# Champs d'identité de l'article (code-barres, marque, contenance), par
+# opposition aux champs volatils que sont le prix ou la date de livraison.
+#
+# Ils sont traités à part parce qu'ils se comportent autrement dans le temps :
+# un titre ou une photo changent légitimement, et le relevé le plus récent
+# fait alors autorité. Un code-barres, lui, ne change pas — s'il manque au
+# dernier relevé, c'est que la page était dégradée (blocage, section
+# « Informations sur le produit » non rendue), pas que l'article en a changé.
+#
+# D'où la règle retenue : **dernière valeur non nulle** plutôt que dernière
+# valeur. Un seul scrape dégradé effacerait sinon l'identité d'un produit, et
+# avec elle sa seule clé de rapprochement inter-enseignes.
+IDENTITY_FIELDS = ("ean", "brand", "mpn", "quantity", "packSize", "doses")
+
+_CANDIDATES_SUFFIX = "__candidates"
+
+
+def _group_stage() -> dict:
+    group = {
+        "_id": "$url",
+        "shop": {"$last": "$shop"},
+        "keyword": {"$last": "$keyword"},
+        "title": {"$last": "$title"},
+        "images": {"$last": "$images"},
+        "firstSeen": {"$min": "$day"},
+        "lastSeen": {"$max": "$day"},
+        "history": {
+            "$push": {
+                "day": "$day",
+                "price": "$price",
+                "crossedOutPrice": "$crossedOutPrice",
+                "unitPrice": "$unitPrice",
+                "scrapedAt": "$scrapedAt",
+            }
+        },
+    }
+    # Le $sort amont garantit l'ordre chronologique de ces tableaux.
+    for field in IDENTITY_FIELDS:
+        group[f"{field}{_CANDIDATES_SUFFIX}"] = {"$push": f"${field}"}
+    return {"$group": group}
+
+
+def _last_known_stage() -> dict:
+    """Réduit chaque tableau de candidats à sa dernière valeur renseignée."""
+    return {
+        "$set": {
+            field: {
+                "$ifNull": [
+                    {
+                        "$arrayElemAt": [
+                            {
+                                "$filter": {
+                                    "input": f"${field}{_CANDIDATES_SUFFIX}",
+                                    "cond": {"$ne": ["$$this", None]},
+                                }
+                            },
+                            -1,
+                        ]
+                    },
+                    None,
+                ]
+            }
+            for field in IDENTITY_FIELDS
+        }
+    }
+
+
 PIPELINE = [
     {"$sort": {"url": 1, "day": 1}},
-    {
-        "$group": {
-            "_id": "$url",
-            "shop": {"$last": "$shop"},
-            "keyword": {"$last": "$keyword"},
-            "title": {"$last": "$title"},
-            "images": {"$last": "$images"},
-            "firstSeen": {"$min": "$day"},
-            "lastSeen": {"$max": "$day"},
-            "history": {
-                "$push": {
-                    "day": "$day",
-                    "price": "$price",
-                    "crossedOutPrice": "$crossedOutPrice",
-                    "unitPrice": "$unitPrice",
-                    "scrapedAt": "$scrapedAt",
-                }
-            },
-        }
-    },
+    _group_stage(),
+    _last_known_stage(),
+    # Projection d'exclusion plutôt que $unset : même effet, et c'est la
+    # forme que sait exécuter mongomock, sur lequel tournent les tests.
+    {"$project": {f"{field}{_CANDIDATES_SUFFIX}": 0 for field in IDENTITY_FIELDS}},
 ]
 
 

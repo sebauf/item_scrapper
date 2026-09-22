@@ -1,6 +1,8 @@
 # Étude — ajouter un magasin concurrent et rapprocher les articles
 
-> Statut : étude de conception, aucun code modifié.
+> Statut : étude de conception. La **phase 1 de la feuille de route (§8) est
+> réalisée** — voir `docs/spike-jsonld-amazon.md` ; les phases 2 à 5 restent à
+> faire.
 > Objet : évaluer l'ajout d'une seconde enseigne au scrapper, et surtout
 > déterminer **comment rapprocher deux fiches produit de deux magasins
 > différents avec une fiabilité suffisante pour les comparer strictement**.
@@ -548,7 +550,7 @@ de validation.
 | Phase | Contenu | Pourquoi à ce rang |
 |---|---|---|
 | **0 — Spike** (~1 j) | Relever 20 fiches sur 2-3 enseignes ; mesurer JSON-LD, EAN, dépendance magasin | Go/no-go et choix de l'enseigne. Tout le reste dépend du taux de couverture EAN. |
-| **1 — Enrichir l'extraction Amazon** | `JsonLdParser`, `QuantityParser`, champs `ean`/`brand`/`quantity` ; déplacement vers `scraping/shared/` — **parseurs livrés et testés**, cf. `docs/spike-jsonld-amazon.md` ; reste à mesurer la couverture puis à brancher en production | **Apporte de la valeur seule**, même si le magasin n'est jamais ajouté. Testable isolément. Prérequis absolu du matching. |
+| **1 — Enrichir l'extraction Amazon** | ✅ **faite** — `Gtin`, `JsonLdParser`, `QuantityParser` dans `scraping/shared/`, extracteur Amazon, champs `ean`/`brand`/`mpn`/`quantity`/`packSize`/`doses` branchés de l'entité `Product` jusqu'à `price_history`. Reste à lire la couverture en base (`docs/spike-jsonld-amazon.md` §8) | **Apporte de la valeur seule**, même si le magasin n'est jamais ajouté. Testable isolément. Prérequis absolu du matching. |
 | **2 — Second crawler** | `<concurrent>Crawler` + les 3 correctifs de portée boutique (§2.5) | Sans la phase 1, on obtient deux silos sans lien. |
 | **3 — Étage de matching** | `pipeline/src/matching/`, `product_matches`, gold set, DAG mis à jour | Sans gold set, la qualité est invérifiable. |
 | **4 — Exposition** | Module `comparison` backend, bloc fiche produit, badge enseigne, outil MCP | La donnée doit exister avant d'être affichée. |
