@@ -3,6 +3,7 @@ import type { PlaywrightCrawlingContext } from 'crawlee';
 import type { IProductRepository } from '../../../domain/product/IProductRepository.js';
 import { parsePrice, parseUnitPrice } from './PriceParser.js';
 import { toHighResImageUrls } from './ImageUrlParser.js';
+import { extractAmazonIdentity } from './AmazonIdentityExtractor.js';
 
 const SCROLL_MIN_PX = 400;
 const SCROLL_RANDOM_RANGE_PX = 300;
@@ -146,8 +147,27 @@ export function createAmazonProductHandler(
     const unitPriceRaw = await extractUnitPriceRaw(page);
     const deliveryDate = await extractDeliveryDate(page);
     const images = await extractImages(page);
+    const identity = await extractAmazonIdentity(page, title);
 
-    log.info(`Scraped: ${title} — ${priceText ?? 'no price'}`, { url: request.url });
+    log.info(`Scraped: ${title} — ${priceText ?? 'no price'}`, {
+      url: request.url,
+      ean: identity.ean,
+      eanSource: identity.eanSource,
+    });
+
+    // Les deux refus d'identité sont journalisés : ce sont eux qu'il faudra
+    // surveiller si le taux d'extraction se dégrade après une refonte
+    // d'Amazon. Ils ne bloquent rien — la fiche est enregistrée sans
+    // identifiant, et la cascade de rapprochement sait faire avec.
+    if (identity.ambiguousEan) {
+      log.warning('Plusieurs EAN sur la fiche : identité indécidable', { url: request.url });
+    }
+    if (identity.quantity.ambiguous) {
+      log.warning('Contenances multiples dans le titre : contenance non retenue', {
+        url: request.url,
+        title,
+      });
+    }
 
     await productRepository.save({
       url: request.url,
@@ -160,6 +180,12 @@ export function createAmazonProductHandler(
       shop: 'amazon',
       keyword: keyword ?? null,
       scrapedAt: new Date(),
+      ean: identity.ean,
+      brand: identity.brand,
+      mpn: identity.mpn,
+      quantity: identity.quantity.quantity,
+      packSize: identity.quantity.packSize,
+      doses: identity.quantity.doses,
     });
 
     const currentAsin = request.url.match(PRODUCT_ASIN_RE)?.[1] ?? null;
