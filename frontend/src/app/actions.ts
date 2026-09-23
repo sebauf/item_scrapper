@@ -3,6 +3,7 @@ import { revalidatePath } from 'next/cache';
 import {
   addFavorite,
   ApiError,
+  redeploy,
   removeFavorite,
   trackKeyword,
   trackProductUrl,
@@ -99,4 +100,35 @@ export async function removeFavoriteAction(id: string): Promise<void> {
   revalidatePath('/favorites');
   revalidatePath(`/product/${id}`);
   revalidatePath('/products');
+}
+
+export interface RedeployState {
+  error?: string;
+  restarted?: string[];
+}
+
+/**
+ * Le jeton n'est ni stocké ni journalisé : il transite du formulaire au
+ * backend, qui seul le vérifie. Les refus (401 jeton faux, 409 déjà à jour ou
+ * rollout en cours) arrivent avec un message du backend, affiché tel quel.
+ */
+export async function redeployAction(
+  _prev: RedeployState,
+  formData: FormData,
+): Promise<RedeployState> {
+  const raw = formData.get('token');
+  const token = typeof raw === 'string' ? raw.trim() : '';
+  if (!token) return { error: 'Saisissez le jeton administrateur.' };
+
+  let restarted: string[];
+  try {
+    restarted = await redeploy(token);
+  } catch (error) {
+    if (error instanceof ApiError && error.status < 500) return { error: error.message };
+    console.error('redeployAction', error instanceof Error ? error.message : error);
+    return { error: 'Le service est momentanément indisponible. Réessayez.' };
+  }
+
+  revalidatePath('/system');
+  return { restarted };
 }

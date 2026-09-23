@@ -11,6 +11,18 @@ export class AppConfig {
     readonly mongodbDatabase: string,
     readonly port: number,
     readonly corsOrigins: readonly string[],
+    /**
+     * Jeton exigé par les routes d'administration (mise à jour de
+     * l'application). `null` = ces routes sont fermées : la fonctionnalité est
+     * optionnelle, son absence ne doit pas empêcher l'API de démarrer.
+     */
+    readonly adminToken: string | null,
+    /**
+     * Fichier `.dockerconfigjson` (le pull secret GHCR monté en volume) donnant
+     * accès aux packages privés pour comparer les versions d'images. Absent =
+     * accès anonyme, suffisant pour des packages publics.
+     */
+    readonly registryAuthFile: string,
   ) {}
 
   static fromEnv(env: NodeJS.ProcessEnv): AppConfig {
@@ -37,10 +49,26 @@ export class AppConfig {
       .map((origin) => origin.trim())
       .filter(Boolean);
 
+    const adminToken = (env.ADMIN_TOKEN ?? '').trim() || null;
+    if (adminToken !== null && adminToken.length < 16) {
+      errors.push('ADMIN_TOKEN doit faire au moins 16 caractères (openssl rand -hex 32).');
+    }
+
+    const registryAuthFile = (
+      env.REGISTRY_AUTH_FILE ?? '/var/run/secrets/registry/.dockerconfigjson'
+    ).trim();
+
     if (errors.length > 0) {
       throw new Error(`Configuration invalide :\n  - ${errors.join('\n  - ')}`);
     }
 
-    return new AppConfig(mongodbUri, mongodbDatabase, port, Object.freeze(corsOrigins));
+    return new AppConfig(
+      mongodbUri,
+      mongodbDatabase,
+      port,
+      Object.freeze(corsOrigins),
+      adminToken,
+      registryAuthFile,
+    );
   }
 }

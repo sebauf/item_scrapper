@@ -19,6 +19,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     untrackProductUrl: vi.fn(),
     addFavorite: vi.fn(),
     removeFavorite: vi.fn(),
+    redeploy: vi.fn(),
   };
 });
 
@@ -190,5 +191,44 @@ describe('favoris', () => {
     vi.mocked(api.addFavorite).mockRejectedValue(new ApiError(500, null, 'boom'));
 
     await expect(actions.addFavoriteAction('aWQ')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('redeployAction', () => {
+  it('lance la mise à jour avec le jeton saisi et rafraîchit la page Système', async () => {
+    vi.mocked(api.redeploy).mockResolvedValue(['price-tracker-backend']);
+
+    await expect(actions.redeployAction({}, formData({ token: '  mon-jeton  ' }))).resolves.toEqual({
+      restarted: ['price-tracker-backend'],
+    });
+    expect(api.redeploy).toHaveBeenCalledWith('mon-jeton');
+    expect(revalidatePath).toHaveBeenCalledWith('/system');
+  });
+
+  it('n’appelle pas le backend sans jeton', async () => {
+    await expect(actions.redeployAction({}, formData({ token: '   ' }))).resolves.toEqual({
+      error: 'Saisissez le jeton administrateur.',
+    });
+    expect(api.redeploy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, 'INVALID_ADMIN_TOKEN', 'Jeton administrateur invalide.'],
+    [409, 'ALREADY_UP_TO_DATE', 'L’application est déjà à jour.'],
+  ])('affiche le message du backend sur un refus %i', async (status, code, message) => {
+    vi.mocked(api.redeploy).mockRejectedValue(new ApiError(status, code, message));
+
+    await expect(actions.redeployAction({}, formData({ token: 't' }))).resolves.toEqual({ error: message });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('masque une panne derrière un message générique, sans journaliser le jeton', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.mocked(api.redeploy).mockRejectedValue(new ApiError(502, null, 'Bad gateway'));
+
+    await expect(actions.redeployAction({}, formData({ token: 'secret-jeton' }))).resolves.toEqual({
+      error: 'Le service est momentanément indisponible. Réessayez.',
+    });
+    expect(JSON.stringify(consoleError.mock.calls)).not.toContain('secret-jeton');
   });
 });

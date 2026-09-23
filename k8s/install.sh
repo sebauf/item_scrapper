@@ -241,6 +241,9 @@ if [[ "$GENERATE_SECRETS" == "true" ]]; then
   # démarre pas. À recopier ensuite dans la configuration de l'agent.
   ask_secret MCP_AUTH_TOKEN "MCP_AUTH_TOKEN (jeton porteur du serveur MCP)" "$(gen_hex_key)"
 
+  # Demandé par la page Système du frontend pour lancer une mise à jour.
+  ask_secret ADMIN_TOKEN "ADMIN_TOKEN (jeton de mise à jour depuis l'interface)" "$(gen_hex_key)"
+
   AIRFLOW_SQL_ALCHEMY_CONN="postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow"
 
   umask 077
@@ -260,6 +263,8 @@ AIRFLOW_FERNET_KEY=${AIRFLOW_FERNET_KEY}
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 
 MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+
+ADMIN_TOKEN=${ADMIN_TOKEN}
 EOF
   chmod 600 "$SECRETS_FILE"
   info "$SECRETS_FILE écrit (permissions 600, non commité)."
@@ -274,6 +279,16 @@ if ! grep -q '^MCP_AUTH_TOKEN=' "$SECRETS_FILE"; then
   warn "MCP_AUTH_TOKEN était absent de $SECRETS_FILE : un jeton a été généré."
   warn "Récupère-le pour la configuration de l'agent :"
   echo "    grep MCP_AUTH_TOKEN $SECRETS_FILE"
+fi
+
+# Même rattrapage pour ADMIN_TOKEN, apparu avec la page Système. Le backend le
+# lit en optionnel (il démarrerait sans), mais le bouton de mise à jour
+# resterait alors désactivé sans que rien ne l'explique à l'installation.
+if ! grep -q '^ADMIN_TOKEN=' "$SECRETS_FILE"; then
+  printf '\nADMIN_TOKEN=%s\n' "$(gen_hex_key)" >> "$SECRETS_FILE"
+  warn "ADMIN_TOKEN était absent de $SECRETS_FILE : un jeton a été généré."
+  warn "C'est lui que demande la page Système pour mettre l'application à jour :"
+  echo "    grep ADMIN_TOKEN $SECRETS_FILE"
 fi
 
 # ---------------------------------------------------------------------------
@@ -353,6 +368,7 @@ echo "  Images            : ghcr.io/${GITHUB_OWNER}/item_scrapper-* : ${IMAGE_TA
 echo "  Frontend          : catch-all (tous les hostnames)"
 echo "  Backend           : interne au cluster (ClusterIP, aucun ingress)"
 echo "  MCP               : exposé sur <n'importe quel hostname>/mcp, jeton requis"
+echo "  Mises à jour      : page /system du frontend, ADMIN_TOKEN requis"
 echo "  Airflow           : ${AIRFLOW_DOMAIN:+ingress airflow.$AIRFLOW_DOMAIN + }NodePort 30808"
 echo "  secrets.env       : $([[ "$GENERATE_SECRETS" == "true" ]] && echo "régénéré" || echo "conservé")"
 if ! confirm "Lancer 'kubectl apply -k k8s/overlays/local' maintenant ?" y; then
@@ -393,4 +409,5 @@ echo "    kubectl -n $NAMESPACE get pods"
 echo "    kubectl -n $NAMESPACE get ingress"
 echo
 echo "Prochaines mises à jour (après un build CI) :"
-echo "    ./k8s/install.sh -y --restart"
+echo "    bouton « Mettre à jour » de la page /system (jeton : grep ADMIN_TOKEN $SECRETS_FILE)"
+echo "    ou ./k8s/install.sh -y --restart (obligatoire si les manifests ont changé)"

@@ -7,7 +7,9 @@ import {
   getKeywords,
   getProduct,
   getTrackedUrls,
+  getUpdateStatus,
   isFavorite,
+  redeploy,
   removeFavorite,
   searchProducts,
   trackKeyword,
@@ -233,5 +235,31 @@ describe('getProduct', () => {
     errorResponse(500, { code: 'X', message: 'boom' });
 
     await expect(getProduct('aWQ')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('mise à jour de l’application', () => {
+  it('lit l’état des versions', async () => {
+    const fetchMock = jsonResponse({ updateAvailable: true });
+
+    await expect(getUpdateStatus()).resolves.toEqual({ updateAvailable: true });
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/platform/status`, { cache: 'no-store' });
+  });
+
+  it('relaie le jeton administrateur en Bearer et renvoie les composants redémarrés', async () => {
+    const fetchMock = jsonResponse({ restarted: ['price-tracker-backend'] });
+
+    await expect(redeploy('mon-jeton')).resolves.toEqual(['price-tracker-backend']);
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/platform/redeploy`, {
+      cache: 'no-store',
+      method: 'POST',
+      headers: { authorization: 'Bearer mon-jeton' },
+    });
+  });
+
+  it('remonte un refus du backend avec son code', async () => {
+    errorResponse(401, { code: 'INVALID_ADMIN_TOKEN', message: 'Jeton administrateur invalide.' });
+
+    await expect(redeploy('faux')).rejects.toMatchObject({ status: 401, code: 'INVALID_ADMIN_TOKEN' });
   });
 });

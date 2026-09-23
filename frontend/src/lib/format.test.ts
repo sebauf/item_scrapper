@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatPrice, timeAgo } from './format';
+import { formatPrice, shortDigest, timeAgo } from './format';
 
 /**
  * Deux fonctions d'affichage, deux pièges : une devise inconnue ne doit pas
@@ -60,5 +60,15 @@ describe('timeAgo', () => {
     vi.setSystemTime(now);
 
     expect(timeAgo(new Date(now.getTime() + 60_000).toISOString())).toBe("à l'instant");
+  });
+});
+
+describe('shortDigest', () => {
+  it('garde les 12 premiers caractères hexadécimaux', () => {
+    expect(shortDigest(`sha256:${'3f1c9a2b7e04'}${'0'.repeat(52)}`)).toBe('3f1c9a2b7e04');
+  });
+
+  it('affiche un tiret pour un digest inconnu', () => {
+    expect(shortDigest(null)).toBe('—');
   });
 });

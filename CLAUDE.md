@@ -168,6 +168,9 @@ src/modules/keyword/   write context: Keyword aggregate, KeywordName value objec
                        KeywordRepository port, TrackKeyword / UntrackKeyword commands
 src/modules/catalog/   read-only context: ProductId / ProductQuery value objects,
                        DealPolicy, read models over items_raw / price_history / deal_scores
+src/modules/platform/  no-Mongo context: compares running image digests (Kubernetes API,
+                       via the backend's ServiceAccount) to the registry (GHCR), and
+                       redeploys outdated components (rollout restart) — behind ADMIN_TOKEN
 src/shared/            DomainError families (400/409/404), Mongo connection + required indexes
 ```
 
@@ -190,6 +193,7 @@ owner of the "good deal" policy.
 - `src/app/keywords/page.tsx` — tracked keywords, add/remove via Server Actions
 - `src/app/keyword/[slug]/page.tsx` — product grid, server-side filter/sort/paginate
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
+- `src/app/system/page.tsx` — deployed versions vs registry + "update the app" button (asks for `ADMIN_TOKEN`, checked by the backend); `UpdateIndicator` in the layout header shows the "update available" badge on every page
 - `src/lib/api.ts` — the single data access point: typed client over the backend API
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
@@ -239,6 +243,7 @@ Managed with Kustomize. Namespace: `price-tracker`.
 
 Key resources in `k8s/base/`:
 - `backend-deployment.yaml` + `backend-service.yaml` — NestJS API, **ClusterIP only, no ingress**: reachable in-cluster at `http://price-tracker-backend`
+- `backend-rbac.yaml` — ServiceAccount for the backend: `get`/`patch` on the five app Deployments only (`resourceNames`, kept in sync with `MANAGED_DEPLOYMENTS` in `platform/infrastructure/kubernetes-cluster.gateway.ts`) + `list` pods — powers the in-app update
 - `mcp-deployment.yaml` + `mcp-service.yaml` + `mcp-ingress.yaml` — MCP server, **exposed on purpose** (the agent is off-cluster) on the `/mcp` path prefix; hostless ingress, Traefik prefers it over the frontend's `/`. Protected by `MCP_AUTH_TOKEN` from the secret, nothing else
 - `frontend-deployment.yaml` + `frontend-service.yaml` + `ingress.yaml` — Next.js frontend behind Traefik ingress
 - `mongodb.yaml` — MongoDB StatefulSet (in-cluster), ClusterIP service + `mongodb-external` NodePort for LAN access

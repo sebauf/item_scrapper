@@ -45,8 +45,16 @@ src/
         ├── domain/            ProductId, ProductQuery (objets-valeurs),
         │                      DealPolicy (le seuil de bonne affaire)
         ├── application/       queries + ports de read model
-        ├── infrastructure/    agrégations Mongo + mapper document → DTO
-        └── interface/         controllers + DTO de réponse
+    │   ├── infrastructure/    agrégations Mongo + mapper document → DTO
+    │   └── interface/         controllers + DTO de réponse
+    └── platform/      contexte « versions déployées » — sans MongoDB
+        ├── domain/            ComponentVersion (digest en cours vs registre),
+        │                      RedeployPolicy (qui redémarrer, quand refuser)
+        ├── application/       GetUpdateStatusQuery, RedeployCommand,
+        │                      ports ClusterGateway / ImageRegistry
+        ├── infrastructure/    API Kubernetes (ServiceAccount du Pod),
+        │                      registre OCI (GHCR) avec cache 5 min
+        └── interface/         controller + AdminTokenGuard (ADMIN_TOKEN)
 ```
 
 ### Règle de dépendance
@@ -79,6 +87,8 @@ Préfixe `/api/v1` (sauf les sondes, volontairement hors versionnement).
 | `DELETE` | `/api/v1/keywords/{keyword}` | 204 (idempotent) · 404 inconnu |
 | `GET` | `/api/v1/keywords/{keyword}/products` | 200 · 400 filtre invalide |
 | `GET` | `/api/v1/products/{id}` | 200 · 400 id mal formé · 404 inconnu |
+| `GET` | `/api/v1/platform/status` | 200 — digest de chaque composant déployé vs registre |
+| `POST` | `/api/v1/platform/redeploy` | 202 — rollout restart lancé · 401 jeton invalide · 403 `ADMIN_TOKEN` absent · 409 hors cluster / déjà à jour / rollout en cours |
 | `GET` | `/health/live` | 200 — le processus répond |
 | `GET` | `/health/ready` | 200 · 503 si MongoDB est injoignable |
 
@@ -99,6 +109,22 @@ appliquait lui-même le seuil. Il reçoit désormais le booléen : la politique
 
 De même, chaque produit porte un champ `id` déjà encodé : le frontend n'a plus à
 encoder d'URL pour construire ses liens.
+
+### Mise à jour de l'application (`platform`)
+
+Le tag `main` des images est réécrit à chaque build CI ; seul le **digest**
+(`sha256:…`) identifie une image. `GET /platform/status` compare, pour chaque
+Deployment applicatif, le digest de l'image qui tourne (lu dans le statut des
+Pods) à celui vers lequel le tag pointe aujourd'hui sur le registre (`HEAD` du
+manifeste). `POST /platform/redeploy` redémarre les composants en retard,
+exactement comme `kubectl rollout restart` : les Pods étant en
+`imagePullPolicy: Always`, chacun tire la nouvelle image.
+
+Hors Kubernetes (développement local), le statut renvoie
+`clusterAvailable: false` et la mise à jour est refusée (409). La route
+d'écriture exige `Authorization: Bearer <ADMIN_TOKEN>` ; sans `ADMIN_TOKEN`
+configuré, elle est fermée (403). Droits du ServiceAccount :
+`k8s/base/backend-rbac.yaml`.
 
 Contrat OpenAPI : `/openapi.json` (UI sur `/docs`). C'est la source depuis
 laquelle le frontend générera ses types.

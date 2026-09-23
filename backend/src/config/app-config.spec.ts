@@ -55,6 +55,22 @@ describe('AppConfig', () => {
     });
   });
 
+  describe('jeton administrateur', () => {
+    it('est absent par défaut : les routes d’administration restent fermées', () => {
+      expect(AppConfig.fromEnv(validEnv).adminToken).toBeNull();
+    });
+
+    it('traite une valeur vide comme une absence', () => {
+      expect(AppConfig.fromEnv({ ...validEnv, ADMIN_TOKEN: '   ' }).adminToken).toBeNull();
+    });
+
+    it('est lu et trimé', () => {
+      const token = 'a'.repeat(32);
+
+      expect(AppConfig.fromEnv({ ...validEnv, ADMIN_TOKEN: ` ${token} ` }).adminToken).toBe(token);
+    });
+  });
+
   describe('refus au démarrage', () => {
     it.each([
       ['une URI absente', {}],
@@ -65,6 +81,7 @@ describe('AppConfig', () => {
       ['un port décimal', { ...validEnv, PORT: '3001.5' }],
       ['un port nul', { ...validEnv, PORT: '0' }],
       ['un port hors bornes', { ...validEnv, PORT: '70000' }],
+      ['un jeton admin trop court', { ...validEnv, ADMIN_TOKEN: 'court' }],
     ])('refuse %s', (_label, env) => {
       expect(() => AppConfig.fromEnv(env)).toThrow(/Configuration invalide/);
     });

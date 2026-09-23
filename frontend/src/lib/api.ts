@@ -7,7 +7,9 @@ import type { components } from './api-types';
  * de connexion MongoDB. Tous les appels partent du serveur Next (Server
  * Components et Server Actions), jamais du navigateur — le backend est un
  * Service ClusterIP sans Ingress, injoignable depuis l'extérieur du cluster.
- * D'où l'absence de CORS et d'authentification à ce stade.
+ * D'où l'absence de CORS. Seule exception à l'absence d'authentification : la
+ * mise à jour de l'application (`redeploy`), qui relaie le jeton administrateur
+ * saisi par l'utilisateur — le frontend ne le connaît pas, le backend le vérifie.
  *
  * Les types viennent de `api-types.ts`, généré depuis le contrat OpenAPI du
  * backend (`npm run gen:api`). Une réponse qui changerait de forme casserait
@@ -27,6 +29,9 @@ export type KeywordDeals = Schemas['KeywordDealsResponse'];
 export type Dashboard = Schemas['DashboardResponse'];
 export type TrendDirection = NonNullable<ProductSummary['trendDirection']>;
 export type TrackedUrlSummary = Schemas['TrackedUrlSummaryResponse'];
+export type UpdateStatus = Schemas['UpdateStatusResponse'];
+export type ComponentVersion = Schemas['ComponentVersionResponse'];
+export type ComponentStatus = Schemas['ComponentStatus'];
 
 const BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
 const API = `${BASE_URL}/api/v1`;
@@ -160,4 +165,16 @@ export function addFavorite(id: string): Promise<void> {
 
 export function removeFavorite(id: string): Promise<void> {
   return request<void>(`/favorites/${id}`, { method: 'DELETE' });
+}
+
+export function getUpdateStatus(): Promise<UpdateStatus> {
+  return request<UpdateStatus>('/platform/status');
+}
+
+/** Lance la mise à jour ; renvoie les composants redémarrés. */
+export function redeploy(adminToken: string): Promise<string[]> {
+  return request<{ restarted: string[] }>('/platform/redeploy', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${adminToken}` },
+  }).then((response) => response.restarted);
 }

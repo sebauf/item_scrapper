@@ -16,6 +16,9 @@ spec:
       labels:
         app: price-tracker-backend
     spec:
+      # Droits de lecture/redémarrage des Deployments applicatifs, pour la mise
+      # à jour depuis l'interface — cf. backend-rbac.yaml.
+      serviceAccountName: price-tracker-backend
       # Requis seulement si les packages GHCR sont privés — voir k8s/README.md.
       imagePullSecrets:
         - name: ghcr-pull-secret
@@ -37,6 +40,22 @@ spec:
               value: production
             - name: PORT
               value: "3001"
+            # Jeton exigé pour lancer une mise à jour depuis la page Système.
+            # Optionnel : un secrets.env antérieur à la fonctionnalité n'empêche
+            # pas le Pod de démarrer, le bouton est simplement désactivé.
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: ADMIN_TOKEN
+                  optional: true
+          # Identifiants GHCR pour comparer les versions quand les packages sont
+          # privés. Le pull secret n'existe que dans ce cas (cf. install.sh) :
+          # absent, le volume est vide et le registre est interrogé anonymement.
+          volumeMounts:
+            - name: registry-auth
+              mountPath: /var/run/secrets/registry
+              readOnly: true
           resources:
             requests:
               cpu: "100m"
@@ -62,3 +81,8 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
+      volumes:
+        - name: registry-auth
+          secret:
+            secretName: ghcr-pull-secret
+            optional: true

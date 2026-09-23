@@ -195,6 +195,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/platform/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Versions déployées comparées au registre d’images */
+        get: operations["PlatformController_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/platform/redeploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Met l’application à jour (rollout restart des composants en retard)
+         * @description 202 : les redémarrages sont lancés, pas terminés — suivre GET /platform/status. Les changements de manifests (variables, ressources, RBAC) ne sont pas couverts : ils demandent toujours k8s/install.sh.
+         */
+        post: operations["PlatformController_redeploy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -345,6 +382,44 @@ export interface components {
         AddFavoriteDto: {
             /** @description Identifiant produit encodé, renvoyé par /products/{id} ou une liste */
             id: string;
+        };
+        /**
+         * @description up-to-date : même digest que le registre ; outdated : nouvelle image publiée ; unknown : comparaison impossible (registre injoignable) ; updating : rollout en cours
+         * @enum {string}
+         */
+        ComponentStatus: "up-to-date" | "outdated" | "unknown" | "updating";
+        ComponentVersionResponse: {
+            /** @example price-tracker-backend */
+            name: string;
+            /** @example ghcr.io/owner/item_scrapper-backend:main */
+            image: string;
+            /** @description up-to-date : même digest que le registre ; outdated : nouvelle image publiée ; unknown : comparaison impossible (registre injoignable) ; updating : rollout en cours */
+            status: components["schemas"]["ComponentStatus"];
+            /** @example sha256:… */
+            runningDigest: string | null;
+            /** @example sha256:… */
+            latestDigest: string | null;
+        };
+        UpdateStatusResponse: {
+            /** @description Faux hors Kubernetes (développement local) : rien à inspecter. */
+            clusterAvailable: boolean;
+            /** @description Vrai si le bouton de mise à jour peut être proposé (cluster + ADMIN_TOKEN). */
+            redeployEnabled: boolean;
+            /** @description Au moins un composant tourne une image plus ancienne que le registre. */
+            updateAvailable: boolean;
+            rolloutInProgress: boolean;
+            components: components["schemas"]["ComponentVersionResponse"][];
+            /** Format: date-time */
+            checkedAt: string;
+        };
+        RedeployResponse: {
+            /**
+             * @example [
+             *       "price-tracker-frontend",
+             *       "price-tracker-backend"
+             *     ]
+             */
+            restarted: string[];
         };
     };
     responses: never;
@@ -754,6 +829,65 @@ export interface operations {
             };
             /** @description Identifiant mal formé */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    PlatformController_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatusResponse"];
+                };
+            };
+        };
+    };
+    PlatformController_redeploy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedeployResponse"];
+                };
+            };
+            /** @description Jeton administrateur absent ou invalide */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description ADMIN_TOKEN non configuré */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Hors cluster, déjà à jour, ou rollout en cours */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

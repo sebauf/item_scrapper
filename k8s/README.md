@@ -39,6 +39,9 @@ de bout en bout aujourd'hui** :
 - `price-tracker-backend` (Deployment + Service **ClusterIP, sans Ingress**) — API
   NestJS, seul composant applicatif qui lit Mongo pour l'affichage. Joignable
   uniquement depuis l'intérieur du cluster, à `http://price-tracker-backend`.
+  Tourne sous le ServiceAccount `price-tracker-backend` (`backend-rbac.yaml`),
+  qui peut lire et redémarrer les cinq Deployments applicatifs — rien d'autre —
+  pour la mise à jour depuis la page `/system`.
 - `price-tracker-mcp` (Deployment + Service + Ingress sur `/mcp`) — serveur MCP
   pour l'agent externe. **Seul composant applicatif volontairement exposé hors
   du cluster**, parce que l'agent n'y tourne pas. Il n'ouvre pas de connexion
@@ -138,6 +141,31 @@ kubectl -n price-tracker get ingress
 ```
 
 ## Mettre à jour après un nouveau build
+
+### Depuis l'interface (page `/system`)
+
+La roue dentée en haut à droite du frontend mène à la page **Système**. Une
+pastille « Mise à jour disponible » s'y allume quand la CI a publié une image
+plus récente que celle qui tourne (comparaison des digests, registre
+interrogé au plus toutes les 5 minutes). Le bouton « Mettre à jour
+l'application » demande le jeton `ADMIN_TOKEN` de `secrets.env`
+(`grep ADMIN_TOKEN k8s/base/secrets.env`) puis redémarre les seuls composants
+en retard ; la page suit le rollout jusqu'au bout.
+
+Ce que le bouton **ne couvre pas** — il faut alors passer par
+`./k8s/install.sh -y --restart` :
+
+- un changement de manifest (variable d'environnement, ressources, RBAC,
+  nouveau composant) : les manifests vivent dans le repo, pas dans le cluster ;
+- le Job `airflow-init` (migration du schéma Airflow) ;
+- la toute première mise en place de la fonctionnalité elle-même (le
+  ServiceAccount du backend et `ADMIN_TOKEN` sont créés par `install.sh`).
+
+Pas de retour arrière non plus : le tag `main` est réécrit à chaque build.
+Évitez de lancer une mise à jour pendant le DAG quotidien (6 h UTC) :
+redémarrer `airflow-scheduler` peut interrompre le run en cours.
+
+### En ligne de commande
 
 `kubectl apply -k` ne change rien si seuls les manifests sont identiques et
 que le tag d'image (`main`) n'a pas changé au niveau du digest connu par

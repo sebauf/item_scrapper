@@ -16,3 +16,9 @@ export function timeAgo(iso: string): string {
   if (minutes > 0) return `il y a ${minutes}min`;
   return "à l'instant";
 }
+
+/** `sha256:3f1c9a…` → `3f1c9a2b7e04` : assez pour distinguer deux images à l'œil. */
+export function shortDigest(digest: string | null): string {
+  if (digest === null) return '—';
+  return digest.replace(/^sha256:/, '').slice(0, 12);
+}

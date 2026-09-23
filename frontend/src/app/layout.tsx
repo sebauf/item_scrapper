@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { NavLinks } from '@/components/NavLinks';
+import { SystemLink, UpdateIndicator } from '@/components/UpdateIndicator';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -29,6 +31,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="text-base tracking-tight">Price Tracker</span>
             </Link>
             <NavLinks />
+            <div className="ml-auto">
+              <Suspense fallback={<SystemLink />}>
+                <UpdateIndicator />
+              </Suspense>
+            </div>
           </div>
         </header>
 

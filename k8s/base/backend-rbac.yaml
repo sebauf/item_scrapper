@@ -1,0 +1,51 @@
+# Identité du backend dans le cluster, pour la page « Système » du frontend :
+# comparer les images déployées au registre, et lancer la mise à jour
+# (l'équivalent de `kubectl rollout restart`).
+#
+# Droits volontairement minimaux :
+#   - deployments : lecture + patch, et SEULEMENT sur les cinq Deployments
+#     applicatifs (resourceNames) — ni création, ni suppression, ni MongoDB ou
+#     Postgres ;
+#   - pods : lecture seule (list), pour lire le digest de l'image qui tourne.
+#     `list` ne peut pas être restreint par resourceNames.
+#
+# La liste doit rester alignée sur MANAGED_DEPLOYMENTS
+# (backend/src/modules/platform/infrastructure/kubernetes-cluster.gateway.ts).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: price-tracker-backend
+  namespace: price-tracker
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: price-tracker-backend-updater
+  namespace: price-tracker
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - price-tracker-frontend
+      - price-tracker-mcp
+      - airflow-webserver
+      - airflow-scheduler
+      - price-tracker-backend
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: price-tracker-backend-updater-binding
+  namespace: price-tracker
+subjects:
+  - kind: ServiceAccount
+    name: price-tracker-backend
+    namespace: price-tracker
+roleRef:
+  kind: Role
+  name: price-tracker-backend-updater
+  apiGroup: rbac.authorization.k8s.io
