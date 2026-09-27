@@ -12,6 +12,9 @@ dist/
 .pytest_cache/
 coverage/
 
+# Relevés produits par les scripts de spike (données locales, jamais versionnées)
+scrapper/spike-jsonld*.json
+
 # Env — ne jamais committer de vraies valeurs
 .env
 .env.local

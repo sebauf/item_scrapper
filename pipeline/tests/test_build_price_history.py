@@ -112,3 +112,72 @@ class TestBuildPriceHistory:
         assert doc["unavailable"] is True
         assert doc["unavailableSince"] == D
         assert len(doc["history"]) == 1
+
+
+class TestIdentiteArticle:
+    """Remontée des champs qui servent au rapprochement inter-enseignes.
+
+    Ils ne suivent pas la même règle que le titre ou les images : ceux-là
+    changent légitimement et le dernier relevé fait autorité, tandis qu'un
+    code-barres absent d'un relevé signale une page dégradée, pas un
+    changement d'article.
+    """
+
+    IDENTITY = {
+        "ean": "3014260610807",
+        "brand": "Ariel",
+        "mpn": "8001841234567",
+        "quantity": {"amount": 1.5, "unit": "L"},
+        "packSize": None,
+        "doses": 60,
+    }
+
+    def test_identite_remontee_sur_le_document(self, db):
+        db["items_raw"].insert_one(raw_item("u1", D, 10.0, **self.IDENTITY))
+        build_price_history(db)
+
+        doc = db["price_history"].find_one({"_id": "u1"})
+        assert doc["ean"] == "3014260610807"
+        assert doc["brand"] == "Ariel"
+        assert doc["mpn"] == "8001841234567"
+        assert doc["quantity"] == {"amount": 1.5, "unit": "L"}
+        assert doc["doses"] == 60
+
+    def test_un_releve_degrade_n_efface_pas_l_identite(self, db):
+        """Le cœur de la règle : Amazon rend parfois une page sans sa section
+        « Informations sur le produit ». Avec un simple $last, l'EAN du produit
+        disparaîtrait — et avec lui sa seule clé de rapprochement."""
+        db["items_raw"].insert_many([
+            raw_item("u1", D, 10.0, **self.IDENTITY),
+            raw_item("u1", D + timedelta(days=1), 9.0, ean=None, brand=None, quantity=None),
+        ])
+        build_price_history(db)
+
+        doc = db["price_history"].find_one({"_id": "u1"})
+        assert doc["ean"] == "3014260610807"
+        assert doc["brand"] == "Ariel"
+        assert doc["quantity"] == {"amount": 1.5, "unit": "L"}
+
+    def test_une_identite_corrigee_remplace_la_precedente(self, db):
+        """« Dernière non nulle » et non « première » : si Amazon corrige la
+        fiche, c'est la valeur récente qui fait foi."""
+        db["items_raw"].insert_many([
+            raw_item("u1", D, 10.0, ean="3014260610807"),
+            raw_item("u1", D + timedelta(days=1), 9.0, ean=None),
+            raw_item("u1", D + timedelta(days=2), 9.0, ean="4005809001209"),
+        ])
+        build_price_history(db)
+
+        assert db["price_history"].find_one({"_id": "u1"})["ean"] == "4005809001209"
+
+    def test_produit_sans_identite_expose_des_champs_nuls(self, db):
+        """Cas des relevés antérieurs à l'extraction d'identité : les champs
+        doivent exister et valoir null, pas manquer — sinon l'étage de
+        rapprochement devra distinguer « absent » de « inconnu »."""
+        db["items_raw"].insert_one(raw_item("u1", D, 10.0))
+        build_price_history(db)
+
+        doc = db["price_history"].find_one({"_id": "u1"})
+        for field in ("ean", "brand", "mpn", "quantity", "packSize", "doses"):
+            assert field in doc, f"{field} absent du document"
+            assert doc[field] is None

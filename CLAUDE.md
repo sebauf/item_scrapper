@@ -34,7 +34,13 @@ cp .env.example .env               # then edit .env if needed
 npm run start                      # run the scraper (tsx)
 npm run build                      # compile to dist/
 npm run start:prod                 # run compiled output
+npm test                           # unit tests (node:test) — pure parsers, no browser
+npm run typecheck                  # tsc --noEmit
+npm run spike:jsonld -- --limit=30 # mesure ce qu'Amazon expose (EAN, JSON-LD, contenance)
 ```
+
+Les parseurs d'identité (`scraping/shared/`) et de prix sont des fonctions
+pures : la suite tourne sans navigateur, sans réseau et sans base.
 
 ### Pipeline
 
@@ -128,6 +134,10 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/infrastructure/scraping/amazon/AmazonSearchHandler.ts` — enqueues product URLs from search results
 - `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page
 - `src/infrastructure/scraping/amazon/PriceParser.ts` — normalises Amazon price strings
+- `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin }` (pur)
+- `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright + ordre de la cascade d'identité
+- `src/infrastructure/scraping/shared/` — parseurs agnostiques de la boutique : `Gtin` (clé de contrôle GTIN), `JsonLdParser`, `QuantityParser` (contenance ramenée au litre/kilo)
+- `src/scripts/spikeJsonLd.ts` — harnais de mesure de la couverture d'identité, n'écrit rien en base
 - `src/infrastructure/persistence/mongodb/MongoProductRepository.ts` — upserts products by URL + day
 - `src/infrastructure/persistence/mongodb/MongoKeywordRepository.ts` — CRUD for keywords
 - `src/infrastructure/persistence/mongodb/MongoConnection.ts` — singleton `MongoClient`
@@ -144,6 +154,13 @@ pipeline/src/
 ```
 
 Data flow: `items_raw` → `build_price_history` → `price_history` collection (one doc per URL, array of daily snapshots) → `score` → `deal_scores` collection.
+
+`title` et `images` sont agrégés en `$last` (le relevé du jour fait autorité :
+un produit renommé doit s'afficher renommé). Les champs d'**identité** suivent
+une règle différente — **dernière valeur non nulle** : un article ne change pas
+de code-barres, et son absence signale une page dégradée, pas un changement
+d'article. Un `$last` naïf effacerait l'EAN d'un produit sur un seul scrape
+raté, avec lui sa seule clé de rapprochement inter-enseignes.
 
 Scoring logic (no trained model, no cross-product comparison):
 - `score = (predictedPrice - actualPrice) / predictedPrice * 100`
@@ -227,8 +244,8 @@ This is the only applicative component deliberately exposed outside the cluster.
 ### MongoDB
 
 - DB: `scrapper`
-- `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`
-- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
+- `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`, plus l'identité de l'article : `ean` (GTIN-13 vérifié), `brand`, `mpn`, `quantity` (`{ amount, unit }` en L ou kg), `packSize`, `doses` — tous nullables, une fiche ne publiant pas toujours son code-barres
+- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
@@ -256,7 +273,7 @@ Six workflows, each triggered on changes to their respective directory:
 - `mcp.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-mcp:<tag>`
 - `frontend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-frontend:<tag>`
 - `pipeline.yml` — tests, then builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
-- `scrapper.yml` — builds and pushes `ghcr.io/<repo>-scrapper:<tag>` (no test suite yet)
+- `scrapper.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-scrapper:<tag>`
 - `airflow.yml` — builds and pushes the custom Airflow image
 
 Every workflow that has tests runs them in a `test` job that the
