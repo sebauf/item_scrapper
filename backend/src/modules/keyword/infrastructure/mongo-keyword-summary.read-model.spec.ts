@@ -4,6 +4,7 @@ import {
   MongoKeywordSummaryReadModel,
   RawKeywordStat,
   mergeKeywordSummaries,
+  trackedKeywordNames,
 } from './mongo-keyword-summary.read-model';
 
 /**
@@ -96,7 +97,10 @@ describe('mergeKeywordSummaries', () => {
  * qu'aucun des tests précédents ne bronche : celui-ci garde la requête.
  */
 describe('MongoKeywordSummaryReadModel', () => {
-  function stubDb(keywordDocs: KeywordDocument[], capture: { filter?: unknown }): Db {
+  function stubDb(
+    keywordDocs: KeywordDocument[],
+    capture: { filter?: unknown; distinctFilter?: unknown },
+  ): Db {
     return {
       collection: (name: string) => {
         if (name === 'keywords') {
@@ -109,6 +113,10 @@ describe('MongoKeywordSummaryReadModel', () => {
         }
         return {
           findOne: () => Promise.resolve({ day: new Date('2026-08-08T00:00:00.000Z') }),
+          distinct: (_field: string, filter: unknown) => {
+            capture.distinctFilter = filter;
+            return Promise.resolve(['retire']);
+          },
           aggregate: () => ({
             toArray: () =>
               Promise.resolve([
@@ -140,5 +148,92 @@ describe('MongoKeywordSummaryReadModel', () => {
     );
 
     await expect(readModel.listTracked()).resolves.toEqual([]);
+  });
+
+  /**
+   * `countTracked` sert le compteur du tableau de bord. Il emprunte une source
+   * moins chère que `listTracked` (`distinct` plutôt que le `$facet`), ce qui
+   * est précisément le risque : deux chemins, une seule règle à respecter.
+   */
+  describe('countTracked', () => {
+    it('compte ce que listTracked afficherait', async () => {
+      const docs: KeywordDocument[] = [
+        { keyword: 'lessive', enabled: true },
+        { keyword: 'retire', enabled: false },
+      ];
+      const readModel = new MongoKeywordSummaryReadModel(stubDb(docs, {}));
+
+      await expect(readModel.countTracked()).resolves.toBe(1);
+    });
+
+    it('ne compte pas un mot-clé retiré dont les relevés survivent', async () => {
+      const readModel = new MongoKeywordSummaryReadModel(
+        stubDb([{ keyword: 'retire', enabled: false }], {}),
+      );
+
+      await expect(readModel.countTracked()).resolves.toBe(0);
+    });
+
+    it('compte le mot-clé hérité que la page liste sans document', async () => {
+      // Le stub renvoie « retire » dans items_raw ; sans document en face,
+      // c'est le cas de rattrapage, compté comme il est affiché.
+      const readModel = new MongoKeywordSummaryReadModel(stubDb([], {}));
+
+      await expect(readModel.countTracked()).resolves.toBe(1);
+    });
+
+    it('interroge `keywords` sans filtre, comme listTracked', async () => {
+      const capture: { filter?: unknown } = {};
+      const readModel = new MongoKeywordSummaryReadModel(stubDb([], capture));
+
+      await readModel.countTracked();
+
+      expect(capture.filter).toEqual({});
+    });
+
+    it('écarte d’items_raw les relevés inexploitables, comme listTracked', async () => {
+      // `listTracked` ne tire ses statistiques que des relevés ayant titre et
+      // prix. Un `distinct` plus large compterait des mots-clés que la page
+      // n'affiche pas.
+      const capture: { distinctFilter?: unknown } = {};
+      const readModel = new MongoKeywordSummaryReadModel(stubDb([], capture));
+
+      await readModel.countTracked();
+
+      expect(capture.distinctFilter).toEqual({
+        keyword: { $ne: null },
+        title: { $ne: '' },
+        price: { $ne: null },
+      });
+    });
+  });
+});
+
+/**
+ * La règle est écrite une seule fois ; ce test dit qu'elle l'est vraiment, en
+ * comparant les deux chemins sur les mêmes entrées.
+ */
+describe('cohérence liste / compteur', () => {
+  it('donne le même ensemble de mots-clés des deux côtés', () => {
+    const docs: KeywordDocument[] = [
+      { keyword: 'lessive', enabled: true },
+      { keyword: 'retire', enabled: false },
+      { keyword: 'vieux' },
+    ];
+    const stats: RawKeywordStat[] = [
+      { keyword: 'lessive', productCount: 4 },
+      { keyword: 'retire', productCount: 9 },
+      { keyword: 'vieux', productCount: 2 },
+      { keyword: 'herite', productCount: 7 },
+    ];
+
+    const listed = mergeKeywordSummaries(docs, stats).map((s) => s.keyword);
+    const named = trackedKeywordNames(
+      docs,
+      stats.map((s) => s.keyword),
+    );
+
+    expect(listed).toEqual(named);
+    expect(listed).toEqual(['herite', 'lessive']);
   });
 });

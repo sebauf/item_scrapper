@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db, Document } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
+import { KeywordSummaryReadModel } from 'src/modules/keyword/application/ports/keyword-summary.read-model';
 import { findLastScrapeDay, onlyLastScrape } from 'src/shared/infrastructure/mongo/last-scrape';
 import { DEAL_SCORE_THRESHOLD } from '../domain/deal-policy';
 import {
@@ -17,7 +18,10 @@ const DEALS_SHOWN_PER_KEYWORD = 3;
 
 @Injectable()
 export class MongoDashboardReadModel extends DashboardReadModel {
-  constructor(@Inject(MONGO_DB) private readonly db: Db) {
+  constructor(
+    @Inject(MONGO_DB) private readonly db: Db,
+    private readonly keywords: KeywordSummaryReadModel,
+  ) {
     super();
   }
 
@@ -40,7 +44,11 @@ export class MongoDashboardReadModel extends DashboardReadModel {
 
     const [keywordCount, productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
       await Promise.all([
-        this.db.collection('keywords').countDocuments({ enabled: true }),
+        // Délégué au contexte Keyword, et non recompté ici : ce compteur doit
+        // annoncer le nombre de lignes que la page « mots-clés » affiche. Le
+        // `countDocuments({ enabled: true })` d'avant ignorait les mots-clés
+        // hérités sans document, que cette page liste pourtant.
+        this.keywords.countTracked(),
         // `items_raw` est unique par (url, jour) : sur une seule journée, un
         // document = un produit, et countDocuments suffit.
         this.db
