@@ -7,10 +7,16 @@ import {
   KeywordSummaryReadModel,
 } from '../application/ports/keyword-summary.read-model';
 
-interface RawKeywordStat {
+export interface RawKeywordStat {
   keyword: string;
   productCount: number;
   lastScrape?: Date;
+}
+
+/** Document de `keywords`. `enabled` peut manquer sur les lignes historiques. */
+export interface KeywordDocument {
+  keyword: string;
+  enabled?: boolean;
 }
 
 interface StatsFacet {
@@ -25,15 +31,13 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
   }
 
   /**
-   * Portage à l'identique de frontend/src/lib/queries.ts:fetchKeywordSummaries.
-   *
-   * Deux sources fusionnées :
-   *  - la collection `keywords` (les mots-clés explicitement suivis) ;
+   * Deux sources fusionnées, cf. `mergeKeywordSummaries` pour la règle :
+   *  - la collection `keywords` ;
    *  - les statistiques calculées sur `items_raw`.
    *
-   * La fusion garde les mots-clés présents dans `items_raw` mais absents de
-   * `keywords` : ce sont ceux scrapés avant que la collection `keywords`
-   * n'existe. Sans ça, leurs produits deviendraient invisibles dans l'UI.
+   * La collection `keywords` est lue **sans filtre** : les documents
+   * `enabled: false` ne s'affichent pas, mais la fusion a besoin de les
+   * connaître pour ne pas les ressusciter depuis `items_raw`.
    */
   async listTracked(): Promise<KeywordSummary[]> {
     const lastScrapeDay = await findLastScrapeDay(this.db);
@@ -61,27 +65,52 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
         ])
         .toArray(),
       this.db
-        .collection<{ keyword: string; enabled: boolean }>('keywords')
-        .find({ enabled: true })
+        .collection<KeywordDocument>('keywords')
+        .find({}, { projection: { keyword: 1, enabled: 1 } })
         .toArray(),
     ]);
 
-    const rawStats = toKeywordStats(statsFacet[0]);
-    const statsByKeyword = new Map(rawStats.map((stat) => [stat.keyword, stat]));
-    const summaries: KeywordSummary[] = [];
-    const seen = new Set<string>();
-
-    for (const doc of trackedDocs) {
-      seen.add(doc.keyword);
-      summaries.push(toSummary(doc.keyword, statsByKeyword.get(doc.keyword)));
-    }
-
-    for (const stat of rawStats) {
-      if (!seen.has(stat.keyword)) summaries.push(toSummary(stat.keyword, stat));
-    }
-
-    return summaries.sort((a, b) => a.keyword.localeCompare(b.keyword, 'fr'));
+    return mergeKeywordSummaries(trackedDocs, toKeywordStats(statsFacet[0]));
   }
+}
+
+/**
+ * Décide ce que l'écran « mots-clés » affiche, à partir des documents de
+ * `keywords` et des statistiques tirées d'`items_raw`.
+ *
+ * Trois cas, et c'est le troisième qui porte toute la subtilité :
+ *
+ * 1. document `enabled: true` → affiché. C'est le prédicat du scrapper
+ *    (`MongoKeywordRepository.findEnabled`), donc exactement l'ensemble de ce
+ *    qui sera relevé au prochain run — ce que la page promet.
+ * 2. aucun document, mais des relevés dans `items_raw` → affiché. Ce sont les
+ *    mots-clés scrapés avant que la collection `keywords` n'existe ; sans ça
+ *    leurs produits deviendraient inatteignables depuis l'UI.
+ * 3. document non `enabled: true`, avec des relevés → **masqué**. C'est la
+ *    correction : la version précédente ne connaissait que les documents
+ *    `enabled: true`, si bien qu'un mot-clé retiré n'était plus « connu » et
+ *    que le cas 2 le remettait dans la liste à partir de ses anciens relevés.
+ *    Il y restait, badgé « En attente » et jamais rafraîchi, jusqu'à ce que
+ *    la purge efface ses produits une quinzaine de jours plus tard. Retirer un
+ *    mot-clé pose `enabled: false` et ne supprime pas la ligne (cf. l'agrégat
+ *    `Keyword`) : il faut donc regarder tous les documents, pas les suivis.
+ */
+export function mergeKeywordSummaries(
+  keywordDocs: readonly KeywordDocument[],
+  stats: readonly RawKeywordStat[],
+): KeywordSummary[] {
+  const statsByKeyword = new Map(stats.map((stat) => [stat.keyword, stat]));
+  const documented = new Set(keywordDocs.map((doc) => doc.keyword));
+
+  const summaries = keywordDocs
+    .filter((doc) => doc.enabled === true)
+    .map((doc) => toSummary(doc.keyword, statsByKeyword.get(doc.keyword)));
+
+  for (const stat of stats) {
+    if (!documented.has(stat.keyword)) summaries.push(toSummary(stat.keyword, stat));
+  }
+
+  return summaries.sort((a, b) => a.keyword.localeCompare(b.keyword, 'fr'));
 }
 
 /**
