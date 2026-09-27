@@ -32,7 +32,12 @@ de bout en bout aujourd'hui** :
 
    Les images `scrapper` et `pipeline` ne sont pas déployées en permanence :
    elles sont lancées à la demande comme Pods éphémères par le DAG Airflow
-   via `KubernetesPodOperator` (tag `main` également, donc même remarque).
+   via `KubernetesPodOperator`. Même tag `main`, mais pas la même remarque :
+   ces Pods naissent à chaque exécution avec `image_pull_policy="Always"`
+   (réglé dans le DAG, cf. `_build_k8s_task`), donc ils prennent la dernière
+   image publiée sans rollout à forcer. Sans ce réglage explicite, Kubernetes
+   retomberait sur `IfNotPresent` et rejouerait indéfiniment l'image en cache
+   sur le nœud.
 
 ## Architecture déployée
 
@@ -152,9 +157,11 @@ kubectl -n price-tracker rollout restart deployment airflow-webserver
 kubectl -n price-tracker rollout restart deployment airflow-scheduler
 ```
 
-Les Pods éphémères `scrape`/`refine`/`train`/`score` (lancés par Airflow)
-récupèrent toujours la dernière image `main` au moment de leur création
-(`imagePullPolicy: Always`), sans action manuelle nécessaire.
+Les Pods éphémères `scrape`/`purge`/`refine`/`score` (lancés par Airflow)
+récupèrent toujours la dernière image `main` au moment de leur création, sans
+action manuelle nécessaire : c'est `image_pull_policy="Always"` dans
+`airflow/dags/price_pipeline_dag.py` qui l'assure. Un DAG qui gagne une étape
+échouerait sinon sur une image trop vieille pour la connaître.
 
 Si des manifests YAML ont changé (nouvelle env var, ressources, etc.),
 relancer simplement :

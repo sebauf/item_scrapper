@@ -59,6 +59,14 @@ def _build_k8s_task(task_id: str, image: str, command: list[str] | None):
         name=f"price-pipeline-{task_id}",
         namespace=NAMESPACE,
         image=image,
+        # Les images portent le tag mobile `main`, réécrit à chaque push : sans
+        # cette ligne, Kubernetes retombe sur `IfNotPresent` et réutilise
+        # indéfiniment la couche déjà présente sur le nœud. Une tâche pointant
+        # du code tout juste publié s'exécuterait alors dans l'image de la
+        # veille — d'où l'échec d'une étape nouvellement ajoutée au DAG, qui
+        # n'existe pas encore dans l'image en cache. C'est la même politique
+        # que celle des Deployments de k8s/base.
+        image_pull_policy="Always",
         cmds=command if command else None,
         env_from=[k8s.V1EnvFromSource(secret_ref=k8s.V1SecretEnvSource(name=SECRET_NAME))],
         image_pull_secrets=[k8s.V1LocalObjectReference(name="ghcr-pull-secret")],
