@@ -7,8 +7,10 @@ import {
   KeywordSummary,
   KeywordSummaryReadModel,
 } from '../application/ports/keyword-summary.read-model';
+import { ScrapedKeywords } from '../application/ports/scraped-keywords';
 import { KeywordRepository } from '../domain/keyword.repository';
 import { InMemoryKeywordRepository } from '../testing/in-memory-keyword.repository';
+import { InMemoryScrapedKeywords } from '../testing/in-memory-scraped-keywords';
 import { KeywordController } from './keyword.controller';
 
 class FakeKeywordSummaryReadModel extends KeywordSummaryReadModel {
@@ -20,8 +22,8 @@ class FakeKeywordSummaryReadModel extends KeywordSummaryReadModel {
     return Promise.resolve(this.summaries);
   }
 
-  countTracked(): Promise<number> {
-    return Promise.resolve(this.summaries.length);
+  listTrackedNames(): Promise<string[]> {
+    return Promise.resolve(this.summaries.map((summary) => summary.keyword));
   }
 }
 
@@ -35,7 +37,15 @@ describe('Keyword — API', () => {
   let app: NestFastifyApplication;
   let repository: InMemoryKeywordRepository;
 
-  async function start(initial: Record<string, boolean> = {}, summaries: KeywordSummary[] = []) {
+  /**
+   * `scraped` : les mots-clés qu'`items_raw` connaîtrait. Ils n'entrent en jeu
+   * qu'au DELETE d'un mot-clé sans document (cf. UntrackKeywordCommand).
+   */
+  async function start(
+    initial: Record<string, boolean> = {},
+    summaries: KeywordSummary[] = [],
+    scraped: string[] = [],
+  ) {
     repository = new InMemoryKeywordRepository(initial);
     app = await createTestApp({
       controllers: [KeywordController],
@@ -45,6 +55,7 @@ describe('Keyword — API', () => {
         ListKeywordSummariesQuery,
         { provide: KeywordRepository, useValue: repository },
         { provide: KeywordSummaryReadModel, useValue: new FakeKeywordSummaryReadModel(summaries) },
+        { provide: ScrapedKeywords, useValue: new InMemoryScrapedKeywords(scraped) },
       ],
     });
   }
@@ -192,6 +203,18 @@ describe('Keyword — API', () => {
       const response = await app.inject({ method: 'DELETE', url: '/api/v1/keywords/lessive' });
 
       expect(response.statusCode).toBe(204);
+    });
+
+    it('retire un mot-clé listé depuis ses seuls relevés', async () => {
+      await start({}, [], ['batterie canape electrique']);
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/v1/keywords/batterie%20canape%20electrique',
+      });
+
+      expect(response.statusCode).toBe(204);
+      expect(repository.stateOf('batterie canape electrique')).toBe(false);
     });
 
     it('signale un mot-clé inconnu', async () => {

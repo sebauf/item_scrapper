@@ -19,6 +19,21 @@ export interface KeywordDocument {
   enabled?: boolean;
 }
 
+/**
+ * Un relevé « exploitable » : celui que les écrans savent afficher. Un document
+ * d'`items_raw` sans titre ou sans prix est un scrape raté, il ne prouve pas
+ * qu'un mot-clé a des produits.
+ *
+ * Exporté parce que le côté écriture s'en sert aussi (`MongoScrapedKeywords`) :
+ * c'est le même prédicat qui décide qu'un mot-clé est listé et qu'il est
+ * retirable.
+ */
+export const USABLE_SCRAPE_MATCH = {
+  keyword: { $ne: null },
+  title: { $ne: '' },
+  price: { $ne: null },
+} as const;
+
 interface StatsFacet {
   fresh: { _id: string; productCount: number }[];
   seen: { _id: string; lastScrape?: Date }[];
@@ -46,7 +61,7 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
       this.db
         .collection('items_raw')
         .aggregate<StatsFacet>([
-          { $match: { keyword: { $ne: null }, title: { $ne: '' }, price: { $ne: null } } },
+          { $match: { ...USABLE_SCRAPE_MATCH } },
           {
             // Deux comptages sur des périmètres différents, en une passe.
             // `productCount` ne compte que le dernier passage — c'est le nombre
@@ -75,15 +90,15 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
 
   /**
    * Même règle que `listTracked`, sans les statistiques : le tableau de bord
-   * n'affiche qu'un nombre. Il passe donc par `distinct` plutôt que par le
+   * n'a besoin que des noms. Il passe donc par `distinct` plutôt que par le
    * `$facet` — même ensemble de mots-clés, sans le comptage de produits ni le
    * `$max` sur `scrapedAt` dont la page d'accueil n'a que faire.
    *
-   * Le `$match` reproduit exactement celui de `listTracked` : un mot-clé dont
-   * aucun relevé n'est exploitable ne doit pas être compté ici et absent
-   * là-bas.
+   * Le filtre est le même objet que celui de `listTracked`
+   * (`USABLE_SCRAPE_MATCH`), et pas une copie : un mot-clé dont aucun relevé
+   * n'est exploitable ne peut pas être retenu ici et absent là-bas.
    */
-  async countTracked(): Promise<number> {
+  async listTrackedNames(): Promise<string[]> {
     const [keywordDocs, scrapedKeywords] = await Promise.all([
       this.db
         .collection<KeywordDocument>('keywords')
@@ -91,10 +106,10 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
         .toArray(),
       this.db
         .collection('items_raw')
-        .distinct('keyword', { keyword: { $ne: null }, title: { $ne: '' }, price: { $ne: null } }),
+        .distinct('keyword', { ...USABLE_SCRAPE_MATCH }),
     ]);
 
-    return trackedKeywordNames(keywordDocs, scrapedKeywords as string[]).length;
+    return trackedKeywordNames(keywordDocs, scrapedKeywords as string[]);
   }
 }
 

@@ -27,6 +27,18 @@ export class Keyword {
     return new Keyword(name, true);
   }
 
+  /**
+   * Mot-clé retiré d'entrée de jeu, sans être jamais passé par « suivi ».
+   *
+   * Le seul cas qui l'exige : un mot-clé que la page liste à partir de ses
+   * seuls relevés `items_raw`, sans document en base (cf. `trackedKeywordNames`
+   * cas 2). Le retirer doit écrire la ligne `enabled: false` qui n'existait pas,
+   * sinon il n'y a rien à modifier et la liste continue de le remonter.
+   */
+  static untracked(name: KeywordName): Keyword {
+    return new Keyword(name, false);
+  }
+
   /** Reconstruit un agrégat depuis la persistance — ne valide aucune règle. */
   static rehydrate(name: KeywordName, tracked: boolean): Keyword {
     return new Keyword(name, tracked);
