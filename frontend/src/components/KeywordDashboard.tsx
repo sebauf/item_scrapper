@@ -146,7 +146,7 @@ export function KeywordDashboard({ keywords }: { keywords: KeywordSummary[] }) {
       {confirmDelete !== null && (
         <ConfirmDialog
           title={`Supprimer « ${confirmDelete} » ?`}
-          description="Le mot-clé ne sera plus scrapé. Les produits déjà relevés restent en base."
+          description="Il ne sera plus scrapé lors des prochains runs."
           pending={isPending}
           onConfirm={() => handleDelete(confirmDelete)}
           onCancel={() => setConfirmDelete(null)}

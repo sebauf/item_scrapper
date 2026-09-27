@@ -23,7 +23,7 @@ export function AddTrackedUrlModal({ onClose }: { onClose: () => void }) {
   }, [onClose]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 pb-20 sm:pb-4">
       <div
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
         onClick={onClose}
@@ -47,12 +47,13 @@ export function AddTrackedUrlModal({ onClose }: { onClose: () => void }) {
         </div>
 
         <form action={action} className="flex flex-col gap-3">
+          {/* text-base sous sm : en dessous de 16px, iOS zoome sur le champ au focus */}
           <input
             ref={inputRef}
             name="url"
             type="url"
             placeholder="https://www.amazon.fr/dp/B0XXXXXXXX/"
-            className="w-full px-4 py-3 rounded-xl border border-border bg-surface focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft text-sm transition-shadow"
+            className="w-full px-4 py-3 rounded-xl border border-border bg-surface focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft text-base sm:text-sm transition-shadow"
             required
           />
           {state?.error && (
@@ -60,18 +61,18 @@ export function AddTrackedUrlModal({ onClose }: { onClose: () => void }) {
               {state.error}
             </p>
           )}
-          <div className="flex gap-2 justify-end pt-1">
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-1">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 text-sm text-muted hover:text-foreground rounded-xl hover:bg-surface-hover transition-colors"
+              className="px-4 min-h-12 sm:min-h-0 sm:py-2.5 text-sm font-medium text-muted hover:text-foreground rounded-xl border border-border sm:border-transparent hover:bg-surface-hover transition-colors"
             >
               Annuler
             </button>
             <button
               type="submit"
               disabled={pending}
-              className="px-5 py-2.5 text-sm font-semibold bg-accent text-on-accent rounded-xl hover:bg-accent-hover disabled:opacity-60 transition-colors shadow-sm"
+              className="px-5 min-h-12 sm:min-h-0 sm:py-2.5 text-sm font-semibold bg-accent text-on-accent rounded-xl hover:bg-accent-hover disabled:opacity-60 transition-colors shadow-sm"
             >
               {pending ? 'Ajout…' : 'Suivre'}
             </button>

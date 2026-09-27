@@ -6,6 +6,7 @@ import type { TrackedUrlSummary } from '@/lib/api';
 import { formatPrice } from '@/lib/format';
 import { deleteTrackedUrl } from '@/app/actions';
 import { AddTrackedUrlModal } from './AddTrackedUrlModal';
+import { ConfirmDialog } from './ConfirmDialog';
 
 export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSummary[] }) {
   const [search, setSearch] = useState('');
@@ -21,6 +22,11 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
     );
   }, [trackedUrls, search]);
 
+  // La confirmation ne retient qu'un identifiant : le libellé est relu dans la
+  // liste complète, pas dans `filtered`, pour qu'une frappe dans la recherche
+  // pendant que le dialogue est ouvert ne le vide pas de son nom.
+  const pendingDelete = trackedUrls.find((t) => t.id === confirmDelete);
+
   function handleDelete(id: string) {
     startTransition(async () => {
       await deleteTrackedUrl(id);
@@ -31,7 +37,7 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
   return (
     <div>
       {/* Search bar + Add button */}
-      <div className="flex gap-3 mb-6">
+      <div className="flex gap-2 sm:gap-3 mb-6">
         <div className="relative flex-1">
           <svg
             className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-faint pointer-events-none"
@@ -41,19 +47,21 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
           </svg>
+          {/* text-base sous sm : en dessous de 16px, iOS zoome sur le champ au focus */}
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Rechercher un produit suivi…"
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-border bg-surface focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft text-sm transition-shadow"
+            className="w-full h-12 sm:h-auto pl-10 pr-4 sm:py-2.5 rounded-xl border border-border bg-surface focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft text-base sm:text-sm transition-shadow"
           />
         </div>
         <button
           onClick={() => setShowModal(true)}
-          className="flex items-center gap-2 px-4 py-2.5 bg-accent text-on-accent rounded-xl text-sm font-semibold hover:bg-accent-hover active:scale-95 transition-all shadow-sm whitespace-nowrap"
+          aria-label="Suivre une URL"
+          className="flex items-center justify-center gap-2 w-12 h-12 sm:w-auto sm:h-auto px-0 sm:px-4 sm:py-2.5 bg-accent text-on-accent rounded-xl text-sm font-semibold hover:bg-accent-hover active:scale-95 transition-all shadow-sm whitespace-nowrap"
         >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className="w-5 h-5 sm:w-4 sm:h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
           </svg>
           <span className="hidden sm:inline">Suivre une URL</span>
@@ -76,12 +84,18 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-2">
           {filtered.map((t) => (
-            <div key={t.id} className="group relative flex items-stretch">
+            /* Même règle que la liste des mots-clés : le lien et la corbeille
+             * sont voisins, jamais superposés, et la corbeille ne dépend pas
+             * d'un survol qui n'existe pas au doigt. */
+            <li
+              key={t.id}
+              className="group flex items-stretch rounded-xl border border-border bg-surface overflow-hidden focus-within:border-accent/40 hover:border-accent/40 transition-colors"
+            >
               <Link
                 href={`/product/${t.id}`}
-                className="flex-1 flex items-center gap-3 px-4 py-3 rounded-xl border border-border bg-surface hover:border-accent/40 hover:bg-accent-soft/40 transition-all min-w-0"
+                className="flex-1 min-w-0 flex items-center gap-3 px-3 sm:px-4 py-3 hover:bg-accent-soft/40 active:bg-accent-soft/60 transition-colors"
               >
                 <div className="relative w-12 h-12 shrink-0 rounded-lg bg-image-bg overflow-hidden border border-border-subtle">
                   {t.image ? (
@@ -101,21 +115,29 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
                   ) : (
                     <p className="text-faint truncate">{t.url}</p>
                   )}
-                  <p className="text-xs text-faint truncate">
-                    {t.lastScrape
-                      ? `Relevé le ${new Date(t.lastScrape).toLocaleDateString('fr-FR')}`
-                      : 'En attente du prochain scrape'}
-                  </p>
+                  {/* Le prix vit sous le titre plutôt qu'en colonne à droite :
+                   * à 390px, une vignette, un prix et un chevron ne laissaient
+                   * au titre que 130px, soit une quinzaine de caractères. */}
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    {t.price && (
+                      <span className="shrink-0 text-sm font-semibold text-foreground">
+                        {formatPrice(t.price.amount, t.price.currency)}
+                      </span>
+                    )}
+                    {t.price && <span className="shrink-0 text-ghost text-xs">·</span>}
+                    <p className="text-xs text-faint truncate">
+                      {t.lastScrape
+                        ? `Relevé le ${new Date(t.lastScrape).toLocaleDateString('fr-FR')}`
+                        : 'En attente du prochain scrape'}
+                    </p>
+                  </div>
                 </div>
 
-                {t.price && (
-                  <span className="shrink-0 font-semibold text-foreground">
-                    {formatPrice(t.price.amount, t.price.currency)}
-                  </span>
-                )}
-
+                {/* Le chevron disparaît sous sm : il coûte 28px de largeur que
+                 * le titre réclame, et la colonne corbeille dit déjà que la
+                 * ligne se manipule. */}
                 <svg
-                  className="w-4 h-4 text-ghost group-hover:text-accent transition-colors shrink-0"
+                  className="hidden sm:block w-4 h-4 text-ghost group-hover:text-accent transition-colors shrink-0"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -124,41 +146,40 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
                 </svg>
               </Link>
 
-              {/* Delete control — appears on hover */}
-              <div className="absolute right-12 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                {confirmDelete === t.id ? (
-                  <div className="flex items-center gap-2 bg-surface border border-danger/30 rounded-lg px-3 py-1.5 shadow-md">
-                    <span className="text-xs text-muted">Retirer ?</span>
-                    <button
-                      onClick={() => handleDelete(t.id)}
-                      disabled={isPending}
-                      className="text-xs font-semibold text-danger hover:underline disabled:opacity-50"
-                    >
-                      Oui
-                    </button>
-                    <span className="text-ghost">·</span>
-                    <button
-                      onClick={() => setConfirmDelete(null)}
-                      className="text-xs text-faint hover:text-muted"
-                    >
-                      Non
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setConfirmDelete(t.id)}
-                    className="p-2 text-ghost hover:text-danger hover:bg-danger-soft rounded-lg transition-colors"
-                    title="Retirer du suivi"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                )}
-              </div>
-            </div>
+              <button
+                onClick={() => setConfirmDelete(t.id)}
+                aria-label={`Retirer du suivi ${t.title ?? t.url}`}
+                title="Retirer du suivi"
+                className="shrink-0 w-14 flex items-center justify-center border-l border-border-subtle text-faint hover:text-danger hover:bg-danger-soft active:bg-danger-soft active:text-danger focus-visible:outline-none focus-visible:text-danger focus-visible:bg-danger-soft transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </li>
           ))}
-        </div>
+        </ul>
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          title="Retirer du suivi ?"
+          /* Le nom passe par la description, pas par le titre : une URL sans
+           * titre encore relevé fait trois lignes et noierait la question. */
+          description={
+            <>
+              <span className="font-medium text-foreground break-words">
+                {pendingDelete.title ?? pendingDelete.url}
+              </span>{' '}
+              ne sera plus relevé lors des prochains runs.
+            </>
+          }
+          confirmLabel="Retirer"
+          pendingLabel="Retrait…"
+          pending={isPending}
+          onConfirm={() => handleDelete(pendingDelete.id)}
+          onCancel={() => setConfirmDelete(null)}
+        />
       )}
 
       {showModal && <AddTrackedUrlModal onClose={() => setShowModal(false)} />}

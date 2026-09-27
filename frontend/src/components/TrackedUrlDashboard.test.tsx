@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackedUrlSummary } from '@/lib/api';
@@ -14,7 +14,8 @@ const { TrackedUrlDashboard } = await import('./TrackedUrlDashboard');
 /**
  * Miroir de KeywordDashboard pour les URLs suivies une à une. Sa particularité :
  * une URL tout juste ajoutée n'a encore ni titre, ni image, ni prix — elle doit
- * rester lisible jusqu'au prochain passage du scrapper.
+ * rester lisible, et restervable, jusqu'au prochain passage du scrapper. C'est
+ * elle que la confirmation doit savoir nommer sans titre sous la main.
  */
 const TRACKED: TrackedUrlSummary[] = [
   {
@@ -71,21 +72,79 @@ describe('TrackedUrlDashboard', () => {
     expect(screen.getByText(/Aucune URL suivie/)).toBeInTheDocument();
   });
 
-  it('supprime après confirmation, en désignant l’URL par son identifiant', async () => {
-    const user = userEvent.setup();
-    render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
+  describe('retrait du suivi', () => {
+    const trash = (label: string) =>
+      screen.getByRole('button', { name: `Retirer du suivi ${label}` });
 
-    await user.click(screen.getAllByTitle('Retirer du suivi')[0]);
-    await user.click(screen.getByRole('button', { name: 'Oui' }));
+    it('expose une corbeille par URL, sans survol', () => {
+      render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
 
-    await waitFor(() => expect(actions.deleteTrackedUrl).toHaveBeenCalledWith('aWQx'));
+      expect(trash('Lessive liquide 3L')).toBeInTheDocument();
+      expect(trash('https://www.amazon.fr/dp/B0TEST0002/')).toBeInTheDocument();
+    });
+
+    it('demande confirmation avant de retirer', async () => {
+      const user = userEvent.setup();
+      render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
+
+      await user.click(trash('Lessive liquide 3L'));
+
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
+      expect(actions.deleteTrackedUrl).not.toHaveBeenCalled();
+    });
+
+    it('retire après confirmation, en désignant l’URL par son identifiant', async () => {
+      const user = userEvent.setup();
+      render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
+
+      await user.click(trash('Lessive liquide 3L'));
+      await user.click(screen.getByRole('button', { name: 'Retirer' }));
+
+      await waitFor(() => expect(actions.deleteTrackedUrl).toHaveBeenCalledWith('aWQx'));
+    });
+
+    it('renonce sur « Annuler »', async () => {
+      const user = userEvent.setup();
+      render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
+
+      await user.click(trash('Lessive liquide 3L'));
+      await user.click(screen.getByRole('button', { name: 'Annuler' }));
+
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(actions.deleteTrackedUrl).not.toHaveBeenCalled();
+    });
+
+    it('nomme par l’URL le produit encore sans titre', async () => {
+      const user = userEvent.setup();
+      render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
+
+      await user.click(trash('https://www.amazon.fr/dp/B0TEST0002/'));
+
+      expect(
+        within(screen.getByRole('dialog')).getByText('https://www.amazon.fr/dp/B0TEST0002/'),
+      ).toBeInTheDocument();
+    });
+
+    it('garde son nom quand la recherche exclut la ligne visée', async () => {
+      const user = userEvent.setup();
+      render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
+
+      await user.click(trash('Lessive liquide 3L'));
+      await user.type(screen.getByRole('searchbox'), 'B0TEST0002');
+
+      const dialog = screen.getByRole('dialog');
+      expect(within(dialog).getByText('Lessive liquide 3L')).toBeInTheDocument();
+
+      await user.click(within(dialog).getByRole('button', { name: 'Retirer' }));
+      await waitFor(() => expect(actions.deleteTrackedUrl).toHaveBeenCalledWith('aWQx'));
+    });
   });
 
   it('ouvre la modale d’ajout', async () => {
     const user = userEvent.setup();
     render(<TrackedUrlDashboard trackedUrls={TRACKED} />);
 
-    await user.click(screen.getByRole('button', { name: /Suivre une URL/ }));
+    await user.click(screen.getByRole('button', { name: 'Suivre une URL' }));
 
     expect(screen.getByRole('textbox')).toHaveAttribute('type', 'url');
   });
