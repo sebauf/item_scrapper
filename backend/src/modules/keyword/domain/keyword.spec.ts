@@ -9,6 +9,10 @@ describe('Keyword', () => {
     expect(Keyword.track(name).isTracked).toBe(true);
   });
 
+  it('naît non suivi quand il est retiré sans avoir jamais eu de document', () => {
+    expect(Keyword.untracked(name).isTracked).toBe(false);
+  });
+
   it('refuse de suivre un mot-clé déjà suivi', () => {
     const keyword = Keyword.rehydrate(name, true);
     expect(() => keyword.retrack()).toThrow(KeywordAlreadyTracked);

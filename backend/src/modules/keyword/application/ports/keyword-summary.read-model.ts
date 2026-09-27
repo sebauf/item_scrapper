@@ -19,12 +19,18 @@ export abstract class KeywordSummaryReadModel {
   abstract listTracked(): Promise<KeywordSummary[]>;
 
   /**
-   * Nombre de mots-clés que `listTracked` renverrait.
+   * Les mots-clés que `listTracked` renverrait, réduits à leurs noms.
    *
-   * Existe pour que le compteur du tableau de bord (contexte Catalog) ne
-   * réinvente pas la règle : il comptait les documents `enabled: true`, là où
-   * la page en liste aussi les mots-clés hérités sans document. Les deux
-   * écrans pouvaient donc s'annoncer un nombre différent.
+   * Existe pour que le tableau de bord (contexte Catalog) ne réinvente pas la
+   * règle. Il lui en faut deux usages, et c'est pour ça que ce port renvoie les
+   * noms plutôt qu'un nombre : son compteur (qui comptait les documents
+   * `enabled: true`, ignorant les mots-clés hérités sans document) et le choix
+   * des blocs « bonnes affaires par mot-clé » (qui partait d'`items_raw`, donc
+   * affichait encore les mots-clés retirés). Deux requêtes distinctes seraient
+   * deux occasions de divergence.
+   *
+   * Moins cher que `listTracked` : ni comptage de produits, ni `$max` sur
+   * `scrapedAt`, dont le tableau de bord n'a que faire.
    */
-  abstract countTracked(): Promise<number>;
+  abstract listTrackedNames(): Promise<string[]>;
 }

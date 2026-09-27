@@ -42,13 +42,13 @@ export class MongoDashboardReadModel extends DashboardReadModel {
   async load(): Promise<DashboardSnapshot> {
     const lastScrapeDay = await findLastScrapeDay(this.db);
 
-    const [keywordCount, productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
+    const [trackedKeywords, productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
       await Promise.all([
-        // Délégué au contexte Keyword, et non recompté ici : ce compteur doit
-        // annoncer le nombre de lignes que la page « mots-clés » affiche. Le
+        // Délégué au contexte Keyword, et non recalculé ici : cet écran doit
+        // parler des mêmes mots-clés que la page « mots-clés ». Le
         // `countDocuments({ enabled: true })` d'avant ignorait les mots-clés
         // hérités sans document, que cette page liste pourtant.
-        this.keywords.countTracked(),
+        this.keywords.listTrackedNames(),
         // `items_raw` est unique par (url, jour) : sur une seule journée, un
         // document = un produit, et countDocuments suffit.
         this.db
@@ -124,7 +124,15 @@ export class MongoDashboardReadModel extends DashboardReadModel {
 
     // On part des mots-clés ayant des produits — un mot-clé sans bonne affaire
     // doit apparaître (bloc « aucune affaire aujourd'hui »), pas disparaître.
+    //
+    // Filtré sur les mots-clés suivis, car `items_raw` en sait trop : les
+    // relevés d'un mot-clé retiré y survivent jusqu'à la purge (une quinzaine
+    // de jours), et son bloc restait affiché ici alors que la page qui les
+    // liste ne le montrait plus. Le compteur ci-dessous et ces blocs viennent
+    // désormais du même ensemble, impossible qu'ils se contredisent.
+    const tracked = new Set(trackedKeywords);
     const dealsByKeyword: KeywordDeals[] = Array.from(productCountByKeyword.keys())
+      .filter((keyword) => tracked.has(keyword))
       .map((keyword) => {
         const deals = dealsByKeywordMap.get(keyword) ?? [];
         return {
@@ -137,7 +145,7 @@ export class MongoDashboardReadModel extends DashboardReadModel {
       .sort((a, b) => b.totalDeals - a.totalDeals || a.keyword.localeCompare(b.keyword, 'fr'));
 
     return {
-      keywordCount,
+      keywordCount: trackedKeywords.length,
       productCount,
       // Compté sur les lignes ramenées plutôt que sur `deal_scores` : le
       // pipeline peut garder le score d'un produit disparu depuis (il ne

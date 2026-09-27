@@ -151,42 +151,43 @@ describe('MongoKeywordSummaryReadModel', () => {
   });
 
   /**
-   * `countTracked` sert le compteur du tableau de bord. Il emprunte une source
-   * moins chère que `listTracked` (`distinct` plutôt que le `$facet`), ce qui
-   * est précisément le risque : deux chemins, une seule règle à respecter.
+   * `listTrackedNames` sert le tableau de bord : son compteur de mots-clés et le
+   * choix de ses blocs. Il emprunte une source moins chère que `listTracked`
+   * (`distinct` plutôt que le `$facet`), ce qui est précisément le risque :
+   * deux chemins, une seule règle à respecter.
    */
-  describe('countTracked', () => {
-    it('compte ce que listTracked afficherait', async () => {
+  describe('listTrackedNames', () => {
+    it('nomme ce que listTracked afficherait', async () => {
       const docs: KeywordDocument[] = [
         { keyword: 'lessive', enabled: true },
         { keyword: 'retire', enabled: false },
       ];
       const readModel = new MongoKeywordSummaryReadModel(stubDb(docs, {}));
 
-      await expect(readModel.countTracked()).resolves.toBe(1);
+      await expect(readModel.listTrackedNames()).resolves.toEqual(['lessive']);
     });
 
-    it('ne compte pas un mot-clé retiré dont les relevés survivent', async () => {
+    it('ne retient pas un mot-clé retiré dont les relevés survivent', async () => {
       const readModel = new MongoKeywordSummaryReadModel(
         stubDb([{ keyword: 'retire', enabled: false }], {}),
       );
 
-      await expect(readModel.countTracked()).resolves.toBe(0);
+      await expect(readModel.listTrackedNames()).resolves.toEqual([]);
     });
 
-    it('compte le mot-clé hérité que la page liste sans document', async () => {
+    it('retient le mot-clé hérité que la page liste sans document', async () => {
       // Le stub renvoie « retire » dans items_raw ; sans document en face,
-      // c'est le cas de rattrapage, compté comme il est affiché.
+      // c'est le cas de rattrapage, retenu comme il est affiché.
       const readModel = new MongoKeywordSummaryReadModel(stubDb([], {}));
 
-      await expect(readModel.countTracked()).resolves.toBe(1);
+      await expect(readModel.listTrackedNames()).resolves.toEqual(['retire']);
     });
 
     it('interroge `keywords` sans filtre, comme listTracked', async () => {
       const capture: { filter?: unknown } = {};
       const readModel = new MongoKeywordSummaryReadModel(stubDb([], capture));
 
-      await readModel.countTracked();
+      await readModel.listTrackedNames();
 
       expect(capture.filter).toEqual({});
     });
@@ -198,7 +199,7 @@ describe('MongoKeywordSummaryReadModel', () => {
       const capture: { distinctFilter?: unknown } = {};
       const readModel = new MongoKeywordSummaryReadModel(stubDb([], capture));
 
-      await readModel.countTracked();
+      await readModel.listTrackedNames();
 
       expect(capture.distinctFilter).toEqual({
         keyword: { $ne: null },
