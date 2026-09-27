@@ -1,20 +1,28 @@
 import { Document } from 'mongodb';
+import { onlyLastScrape } from 'src/shared/infrastructure/mongo/last-scrape';
 import { DEAL_SCORE_THRESHOLD } from '../domain/deal-policy';
 
 /**
- * Étages « dernier relevé par produit » sur `items_raw`.
+ * Étages « dernier relevé par produit » sur `items_raw`, restreints au dernier
+ * passage du scrapper.
  *
  * `items_raw` contient un document par (url, jour) : il faut donc réduire à la
  * ligne la plus récente de chaque URL avant toute autre opération. `scrapedAt`
  * départage deux scrapes d'un même jour, sans quoi la pagination pourrait
- * renvoyer deux fois le même produit d'une page à l'autre.
+ * renvoyer deux fois le même produit d'une page à l'autre. Le tri/regroupement
+ * reste donc nécessaire même filtré sur un seul jour.
+ *
+ * `lastScrapeDay` est ce qui fait disparaître les produits indisponibles : sans
+ * relevé au dernier passage, un produit n'a plus de prix à afficher (cf.
+ * `onlyLastScrape`).
  *
  * Le dernier $match écarte les produits inexploitables (titre vide, prix
- * absent) : ils fausseraient les compteurs affichés.
+ * absent) : ils fausseraient les compteurs affichés. C'est lui qui gère la
+ * rupture de stock sur une page encore vivante — le relevé existe, sans prix.
  */
-export function latestPerUrlStages(match: Document): Document[] {
+export function latestPerUrlStages(match: Document, lastScrapeDay: Date | null): Document[] {
   return [
-    { $match: match },
+    { $match: onlyLastScrape(match, lastScrapeDay) },
     { $sort: { day: -1, scrapedAt: -1 } },
     { $group: { _id: '$url', doc: { $first: '$$ROOT' } } },
     { $replaceRoot: { newRoot: '$doc' } },

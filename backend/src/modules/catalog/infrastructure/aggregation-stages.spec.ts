@@ -6,17 +6,39 @@ import { escapeRegex, latestPerUrlStages, withDealScoreStages } from './aggregat
  * Ces étages sont exécutés par Mongo, pas par nous : les tester revient à
  * décrire la *forme* du pipeline envoyé. C'est volontairement structurel —
  * vérifier le résultat d'une agrégation demanderait un vrai serveur, alors que
- * ce qu'on veut figer ici tient en trois points qui ont chacun cassé une page
- * par le passé : l'ordre tri → regroupement, la jointure à gauche sur les
- * scores, et le seuil « bonne affaire » lu depuis le domaine.
+ * ce qu'on veut figer ici tient en quatre points qui ont chacun cassé une page
+ * par le passé : l'ordre tri → regroupement, la restriction au dernier passage
+ * du scrapper, la jointure à gauche sur les scores, et le seuil « bonne
+ * affaire » lu depuis le domaine.
  *
  * `escapeRegex`, lui, est du vrai code et se teste sur son comportement.
  */
+const LAST_SCRAPE_DAY = new Date('2026-09-27T00:00:00.000Z');
+
 describe('latestPerUrlStages', () => {
-  const stages = latestPerUrlStages({ keyword: 'lessive' });
+  const stages = latestPerUrlStages({ keyword: 'lessive' }, LAST_SCRAPE_DAY);
 
   it('place le filtre en premier, pour que Mongo puisse utiliser un index', () => {
-    expect(stages[0]).toEqual({ $match: { keyword: 'lessive' } });
+    expect(stages[0]).toEqual({
+      $match: { day: LAST_SCRAPE_DAY, keyword: 'lessive' },
+    });
+  });
+
+  it('restreint au dernier passage du scrapper', () => {
+    // C'est ce filtre qui fait disparaître les produits indisponibles : le
+    // scrapper n'écrit aucune ligne pour une page morte ou bloquée, donc leur
+    // dernier relevé est antérieur au dernier passage.
+    const match = stages[0] as Document;
+
+    expect(match.$match.day).toBe(LAST_SCRAPE_DAY);
+  });
+
+  it('ne filtre pas sur le jour quand la base est vide', () => {
+    // Aucun relevé, donc aucun jour de référence : un filtre `day: null` ne
+    // renverrait rien, mais surtout il masquerait la vraie cause.
+    expect(latestPerUrlStages({ keyword: 'lessive' }, null)[0]).toEqual({
+      $match: { keyword: 'lessive' },
+    });
   });
 
   it('trie avant de regrouper — sinon « le dernier relevé » est arbitraire', () => {
@@ -66,7 +88,9 @@ describe('withDealScoreStages', () => {
   it('garde les produits sans score — la jointure est à gauche', () => {
     // $first sur le tableau du $lookup, jamais $unwind : un $unwind supprimerait
     // tout produit pas encore scoré, c'est-à-dire tous les nouveaux produits.
-    expect(stages).toContainEqual({ $addFields: { scoreDoc: { $first: '$scoreDoc' } } });
+    expect(stages).toContainEqual({
+      $addFields: { scoreDoc: { $first: '$scoreDoc' } },
+    });
     expect(stages.some((stage) => '$unwind' in stage)).toBe(false);
   });
 
@@ -79,7 +103,9 @@ describe('withDealScoreStages', () => {
   it('range les produits non scorés après les autres', () => {
     // -1 et non 0 : un produit au score nul reste au-dessus d'un produit sans
     // score, ce qui est le classement voulu.
-    expect(computed.$addFields.sortScore).toEqual({ $ifNull: ['$scoreDoc.score', -1] });
+    expect(computed.$addFields.sortScore).toEqual({
+      $ifNull: ['$scoreDoc.score', -1],
+    });
   });
 
   it('calcule la remise seulement quand les deux prix sont exploitables', () => {

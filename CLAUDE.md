@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Scrapper** (`scrapper/`): Node.js + TypeScript, clean architecture (domain / application / infrastructure), [Crawlee](https://crawlee.dev/) with `PlaywrightCrawler`, MongoDB driver v6
 - **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB
-- **Airflow** (`airflow/`): orchestrates the daily scrape → refine → score pipeline via a single DAG
+- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline via a single DAG
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
 - **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4 — **no DB driver**; calls the backend API server-side (`BACKEND_URL`)
 - **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend
@@ -48,9 +48,10 @@ pures : la suite tourne sans navigateur, sans réseau et sans base.
 cd pipeline
 pip install -r requirements.txt
 cp .env.example .env               # set MONGODB_URI
-python -m src.pipeline             # run full pipeline (refine + score)
-python -m src.refine.build_price_history   # refine only
-python -m src.scoring.score                # score only
+python -m src.pipeline             # run full pipeline (purge + refine + score)
+python -m src.maintenance.purge_dead_products   # purge only (deletes data)
+python -m src.refine.build_price_history        # refine only
+python -m src.scoring.score                     # score only
 
 pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
 python -m pytest                      # unit tests — no MongoDB needed
@@ -146,14 +147,27 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 
 ```
 pipeline/src/
-  pipeline.py               — entry point: runs refine then score
+  pipeline.py               — entry point: runs purge, then refine, then score
   config.py                 — MONGODB_URI + DB_NAME from .env
+  maintenance/purge_dead_products.py — deletes products the scrapper can no longer read
   refine/build_price_history.py  — aggregates items_raw → price_history
   scoring/features.py       — extracts per-product time-series rows (mean_price_30d, n_observations)
   scoring/score.py          — scores latest price vs own 30-day rolling average → deal_scores
 ```
 
-Data flow: `items_raw` → `build_price_history` → `price_history` collection (one doc per URL, array of daily snapshots) → `score` → `deal_scores` collection.
+Data flow: `items_raw` → `purge_dead_products` (deletions only) → `build_price_history` → `price_history` collection (one doc per URL, array of daily snapshots) → `score` → `deal_scores` collection.
+
+**Purge** (`PURGE_AFTER_DAYS = 15`) is the only step that deletes data. A product
+with no *usable* observation (title and price both present) for more than 15 days
+is gone from `items_raw`, `price_history` and `deal_scores`. Two reasons: the
+scrapper re-requests every URL in `price_history` on every run, so a dead page
+costs one page of crawl budget per day; and such a product is already invisible
+in the UI (see the backend freshness rule). The window is counted from the **last
+scrape day**, never from `now()` — a scrapper outage must not empty the catalogue
+when the pipeline next runs. URLs in `tracked_urls` or `favorites` are never
+purged: they are explicit user choices, and their price history is exactly what
+was asked for. It must run **before** `build_price_history`, which would
+otherwise rebuild what was just deleted.
 
 `title` et `images` sont agrégés en `$last` (le relevé du jour fait autorité :
 un produit renommé doit s'afficher renommé). Les champs d'**identité** suivent
@@ -172,7 +186,11 @@ Scoring logic (no trained model, no cross-product comparison):
 
 ### Airflow DAG
 
-`airflow/dags/price_pipeline_dag.py` — daily DAG (`0 6 * * *`): `scrape >> refine >> score`
+`airflow/dags/price_pipeline_dag.py` — daily DAG (`0 1 * * *`, then a random
+jitter of 5 min to 3 h): `jitter >> scrape >> purge >> refine >> score`. The
+`scrape` task overrides `execution_timeout` to 3 h — at 10 requests/minute a
+full 1000-page crawl takes ~100 min, and a run killed half-way would hide every
+product it did not reach.
 
 Supports two execution backends via `PIPELINE_EXECUTOR` env var:
 - `docker` (default, local dev): `DockerOperator`, launches sibling containers on the host's Docker socket
@@ -200,6 +218,16 @@ backend never mutates them, so there is no invariant to defend.
 Routes are prefixed `/api/v1` except the probes (`/health/live`, `/health/ready`).
 `DEAL_SCORE_THRESHOLD` lives in `catalog/domain/deal-policy.ts` — it is the single
 owner of the "good deal" policy.
+
+**Freshness rule** (`shared/infrastructure/mongo/last-scrape.ts`): every list and
+counter only shows products refreshed by the **last scrape run** — the most recent
+`items_raw.day`. A product with no row that day is one the scrapper could not read
+again (dead page, redirect, block), so its last known price is a memory, not a
+price. This holds only because `MAX_REQUESTS_PER_CRAWL` (1000) covers the whole
+catalogue every run: shrink that budget and the filter starts hiding live products
+that simply weren't revisited. The two settings travel together. Product *detail*
+is deliberately exempt — favourites and tracked URLs are explicit user choices and
+stay reachable by direct link.
 
 ### Key frontend files
 

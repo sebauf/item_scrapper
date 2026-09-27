@@ -322,10 +322,11 @@ agrégations Mongo (infrastructure).
 
 **Correctifs de portée boutique** — les trois points du §2.5.
 
-**Budget de crawl.** `MAX_REQUESTS_PER_CRAWL` vaut 200 et
-`maxRequestsPerMinute` 10 : un run complet est déjà de l'ordre de 20 min.
+**Budget de crawl.** `MAX_REQUESTS_PER_CRAWL` vaut 1000 et
+`maxRequestsPerMinute` 10 : un run complet est de l'ordre de 100 min.
 Deux enseignes en séquentiel doublent la fenêtre. À vérifier contre la
-tolérance de la tâche Airflow avant la mise en production.
+tolérance de la tâche Airflow (`execution_timeout` de 3 h) avant la mise en
+production.
 
 ### 4.2 MongoDB — schéma
 
