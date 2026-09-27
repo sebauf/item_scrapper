@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db, Document } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
+import { findLastScrapeDay, onlyLastScrape } from 'src/shared/infrastructure/mongo/last-scrape';
 import { DEAL_SCORE_THRESHOLD } from '../domain/deal-policy';
 import {
   DashboardReadModel,
@@ -23,35 +24,58 @@ export class MongoDashboardReadModel extends DashboardReadModel {
   /**
    * Portage de frontend/src/lib/queries.ts:fetchDashboardData.
    *
-   * Six requêtes indépendantes lancées en parallèle. Attention : les deux
-   * agrégations sur `items_raw` balaient toute la collection à chaque appel.
-   * C'est acceptable au volume actuel (~1300 documents) mais c'est le premier
-   * point à optimiser quand l'historique grossira — soit par un cache à TTL
-   * ici, soit par une collection de statistiques entretenue par le pipeline.
+   * Tous les compteurs sont comptés sur le **dernier passage du scrapper**, et
+   * pas sur l'historique : afficher « 1300 produits » alors que les grilles
+   * n'en montrent que les 900 encore en ligne serait un écart inexplicable
+   * pour qui lit l'écran. `lastUpdate` reste la seule date de l'historique —
+   * c'est justement la fraîcheur du pipeline qu'elle annonce.
+   *
+   * Cinq requêtes lancées en parallèle, après la lecture du jour de référence.
+   * Le filtre sur `day` les rend nettement moins coûteuses qu'avant : elles ne
+   * balaient plus tout `items_raw` mais la seule tranche du jour, servie par
+   * l'index `items_raw.day_desc`.
    */
   async load(): Promise<DashboardSnapshot> {
-    const [keywordCount, productCount, dealCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
+    const lastScrapeDay = await findLastScrapeDay(this.db);
+
+    const [keywordCount, productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
       await Promise.all([
         this.db.collection('keywords').countDocuments({ enabled: true }),
-        this.db.collection('price_history').estimatedDocumentCount(),
+        // `items_raw` est unique par (url, jour) : sur une seule journée, un
+        // document = un produit, et countDocuments suffit.
         this.db
-          .collection('deal_scores')
-          .countDocuments({ score: { $gte: DEAL_SCORE_THRESHOLD } }),
+          .collection('items_raw')
+          .countDocuments(
+            onlyLastScrape({ title: { $ne: '' }, price: { $ne: null } }, lastScrapeDay),
+          ),
         this.db
           .collection('price_history')
           .findOne({}, { sort: { updatedAt: -1 }, projection: { updatedAt: 1 } }),
         this.db
           .collection('items_raw')
           .aggregate<{ keyword: string; productCount: number }>([
-            { $match: { keyword: { $ne: null }, title: { $ne: '' }, price: { $ne: null } } },
-            { $group: { _id: '$keyword', urls: { $addToSet: '$url' } } },
-            { $project: { keyword: '$_id', productCount: { $size: '$urls' } } },
+            {
+              $match: onlyLastScrape(
+                {
+                  keyword: { $ne: null },
+                  title: { $ne: '' },
+                  price: { $ne: null },
+                },
+                lastScrapeDay,
+              ),
+            },
+            { $group: { _id: '$keyword', productCount: { $sum: 1 } } },
+            { $project: { keyword: '$_id', productCount: 1 } },
           ])
           .toArray(),
+        // Sans restriction de mot-clé : ce sont toutes les bonnes affaires du
+        // jour, y compris celles des URLs suivies à l'unité (`keyword: null`),
+        // qui comptent dans le compteur global. Le regroupement par mot-clé,
+        // lui, les écarte plus bas — elles n'appartiennent à aucun bloc.
         this.db
           .collection('items_raw')
           .aggregate([
-            ...latestPerUrlStages({ keyword: { $ne: null } }),
+            ...latestPerUrlStages({}, lastScrapeDay),
             {
               $lookup: {
                 from: 'deal_scores',
@@ -83,6 +107,7 @@ export class MongoDashboardReadModel extends DashboardReadModel {
 
     const dealsByKeywordMap = new Map<string, ProductSummary[]>();
     for (const doc of dealsRaw as Document[]) {
+      if (doc.keyword === null || doc.keyword === undefined) continue;
       const keyword = String(doc.keyword);
       const bucket = dealsByKeywordMap.get(keyword) ?? [];
       bucket.push(toProductSummary(doc));
@@ -106,7 +131,11 @@ export class MongoDashboardReadModel extends DashboardReadModel {
     return {
       keywordCount,
       productCount,
-      dealCount,
+      // Compté sur les lignes ramenées plutôt que sur `deal_scores` : le
+      // pipeline peut garder le score d'un produit disparu depuis (il ne
+      // repasse qu'après le scrape), et ce score ne doit pas gonfler un
+      // compteur dont les grilles ne montrent aucune contrepartie.
+      dealCount: dealsRaw.length,
       lastUpdate: lastUpdateDoc?.updatedAt ? toIso(lastUpdateDoc.updatedAt) : null,
       dealsByKeyword,
     };

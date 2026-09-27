@@ -61,7 +61,7 @@ Both `scrapper/` and `frontend/` use a `.env` file with a single variable:
 MONGODB_URI=mongodb://admin:password@localhost:27017/scrapper?authSource=admin
 ```
 
-The scraper also supports `MAX_REQUESTS_PER_CRAWL` (default: 200).
+The scraper also supports `MAX_REQUESTS_PER_CRAWL` (default: 1000).
 
 ## Scrapper architecture
 

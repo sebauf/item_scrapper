@@ -27,7 +27,7 @@ cp .env.example .env
 | Variable | Rôle | Défaut |
 |---|---|---|
 | `MONGODB_URI` | URI de connexion MongoDB | `mongodb://admin:password@localhost:27017/scrapper?authSource=admin` |
-| `MAX_REQUESTS_PER_CRAWL` | Budget de pages par exécution | `200` |
+| `MAX_REQUESTS_PER_CRAWL` | Budget de pages par exécution | `1000` |
 
 ## Commandes
 
@@ -94,12 +94,17 @@ propre page `/dp/ASIN/`.
 
 Deux conséquences pratiques :
 
-- **Le budget est la vraie contrainte.** `MAX_REQUESTS_PER_CRAWL` (200 par
-  défaut) est saturé bien avant d'avoir tout visité — 3 mots-clés suffisent à
-  produire ~450 relectures de produits connus. Ce n'est pas un défaut : les
-  produits connus sont triés par `lastSeen` croissant, donc **les moins
-  récemment vus passent en premier**. D'un jour sur l'autre, le catalogue
-  tourne au lieu de rescanner toujours les mêmes fiches.
+- **Le budget doit couvrir tout le catalogue.** `MAX_REQUESTS_PER_CRAWL` (1000
+  par défaut) est dimensionné pour relire **chaque** fiche connue à chaque
+  exécution : 3 mots-clés produisent déjà ~450 relectures, auxquelles
+  s'ajoutent les pages de recherche et les variantes. C'est une contrainte de
+  correction, pas de confort : le backend masque les produits que le dernier
+  passage n'a pas rafraîchis (`backend/src/shared/infrastructure/mongo/last-scrape.ts`),
+  donc un budget saturé ferait disparaître des fiches bien vivantes. Les
+  produits connus restent triés par `lastSeen` croissant : si le budget vient
+  malgré tout à manquer, ce sont les moins récemment vus qui passent en
+  premier. À 10 requêtes/minute, 1000 pages ≈ 100 min, sous
+  l'`execution_timeout` de 3 h de la tâche Airflow.
 - **Les URLs sont canonicalisées en `amazon.fr/dp/<ASIN>/`** dès la page de
   recherche. Sans cela, la même fiche atteinte par deux chemins (paramètres de
   suivi, `/gp/product/`) ouvrirait deux historiques de prix distincts.

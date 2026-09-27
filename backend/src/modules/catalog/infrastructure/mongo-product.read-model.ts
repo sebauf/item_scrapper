@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db, Document } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
+import { findLastScrapeDay } from 'src/shared/infrastructure/mongo/last-scrape';
 import { ProductId } from '../domain/product-id';
 import { PAGE_SIZE, ProductQuery, ProductSort } from '../domain/product-query';
 import {
@@ -53,11 +54,12 @@ export class MongoProductReadModel extends ProductReadModel {
    */
   async search(keyword: string, query: ProductQuery): Promise<ProductSearchResult> {
     const filterStages = MongoProductReadModel.filterStages(query);
+    const lastScrapeDay = await findLastScrapeDay(this.db);
 
     const [facet] = await this.db
       .collection('items_raw')
       .aggregate([
-        ...latestPerUrlStages({ keyword }),
+        ...latestPerUrlStages({ keyword }, lastScrapeDay),
         ...withDealScoreStages(),
         {
           $facet: {
@@ -122,6 +124,12 @@ export class MongoProductReadModel extends ProductReadModel {
    *
    * L'ordre des `??` traduit cette hiérarchie : le relevé le plus récent gagne,
    * l'historique sert de repli quand le produit n'a pas été revu récemment.
+   *
+   * Volontairement **hors du filtre de fraîcheur** des listes : la fiche reste
+   * accessible par lien direct même quand le dernier passage ne l'a pas revue.
+   * Les favoris et les URLs suivies sont des choix explicites de l'utilisateur
+   * — les faire disparaître de son écran de suivi parce qu'Amazon a retiré la
+   * page serait une perte d'information, pas un nettoyage.
    */
   async findDetail(id: ProductId): Promise<ProductDetail | null> {
     const [historyDoc, scoreDoc, latestSnapshot] = await Promise.all([

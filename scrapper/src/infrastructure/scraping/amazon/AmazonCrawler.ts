@@ -27,7 +27,12 @@ export class AmazonCrawler implements IShopScraper {
     router.addDefaultHandler(createAmazonProductHandler(this.productRepository));
 
     return new PlaywrightCrawler({
-      maxRequestsPerCrawl: parseInt(process.env.MAX_REQUESTS_PER_CRAWL ?? '200', 10),
+      // Le budget doit couvrir tout le catalogue à chaque exécution : les
+      // écrans masquent désormais les produits que le dernier passage n'a pas
+      // rafraîchis (cf. backend/src/shared/infrastructure/mongo/last-scrape.ts).
+      // Un budget trop court ferait disparaître des fiches bien vivantes,
+      // simplement pas relues ce jour-là.
+      maxRequestsPerCrawl: parseInt(process.env.MAX_REQUESTS_PER_CRAWL ?? '1000', 10),
       maxConcurrency: 2,
       maxRequestsPerMinute: 10,
       requestHandler: router,

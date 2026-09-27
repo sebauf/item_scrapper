@@ -1,5 +1,6 @@
-"""Daily pipeline: scrape Amazon -> refine into price_history -> score every
-product's current price against its own price history.
+"""Daily pipeline: scrape Amazon -> purge the products the scrapper can no
+longer read -> refine into price_history -> score every product's current price
+against its own price history.
 
 Each step runs in its own ephemeral container, reusing the images already
 built by CI (.github/workflows/scrapper.yml and pipeline.yml).
@@ -85,7 +86,7 @@ def _random_night_delay() -> None:
 
 with DAG(
     dag_id="price_pipeline_dag",
-    description="Scrape -> refine -> score the deal-tracking pipeline",
+    description="Scrape -> purge -> refine -> score the deal-tracking pipeline",
     default_args=default_args,
     schedule="0 1 * * *",
     start_date=datetime(2026, 1, 1),
@@ -98,7 +99,21 @@ with DAG(
         execution_timeout=None,
     )
 
+    # Le scrape relit tout le catalogue (MAX_REQUESTS_PER_CRAWL=1000) à 10
+    # requêtes/minute, soit ~100 min : la marge des 2 h par défaut est trop
+    # mince. Un run tué en route ne perd pas que des prix — les écrans
+    # masquent les produits non rafraîchis par le dernier passage, donc une
+    # moitié du catalogue disparaîtrait de l'affichage jusqu'au run suivant.
     scrape = _build_task("scrape", image=f"{REGISTRY}-scrapper:main")
+    scrape.execution_timeout = timedelta(hours=3)
+
+    # Avant le refine : celui-ci reconstruit price_history depuis items_raw,
+    # donc purger après lui ferait ressusciter les documents supprimés.
+    purge = _build_task(
+        "purge",
+        image=f"{REGISTRY}-pipeline:main",
+        command=["python", "-m", "src.maintenance.purge_dead_products"],
+    )
 
     refine = _build_task(
         "refine", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.refine.build_price_history"]
@@ -108,4 +123,4 @@ with DAG(
         "score", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.scoring.score"]
     )
 
-    jitter >> scrape >> refine >> score
+    jitter >> scrape >> purge >> refine >> score

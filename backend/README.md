@@ -87,6 +87,27 @@ Paramètres de `/keywords/{keyword}/products` : `q` (titre), `deals` (1/0),
 `page` (24 produits par page). Un mot-clé inconnu renvoie 200 avec des
 compteurs à zéro — c'est au client de décider s'il affiche une 404.
 
+### Fraîcheur : seul le dernier passage du scrapper est affiché
+
+Les listes et les compteurs ne montrent que les produits relevés lors du
+**dernier passage** du scrapper (`shared/infrastructure/mongo/last-scrape.ts`).
+Un produit sans relevé ce jour-là est un produit que le scrapper n'a pas pu
+revoir — page morte, redirection, blocage — et son dernier prix connu n'est plus
+un prix affichable.
+
+Deux conséquences à connaître avant de toucher à l'un des deux réglages :
+
+- le filtre suppose que le budget de crawl couvre tout le catalogue à chaque
+  exécution (`MAX_REQUESTS_PER_CRAWL`, 1000) ; avec un budget plus court, les
+  relectures tournent d'un jour sur l'autre et des fiches bien vivantes
+  disparaîtraient de l'écran ;
+- `GET /api/v1/products/:id` en est **exempt** : une fiche reste accessible par
+  lien direct, sinon un favori retiré de la vente disparaîtrait sans un mot de
+  l'écran de suivi.
+
+Pendant qu'un scrape tourne, l'affichage se remplit au fil du passage : seuls
+les produits déjà relus du jour sont visibles.
+
 ### Deux différences volontaires avec l'ancien code du frontend
 
 **`null` plutôt qu'absent.** `dealScore`, `predictedPrice` et `trendDirection`

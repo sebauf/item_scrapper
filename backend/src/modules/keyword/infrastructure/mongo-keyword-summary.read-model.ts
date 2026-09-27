@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
+import { findLastScrapeDay, onlyLastScrape } from 'src/shared/infrastructure/mongo/last-scrape';
 import {
   KeywordSummary,
   KeywordSummaryReadModel,
@@ -10,6 +11,11 @@ interface RawKeywordStat {
   keyword: string;
   productCount: number;
   lastScrape?: Date;
+}
+
+interface StatsFacet {
+  fresh: { _id: string; productCount: number }[];
+  seen: { _id: string; lastScrape?: Date }[];
 }
 
 @Injectable()
@@ -30,24 +36,26 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
    * n'existe. Sans ça, leurs produits deviendraient invisibles dans l'UI.
    */
   async listTracked(): Promise<KeywordSummary[]> {
-    const [rawStats, trackedDocs] = await Promise.all([
+    const lastScrapeDay = await findLastScrapeDay(this.db);
+
+    const [statsFacet, trackedDocs] = await Promise.all([
       this.db
         .collection('items_raw')
-        .aggregate<RawKeywordStat>([
+        .aggregate<StatsFacet>([
           { $match: { keyword: { $ne: null }, title: { $ne: '' }, price: { $ne: null } } },
           {
-            $group: {
-              _id: '$keyword',
-              urls: { $addToSet: '$url' },
-              lastScrape: { $max: '$scrapedAt' },
-            },
-          },
-          {
-            $project: {
-              _id: 0,
-              keyword: '$_id',
-              productCount: { $size: '$urls' },
-              lastScrape: 1,
+            // Deux comptages sur des périmètres différents, en une passe.
+            // `productCount` ne compte que le dernier passage — c'est le nombre
+            // de produits que la grille du mot-clé affichera. `lastScrape`,
+            // lui, reste calculé sur tout l'historique : un mot-clé dont aucun
+            // produit n'a survécu au dernier passage a bien été scrapé un jour,
+            // et afficher « jamais scrapé » serait faux.
+            $facet: {
+              fresh: [
+                { $match: onlyLastScrape({}, lastScrapeDay) },
+                { $group: { _id: '$keyword', productCount: { $sum: 1 } } },
+              ],
+              seen: [{ $group: { _id: '$keyword', lastScrape: { $max: '$scrapedAt' } } }],
             },
           },
         ])
@@ -58,6 +66,7 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
         .toArray(),
     ]);
 
+    const rawStats = toKeywordStats(statsFacet[0]);
     const statsByKeyword = new Map(rawStats.map((stat) => [stat.keyword, stat]));
     const summaries: KeywordSummary[] = [];
     const seen = new Set<string>();
@@ -73,6 +82,22 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
 
     return summaries.sort((a, b) => a.keyword.localeCompare(b.keyword, 'fr'));
   }
+}
+
+/**
+ * Recolle les deux périmètres du $facet. On part de `seen` : un mot-clé déjà
+ * scrapé doit figurer dans la liste même si le dernier passage ne lui a laissé
+ * aucun produit — avec `productCount: 0`, qui est alors la vérité affichable.
+ */
+function toKeywordStats(facet: StatsFacet | undefined): RawKeywordStat[] {
+  if (!facet) return [];
+  const freshCounts = new Map(facet.fresh.map((row) => [row._id, row.productCount]));
+
+  return facet.seen.map((row) => ({
+    keyword: row._id,
+    productCount: freshCounts.get(row._id) ?? 0,
+    lastScrape: row.lastScrape,
+  }));
 }
 
 function toSummary(keyword: string, stat: RawKeywordStat | undefined): KeywordSummary {

@@ -32,6 +32,13 @@ export const REQUIRED_INDEXES: readonly IndexDefinition[] = [
     reason: 'détail produit : dernier snapshot connu pour une URL',
   },
   {
+    collection: 'items_raw',
+    keys: { day: -1 },
+    name: 'day_desc',
+    reason:
+      'fraîcheur : date du dernier passage du scrapper, puis filtre de ce jour sur toutes les listes',
+  },
+  {
     collection: 'price_history',
     keys: { updatedAt: -1 },
     name: 'updatedAt_desc',
