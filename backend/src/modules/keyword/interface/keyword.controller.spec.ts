@@ -19,6 +19,10 @@ class FakeKeywordSummaryReadModel extends KeywordSummaryReadModel {
   listTracked(): Promise<KeywordSummary[]> {
     return Promise.resolve(this.summaries);
   }
+
+  countTracked(): Promise<number> {
+    return Promise.resolve(this.summaries.length);
+  }
 }
 
 /**

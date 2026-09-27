@@ -17,4 +17,14 @@ export interface KeywordSummary {
 
 export abstract class KeywordSummaryReadModel {
   abstract listTracked(): Promise<KeywordSummary[]>;
+
+  /**
+   * Nombre de mots-clés que `listTracked` renverrait.
+   *
+   * Existe pour que le compteur du tableau de bord (contexte Catalog) ne
+   * réinvente pas la règle : il comptait les documents `enabled: true`, là où
+   * la page en liste aussi les mots-clés hérités sans document. Les deux
+   * écrans pouvaient donc s'annoncer un nombre différent.
+   */
+  abstract countTracked(): Promise<number>;
 }

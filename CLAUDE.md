@@ -160,9 +160,12 @@ Data flow: `items_raw` → `purge_dead_products` (deletions only) → `build_pri
 **Purge** (`PURGE_AFTER_DAYS = 15`) is the only step that deletes data. A product
 with no *usable* observation (title and price both present) for more than 15 days
 is gone from `items_raw`, `price_history` and `deal_scores`. Two reasons: the
-scrapper re-requests every URL in `price_history` on every run, so a dead page
-costs one page of crawl budget per day; and such a product is already invisible
-in the UI (see the backend freshness rule). The window is counted from the **last
+scrapper re-requests known products from `price_history` on every run
+(`AmazonCrawler.buildKnownProductRequests`, oldest `lastSeen` first, capped at
+`KNOWN_PRODUCTS_LIMIT_PER_KEYWORD = 150` per enabled keyword), so a dead page
+costs one page of crawl budget per day for as long as it stays inside that
+window; and such a product is already invisible in the UI (see the backend
+freshness rule). The window is counted from the **last
 scrape day**, never from `now()` — a scrapper outage must not empty the catalogue
 when the pipeline next runs. URLs in `tracked_urls` or `favorites` are never
 purged: they are explicit user choices, and their price history is exactly what
@@ -223,9 +226,12 @@ owner of the "good deal" policy.
 counter only shows products refreshed by the **last scrape run** — the most recent
 `items_raw.day`. A product with no row that day is one the scrapper could not read
 again (dead page, redirect, block), so its last known price is a memory, not a
-price. This holds only because `MAX_REQUESTS_PER_CRAWL` (1000) covers the whole
-catalogue every run: shrink that budget and the filter starts hiding live products
-that simply weren't revisited. The two settings travel together. Product *detail*
+price. This holds only as long as every known product is actually revisited each
+run, which rests on two ceilings, not one: `MAX_REQUESTS_PER_CRAWL` (1000) for
+the whole crawl, and `KNOWN_PRODUCTS_LIMIT_PER_KEYWORD` (150) for the re-reads of
+a single keyword. Push a keyword past 150 products, or the catalogue past the
+global budget, and the filter starts hiding live products that simply weren't
+revisited. The three settings travel together. Product *detail*
 is deliberately exempt — favourites and tracked URLs are explicit user choices and
 stay reachable by direct link.
 

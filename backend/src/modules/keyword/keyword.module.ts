@@ -22,5 +22,8 @@ import { KeywordController } from './interface/keyword.controller';
     { provide: KeywordRepository, useClass: MongoKeywordRepository },
     { provide: KeywordSummaryReadModel, useClass: MongoKeywordSummaryReadModel },
   ],
+  // KeywordSummaryReadModel : le tableau de bord (CatalogModule) s'en sert pour
+  // compter les mots-clés suivis selon la même règle que la page qui les liste.
+  exports: [KeywordSummaryReadModel],
 })
 export class KeywordModule {}
