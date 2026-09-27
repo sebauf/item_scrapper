@@ -24,6 +24,7 @@
   --color-warn-border: #fde68a;
   --color-danger: #e11d48;
   --color-danger-soft: #ffe4e6;
+  --color-on-danger: #ffffff;
   /* Stays light in both themes: Amazon product shots have baked-in white backgrounds */
   --color-image-bg: #f8fafc;
   /* Chart series — validated (dataviz six checks) against both surfaces */
@@ -55,6 +56,7 @@
     --color-warn-border: #57431a;
     --color-danger: #fb7185;
     --color-danger-soft: #3f1824;
+    --color-on-danger: #0b0f19;
     --color-chart-price: #6366f1;
   }
 }

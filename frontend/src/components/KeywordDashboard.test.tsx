@@ -15,6 +15,10 @@ const { KeywordDashboard } = await import('./KeywordDashboard');
  * Liste des mots-clés suivis. Le point sensible est la suppression : elle
  * demande une confirmation, parce qu'elle arrête le scrape — contrairement au
  * retrait d'un favori, qui est sans conséquence.
+ *
+ * La corbeille est cherchée par son libellé accessible, pas par un survol : sur
+ * mobile il n'y a pas de survol, et c'est précisément ce qui rendait la
+ * suppression introuvable.
  */
 const KEYWORDS: KeywordSummary[] = [
   { keyword: 'lessive', productCount: 42, lastScrape: '2026-08-08T06:00:00.000Z' },
@@ -86,34 +90,54 @@ describe('KeywordDashboard', () => {
   });
 
   describe('suppression', () => {
+    const trash = (keyword: string) =>
+      screen.getByRole('button', { name: `Supprimer le mot-clé ${keyword}` });
+
+    it('expose une corbeille par mot-clé, sans survol', () => {
+      render(<KeywordDashboard keywords={KEYWORDS} />);
+
+      expect(trash('lessive')).toBeInTheDocument();
+      expect(trash('café')).toBeInTheDocument();
+      expect(trash('aspirateur')).toBeInTheDocument();
+    });
+
     it('demande confirmation avant de supprimer', async () => {
       const user = userEvent.setup();
       render(<KeywordDashboard keywords={KEYWORDS} />);
 
-      await user.click(screen.getAllByTitle('Désactiver ce mot-clé')[0]);
+      await user.click(trash('lessive'));
 
-      expect(screen.getByText('Supprimer ?')).toBeInTheDocument();
+      expect(screen.getByRole('dialog')).toBeInTheDocument();
       expect(actions.deleteKeyword).not.toHaveBeenCalled();
+    });
+
+    it('nomme le mot-clé visé dans la confirmation', async () => {
+      const user = userEvent.setup();
+      render(<KeywordDashboard keywords={KEYWORDS} />);
+
+      await user.click(trash('café'));
+
+      expect(screen.getByRole('heading', { name: /« café »/ })).toBeInTheDocument();
     });
 
     it('supprime après confirmation', async () => {
       const user = userEvent.setup();
       render(<KeywordDashboard keywords={KEYWORDS} />);
 
-      await user.click(screen.getAllByTitle('Désactiver ce mot-clé')[0]);
-      await user.click(screen.getByRole('button', { name: 'Oui' }));
+      await user.click(trash('lessive'));
+      await user.click(screen.getByRole('button', { name: 'Supprimer' }));
 
       await waitFor(() => expect(actions.deleteKeyword).toHaveBeenCalledWith('lessive'));
     });
 
-    it('renonce sur « Non »', async () => {
+    it('renonce sur « Annuler »', async () => {
       const user = userEvent.setup();
       render(<KeywordDashboard keywords={KEYWORDS} />);
 
-      await user.click(screen.getAllByTitle('Désactiver ce mot-clé')[0]);
-      await user.click(screen.getByRole('button', { name: 'Non' }));
+      await user.click(trash('lessive'));
+      await user.click(screen.getByRole('button', { name: 'Annuler' }));
 
-      expect(screen.queryByText('Supprimer ?')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       expect(actions.deleteKeyword).not.toHaveBeenCalled();
     });
 
@@ -121,8 +145,8 @@ describe('KeywordDashboard', () => {
       const user = userEvent.setup();
       render(<KeywordDashboard keywords={KEYWORDS} />);
 
-      await user.click(screen.getAllByTitle('Désactiver ce mot-clé')[1]);
-      await user.click(screen.getByRole('button', { name: 'Oui' }));
+      await user.click(trash('café'));
+      await user.click(screen.getByRole('button', { name: 'Supprimer' }));
 
       await waitFor(() => expect(actions.deleteKeyword).toHaveBeenCalledWith('café'));
     });
@@ -132,7 +156,7 @@ describe('KeywordDashboard', () => {
     const user = userEvent.setup();
     render(<KeywordDashboard keywords={KEYWORDS} />);
 
-    await user.click(screen.getByRole('button', { name: /Ajouter/ }));
+    await user.click(screen.getByRole('button', { name: 'Ajouter un mot-clé' }));
 
     expect(screen.getByRole('heading', { name: 'Ajouter un mot-clé' })).toBeInTheDocument();
   });
