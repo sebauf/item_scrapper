@@ -1,15 +1,35 @@
 """Scores the latest price of every product against its own price history
-(never against other products): how far below (or above) its own rolling
-30-day average it currently is, plus whether its price is trending up or
-down over its own history.
+(never against other products): how far below (or above) its own usual
+price over the last 30 days it currently is, plus whether its price is
+trending up or down over its own history.
 
 score = (predictedPrice - actualPrice) / predictedPrice * 100
 A positive score means the actual price is below the product's own recent
-average — i.e. a good deal relative to itself.
+usual price — i.e. a good deal relative to itself.
 
-Both the score and the trend require at least MIN_OBSERVATIONS prior
-observations; products scraped too few times are skipped rather than given
-an unreliable value.
+predictedPrice is the mean of the prior 30 days' prices *after* a Hampel
+filter has discarded the outliers (see `features.robust_baseline`): a
+single misread price or a past flash sale no longer drags the reference.
+
+The score requires at least MIN_OBSERVATIONS prior prices *kept by that
+filter* inside the 30-day window: the reference is only as reliable as the
+points it rests on, and five readings of which two are aberrant are not
+five usable readings. Products below that are skipped rather than given an
+unreliable value.
+
+trendDirection must flag a price move *the day it happens*, without being
+swung by one misread reading in the past. Two signals, in this order:
+
+1. same-day move — today's price falls outside the product's usual range
+   (the Hampel band of the prior 30 days, see `features.usual_price_range`):
+   below → "down", above → "up";
+2. otherwise, the trajectory — Theil–Sen slope (median of pairwise slopes)
+   of the product's whole priced history, relative to its median price.
+
+A least-squares fit did catch same-day moves, but only because it gives the
+last point huge leverage — the same leverage that let one misread price in
+the history flip the trend. Splitting the two questions keeps both answers
+right.
 
 A product is also skipped if its latest priced observation is older than
 STALE_AFTER_DAYS: when a product goes unavailable, the scrapper stops
@@ -39,17 +59,52 @@ TREND_THRESHOLD_PCT_PER_DAY = 0.5
 STALE_AFTER_DAYS = 2
 
 
+def theil_sen_slope(days: np.ndarray, prices: np.ndarray) -> float | None:
+    """Pente de Theil–Sen : médiane des pentes entre toutes les paires de relevés.
+
+    Une régression par moindres carrés minimise la somme des carrés des
+    écarts : un seul relevé extrême (prix mal lu à ×10) pèse au carré et peut
+    à lui seul inverser la tendance. La médiane des pentes, elle, tolère
+    jusqu'à ~29 % de points aberrants sans bouger.
+
+    Conséquence voulue : un saut isolé sur le dernier relevé ne fait pas une
+    tendance. Le score mesure déjà l'écart du jour ; la tendance décrit la
+    trajectoire. Renvoie None s'il n'y a aucune paire de jours distincts.
+    """
+    i, j = np.triu_indices(len(days), k=1)
+    dx = days[j] - days[i]
+    distinct = dx != 0
+    if not distinct.any():
+        return None
+    return float(np.median((prices[j] - prices[i])[distinct] / dx[distinct]))
+
+
+def _same_day_move(row: dict) -> str | None:
+    """"down" / "up" si le prix du jour sort de la fourchette habituelle, sinon None."""
+    low, high = row.get("usual_low_30d"), row.get("usual_high_30d")
+    if low is None or high is None:
+        return None
+    price = row[PRICE_COLUMN]
+    if price < low:
+        return "down"
+    if price > high:
+        return "up"
+    return None
+
+
 def _trend_direction(frame, url: str) -> str:
+    """Trajectoire de fond (Theil–Sen), insensible au saut d'un seul jour."""
     history = frame[frame["url"] == url].sort_values("day")
     days = np.array([(d - history["day"].iloc[0]).days for d in history["day"]], dtype=float)
     prices = history[PRICE_COLUMN].to_numpy(dtype=float)
 
-    mean_price = prices.mean()
-    if mean_price == 0:
+    # Médiane plutôt que moyenne, pour la même raison que la pente.
+    reference_price = float(np.median(prices))
+    slope = theil_sen_slope(days, prices)
+    if reference_price <= 0 or slope is None:
         return "stable"
 
-    slope = np.polyfit(days, prices, 1)[0]
-    relative_slope_pct_per_day = slope / mean_price * 100
+    relative_slope_pct_per_day = slope / reference_price * 100
 
     if relative_slope_pct_per_day <= -TREND_THRESHOLD_PCT_PER_DAY:
         return "down"
@@ -69,15 +124,15 @@ def score(db: Database) -> int:
     if not frame.empty:
         latest = latest_rows_only(frame)
         scoreable = latest[
-            (latest["n_observations"] >= MIN_OBSERVATIONS)
-            & latest["mean_price_30d"].notna()
+            (latest["n_inliers"] >= MIN_OBSERVATIONS)
+            & latest["baseline_price_30d"].notna()
             & (latest["day"] >= stale_cutoff)
         ]
 
     operations = []
     for row in scoreable.to_dict("records"):
         url = row["url"]
-        predicted_price = row["mean_price_30d"]
+        predicted_price = row["baseline_price_30d"]
         actual_price = row[PRICE_COLUMN]
         deal_score = (predicted_price - actual_price) / predicted_price * 100
 
@@ -90,7 +145,7 @@ def score(db: Database) -> int:
                         "predictedPrice": round(float(predicted_price), 2),
                         "actualPrice": actual_price,
                         "currency": row["currency"],
-                        "trendDirection": _trend_direction(frame, url),
+                        "trendDirection": _same_day_move(row) or _trend_direction(frame, url),
                         "computedAt": now,
                     }
                 },
