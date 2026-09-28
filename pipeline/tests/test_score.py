@@ -154,6 +154,28 @@ class TestScore:
         assert MIN_OBSERVATIONS == 5
 
 
+class TestReferenceRobuste:
+    def test_un_releve_aberrant_ne_fabrique_pas_d_affaire(self, db, today):
+        """Sans filtre : référence 114,3 €, score +60,6 %. Avec : 50 €, +10 %."""
+        db["price_history"].insert_one(
+            price_history_doc("u1", [50.0, 50.0, 500.0, 50.0, 50.0, 50.0, 45.0], today)
+        )
+
+        assert score(db) == 1
+
+        doc = db["deal_scores"].find_one({"_id": "u1"})
+        assert doc["predictedPrice"] == 50.0
+        assert doc["score"] == 10.0
+
+    def test_le_minimum_porte_sur_les_releves_conserves(self, db, today):
+        """5 relevés antérieurs dont 1 aberrant = 4 points de référence : insuffisant."""
+        db["price_history"].insert_one(
+            price_history_doc("u1", [50.0, 50.0, 500.0, 50.0, 50.0, 45.0], today)
+        )
+
+        assert score(db) == 0
+
+
 class TestTrendDirection:
     @staticmethod
     def frame(prices, today):

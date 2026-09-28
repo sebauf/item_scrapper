@@ -1,15 +1,21 @@
 """Scores the latest price of every product against its own price history
-(never against other products): how far below (or above) its own rolling
-30-day average it currently is, plus whether its price is trending up or
-down over its own history.
+(never against other products): how far below (or above) its own usual
+price over the last 30 days it currently is, plus whether its price is
+trending up or down over its own history.
 
 score = (predictedPrice - actualPrice) / predictedPrice * 100
 A positive score means the actual price is below the product's own recent
-average — i.e. a good deal relative to itself.
+usual price — i.e. a good deal relative to itself.
 
-Both the score and the trend require at least MIN_OBSERVATIONS prior
-observations; products scraped too few times are skipped rather than given
-an unreliable value.
+predictedPrice is the mean of the prior 30 days' prices *after* a Hampel
+filter has discarded the outliers (see `features.robust_baseline`): a
+single misread price or a past flash sale no longer drags the reference.
+
+The score requires at least MIN_OBSERVATIONS prior prices *kept by that
+filter* inside the 30-day window: the reference is only as reliable as the
+points it rests on, and five readings of which two are aberrant are not
+five usable readings. Products below that are skipped rather than given an
+unreliable value.
 
 A product is also skipped if its latest priced observation is older than
 STALE_AFTER_DAYS: when a product goes unavailable, the scrapper stops
@@ -69,15 +75,15 @@ def score(db: Database) -> int:
     if not frame.empty:
         latest = latest_rows_only(frame)
         scoreable = latest[
-            (latest["n_observations"] >= MIN_OBSERVATIONS)
-            & latest["mean_price_30d"].notna()
+            (latest["n_inliers"] >= MIN_OBSERVATIONS)
+            & latest["baseline_price_30d"].notna()
             & (latest["day"] >= stale_cutoff)
         ]
 
     operations = []
     for row in scoreable.to_dict("records"):
         url = row["url"]
-        predicted_price = row["mean_price_30d"]
+        predicted_price = row["baseline_price_30d"]
         actual_price = row[PRICE_COLUMN]
         deal_score = (predicted_price - actual_price) / predicted_price * 100
 
