@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { aProduct } from '@/testing/fixtures';
-import { ProductCard, TrendBadge } from './ProductCard';
+import { FreshnessBadge, ProductCard, TrendBadge } from './ProductCard';
 
 /**
  * La carte produit n'a aucune règle métier : le verdict « bonne affaire » lui
@@ -127,6 +127,42 @@ describe('ProductCard', () => {
       rerender(<ProductCard product={aProduct({ trendDirection: null })} />);
       expect(screen.queryByText(/Baisse|Hausse/)).not.toBeInTheDocument();
     });
+  });
+});
+
+describe('FreshnessBadge', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function renderAt(now: string, scrapedAt: string) {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(now));
+    return render(<FreshnessBadge scrapedAt={scrapedAt} />);
+  }
+
+  it.each([
+    ['2026-08-08T01:00:00.000Z', "🕒 Aujourd'hui", 'text-muted'],
+    ['2026-08-07T01:00:00.000Z', '🕒 Hier', 'text-muted'],
+    ['2026-08-05T01:00:00.000Z', '🕒 Il y a 3 j', 'text-warn'],
+    ['2026-07-30T01:00:00.000Z', '🕒 Il y a 9 j', 'text-danger'],
+  ])('relevé le %s → « %s »', (scrapedAt, label, tone) => {
+    renderAt('2026-08-08T10:00:00.000Z', scrapedAt);
+
+    expect(screen.getByText(label)).toHaveClass(tone);
+  });
+
+  it('ne rend rien sans date de relevé', () => {
+    const { container } = renderAt('2026-08-08T10:00:00.000Z', '');
+
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('est affiché sur la carte produit', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-10T10:00:00.000Z'));
+    // La fixture est relevée le 8 août.
+    render(<ProductCard product={aProduct()} />);
+
+    expect(screen.getByText('🕒 Il y a 2 j')).toBeInTheDocument();
   });
 });
 

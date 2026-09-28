@@ -1,7 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import type { ProductSummary, TrendDirection } from '@/lib/api';
-import { formatPrice } from '@/lib/format';
+import { daysSince, formatPrice } from '@/lib/format';
 
 function discountPct(price: number, crossed: number): number {
   return Math.round((1 - price / crossed) * 100);
@@ -21,6 +21,34 @@ export function TrendBadge({ trend }: { trend: TrendDirection }) {
       </span>
     );
   return null;
+}
+
+/**
+ * Fraîcheur du dernier relevé. Le scrape est quotidien : « hier » est l'état
+ * normal avant le passage de la nuit. Au-delà, le badge vire à l'orange puis au
+ * rouge — sur une liste, où ne figurent que les produits du dernier scrape, tous
+ * les badges vieillissent ensemble : c'est le signe que le scrapper s'est arrêté.
+ */
+export function FreshnessBadge({ scrapedAt }: { scrapedAt: string }) {
+  const days = daysSince(scrapedAt);
+  if (days === null) return null;
+
+  const label = days === 0 ? "Aujourd'hui" : days === 1 ? 'Hier' : `Il y a ${days} j`;
+  const tone =
+    days <= 1
+      ? 'text-muted bg-surface/90 border-border'
+      : days < 7
+        ? 'text-warn bg-warn-soft border-warn-border'
+        : 'text-danger bg-danger-soft border-danger/40';
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full border ${tone}`}
+      title={`Dernier relevé : ${new Date(scrapedAt).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })}`}
+    >
+      🕒 {label}
+    </span>
+  );
 }
 
 export function ProductCard({ product }: { product: ProductSummary }) {
@@ -66,6 +94,9 @@ export function ProductCard({ product }: { product: ProductSummary }) {
             <TrendBadge trend={trendDirection} />
           </div>
         )}
+        <div className="absolute bottom-2 left-2">
+          <FreshnessBadge scrapedAt={product.scrapedAt} />
+        </div>
       </div>
 
       <div className="p-4 flex flex-col gap-2 flex-1">

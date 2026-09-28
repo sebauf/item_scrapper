@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatPrice, timeAgo } from './format';
+import { daysSince, formatPrice, timeAgo } from './format';
 
 /**
  * Deux fonctions d'affichage, deux pièges : une devise inconnue ne doit pas
@@ -60,5 +60,38 @@ describe('timeAgo', () => {
     vi.setSystemTime(now);
 
     expect(timeAgo(new Date(now.getTime() + 60_000).toISOString())).toBe("à l'instant");
+  });
+});
+
+describe('daysSince', () => {
+  // 10 h à Paris (UTC+2 en été).
+  const now = new Date('2026-08-08T08:00:00.000Z');
+
+  it.each([
+    ['relevé du jour', '2026-08-08T01:30:00.000Z', 0],
+    ['relevé hier à 23 h, moins de 24 h plus tôt', '2026-08-07T21:00:00.000Z', 1],
+    ['relevé il y a trois jours', '2026-08-05T06:00:00.000Z', 3],
+  ])('%s', (_label, iso, expected) => {
+    expect(daysSince(iso, now)).toBe(expected);
+  });
+
+  it('compte le jour à l’heure de Paris, pas en UTC', () => {
+    // 23 h 30 UTC le 7 = 1 h 30 le 8 à Paris : même jour que `now`.
+    expect(daysSince('2026-08-07T23:30:00.000Z', now)).toBe(0);
+  });
+
+  it('traverse le changement d’heure sans jour fractionnaire', () => {
+    // Passage à l'heure d'hiver le 25 octobre 2026 : une journée de 25 h.
+    expect(daysSince('2026-10-24T10:00:00.000Z', new Date('2026-10-26T10:00:00.000Z'))).toBe(2);
+  });
+
+  it('ramène une date future à aujourd’hui', () => {
+    expect(daysSince('2026-08-09T08:00:00.000Z', now)).toBe(0);
+  });
+
+  it('renvoie null pour une date illisible', () => {
+    // Le backend renvoie une chaîne vide quand il n'a aucun relevé.
+    expect(daysSince('', now)).toBeNull();
+    expect(daysSince('pas-une-date', now)).toBeNull();
   });
 });
