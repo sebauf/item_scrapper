@@ -17,6 +17,10 @@ points it rests on, and five readings of which two are aberrant are not
 five usable readings. Products below that are skipped rather than given an
 unreliable value.
 
+trendDirection is the Theil–Sen slope (median of pairwise slopes) of the
+product's whole priced history, relative to its median price: like the
+reference price, it must not be swung by one misread reading.
+
 A product is also skipped if its latest priced observation is older than
 STALE_AFTER_DAYS: when a product goes unavailable, the scrapper stops
 recording a price for it, so "latest priced row" silently falls back to
@@ -45,17 +49,38 @@ TREND_THRESHOLD_PCT_PER_DAY = 0.5
 STALE_AFTER_DAYS = 2
 
 
+def theil_sen_slope(days: np.ndarray, prices: np.ndarray) -> float | None:
+    """Pente de Theil–Sen : médiane des pentes entre toutes les paires de relevés.
+
+    Une régression par moindres carrés minimise la somme des carrés des
+    écarts : un seul relevé extrême (prix mal lu à ×10) pèse au carré et peut
+    à lui seul inverser la tendance. La médiane des pentes, elle, tolère
+    jusqu'à ~29 % de points aberrants sans bouger.
+
+    Conséquence voulue : un saut isolé sur le dernier relevé ne fait pas une
+    tendance. Le score mesure déjà l'écart du jour ; la tendance décrit la
+    trajectoire. Renvoie None s'il n'y a aucune paire de jours distincts.
+    """
+    i, j = np.triu_indices(len(days), k=1)
+    dx = days[j] - days[i]
+    distinct = dx != 0
+    if not distinct.any():
+        return None
+    return float(np.median((prices[j] - prices[i])[distinct] / dx[distinct]))
+
+
 def _trend_direction(frame, url: str) -> str:
     history = frame[frame["url"] == url].sort_values("day")
     days = np.array([(d - history["day"].iloc[0]).days for d in history["day"]], dtype=float)
     prices = history[PRICE_COLUMN].to_numpy(dtype=float)
 
-    mean_price = prices.mean()
-    if mean_price == 0:
+    # Médiane plutôt que moyenne, pour la même raison que la pente.
+    reference_price = float(np.median(prices))
+    slope = theil_sen_slope(days, prices)
+    if reference_price <= 0 or slope is None:
         return "stable"
 
-    slope = np.polyfit(days, prices, 1)[0]
-    relative_slope_pct_per_day = slope / mean_price * 100
+    relative_slope_pct_per_day = slope / reference_price * 100
 
     if relative_slope_pct_per_day <= -TREND_THRESHOLD_PCT_PER_DAY:
         return "down"

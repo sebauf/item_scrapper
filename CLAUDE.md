@@ -183,7 +183,7 @@ Scoring logic (no trained model, no cross-product comparison):
 - `score = (predictedPrice - actualPrice) / predictedPrice * 100`
 - `predictedPrice` = mean of that product's own prices over the prior 30 days, **after a Hampel filter** (`features.robust_baseline`): in log space, prices further than `HAMPEL_K = 3` robust standard deviations (MAD × 1.4826) from the median are dropped, the band never narrower than ±`MIN_BAND_PCT = 5` % (Amazon prices move in steps, the MAD is often 0). A single misread price (×10) or a past flash sale no longer drags the reference. Only the reference is filtered — never today's price (a real deal *is* an outlier), and never `price_history` (the chart shows what was actually read)
 - Requires `MIN_OBSERVATIONS = 5` prior prices **kept by the filter** inside the 30-day window (`n_inliers`); products with fewer are skipped
-- `trendDirection` computed via linear regression on the product's own price history (`up` / `down` / `stable`)
+- `trendDirection` = Theil–Sen slope (median of pairwise slopes, `score.theil_sen_slope`) over the product's own price history, relative to its median price, threshold ±0.5 %/day (`up` / `down` / `stable`). Robust like the reference price: one misread price cannot flip it, and a one-day jump is not a trend (the score already measures it) — a move must last to register
 - Stale/unreliable scores are deleted from `deal_scores` after each run
 - Products flagged `unavailable` in `price_history` (page redirected away on last visit) are skipped outright, whatever their price freshness
 
