@@ -17,9 +17,19 @@ points it rests on, and five readings of which two are aberrant are not
 five usable readings. Products below that are skipped rather than given an
 unreliable value.
 
-trendDirection is the Theil–Sen slope (median of pairwise slopes) of the
-product's whole priced history, relative to its median price: like the
-reference price, it must not be swung by one misread reading.
+trendDirection must flag a price move *the day it happens*, without being
+swung by one misread reading in the past. Two signals, in this order:
+
+1. same-day move — today's price falls outside the product's usual range
+   (the Hampel band of the prior 30 days, see `features.usual_price_range`):
+   below → "down", above → "up";
+2. otherwise, the trajectory — Theil–Sen slope (median of pairwise slopes)
+   of the product's whole priced history, relative to its median price.
+
+A least-squares fit did catch same-day moves, but only because it gives the
+last point huge leverage — the same leverage that let one misread price in
+the history flip the trend. Splitting the two questions keeps both answers
+right.
 
 A product is also skipped if its latest priced observation is older than
 STALE_AFTER_DAYS: when a product goes unavailable, the scrapper stops
@@ -69,7 +79,21 @@ def theil_sen_slope(days: np.ndarray, prices: np.ndarray) -> float | None:
     return float(np.median((prices[j] - prices[i])[distinct] / dx[distinct]))
 
 
+def _same_day_move(row: dict) -> str | None:
+    """"down" / "up" si le prix du jour sort de la fourchette habituelle, sinon None."""
+    low, high = row.get("usual_low_30d"), row.get("usual_high_30d")
+    if low is None or high is None:
+        return None
+    price = row[PRICE_COLUMN]
+    if price < low:
+        return "down"
+    if price > high:
+        return "up"
+    return None
+
+
 def _trend_direction(frame, url: str) -> str:
+    """Trajectoire de fond (Theil–Sen), insensible au saut d'un seul jour."""
     history = frame[frame["url"] == url].sort_values("day")
     days = np.array([(d - history["day"].iloc[0]).days for d in history["day"]], dtype=float)
     prices = history[PRICE_COLUMN].to_numpy(dtype=float)
@@ -121,7 +145,7 @@ def score(db: Database) -> int:
                         "predictedPrice": round(float(predicted_price), 2),
                         "actualPrice": actual_price,
                         "currency": row["currency"],
-                        "trendDirection": _trend_direction(frame, url),
+                        "trendDirection": _same_day_move(row) or _trend_direction(frame, url),
                         "computedAt": now,
                     }
                 },

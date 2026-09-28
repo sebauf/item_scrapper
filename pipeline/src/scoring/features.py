@@ -2,8 +2,9 @@
 price against its own past prices (never against other products).
 
 Each row corresponds to one (url, day) price observation. `baseline_price_30d`,
-`n_inliers` and `n_observations` are computed strictly from *prior* days of
-that same product's history, so they never include the day's own price.
+`n_inliers`, `usual_low_30d` / `usual_high_30d` and `n_observations` are
+computed strictly from *prior* days of that same product's history, so they
+never include the day's own price.
 
 Prix de référence robuste (`baseline_price_30d`)
 ------------------------------------------------
@@ -50,25 +51,52 @@ def _amount(value: dict[str, Any] | None) -> float | None:
     return value["amount"] if value else None
 
 
+def _hampel(prices: list[float]) -> tuple[np.ndarray, np.ndarray, float, float] | None:
+    """Filtre de Hampel en log : `(prix > 0, écarts à la médiane, médiane, bande)`.
+
+    Un prix nul ou négatif n'a pas de logarithme et n'est pas un prix : il est
+    écarté d'office. Renvoie None sans prix exploitable.
+    """
+    values = np.asarray([p for p in prices if p > 0], dtype=float)
+    if values.size == 0:
+        return None
+
+    logs = np.log(values)
+    median = float(np.median(logs))
+    deviations = np.abs(logs - median)
+    band = max(HAMPEL_K * MAD_TO_SIGMA * float(np.median(deviations)), _MIN_BAND)
+    return values, deviations, median, band
+
+
 def robust_baseline(prices: list[float]) -> tuple[float | None, int]:
     """Moyenne des prix après exclusion des valeurs aberrantes (Hampel, en log).
 
     Renvoie `(prix de référence, nombre de relevés conservés)`, ou `(None, 0)`
-    sans prix exploitable. Un prix nul ou négatif n'a pas de logarithme et
-    n'est pas un prix : il est écarté d'office.
+    sans prix exploitable.
     """
-    values = np.asarray([p for p in prices if p > 0], dtype=float)
-    if values.size == 0:
+    hampel = _hampel(prices)
+    if hampel is None:
         return None, 0
-
-    logs = np.log(values)
-    median = np.median(logs)
-    deviations = np.abs(logs - median)
-    band = max(HAMPEL_K * MAD_TO_SIGMA * float(np.median(deviations)), _MIN_BAND)
+    values, deviations, _, band = hampel
 
     # La médiane est toujours dans la bande : `kept` n'est jamais vide.
     kept = values[deviations <= band]
     return float(kept.mean()), int(kept.size)
+
+
+def usual_price_range(prices: list[float]) -> tuple[float, float] | None:
+    """Fourchette de prix habituelle : les bornes de la bande de Hampel, en euros.
+
+    Un prix hors de cette fourchette est un prix que le filtre aurait jugé
+    aberrant s'il figurait dans l'historique. Appliqué au prix du jour, c'est
+    exactement la définition d'un mouvement inhabituel — une baisse ou une
+    hausse qui mérite d'être signalée le jour même.
+    """
+    hampel = _hampel(prices)
+    if hampel is None:
+        return None
+    _, _, median, band = hampel
+    return math.exp(median - band), math.exp(median + band)
 
 
 def extract_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
@@ -88,12 +116,15 @@ def extract_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
 
         if price_amount is not None:
             baseline, n_inliers = robust_baseline(prior_30d)
+            usual_low, usual_high = usual_price_range(prior_30d) or (None, None)
             rows.append(
                 {
                     "url": doc["_id"],
                     "day": day,
                     "baseline_price_30d": baseline,
                     "n_inliers": n_inliers,
+                    "usual_low_30d": usual_low,
+                    "usual_high_30d": usual_high,
                     "n_observations": len(prior),
                     "currency": price["currency"],
                     PRICE_COLUMN: price_amount,

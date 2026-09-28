@@ -20,6 +20,7 @@ from src.scoring.features import (
     extract_rows,
     latest_rows_only,
     robust_baseline,
+    usual_price_range,
 )
 from tests.conftest import snapshot
 
@@ -153,6 +154,30 @@ class TestRobustBaseline:
         """×10 et ÷10 sont à la même distance de la médiane en échelle log."""
         assert robust_baseline([50.0] * 5 + [500.0]) == (50.0, 5)
         assert robust_baseline([50.0] * 5 + [5.0]) == (50.0, 5)
+
+
+class TestUsualPriceRange:
+    def test_sans_prix(self):
+        assert usual_price_range([]) is None
+        assert usual_price_range([0.0]) is None
+
+    def test_prix_constant_plancher_de_5_pourcents(self):
+        low, high = usual_price_range([10.0] * 5)
+        assert low == pytest.approx(10.0 / 1.05)
+        assert high == pytest.approx(10.5)
+
+    def test_un_releve_aberrant_n_elargit_pas_la_fourchette(self):
+        """La MAD ignore le 500 € : la fourchette reste serrée autour de 50 €."""
+        low, high = usual_price_range([50.0] * 5 + [500.0])
+        assert high == pytest.approx(52.5)
+        assert low == pytest.approx(50.0 / 1.05)
+
+    def test_calculee_sur_les_jours_anterieurs(self):
+        history = [snapshot(D - timedelta(days=5 - i), 10.0) for i in range(5)]
+        rows = extract_rows(doc(history + [snapshot(D, 8.0)]))
+
+        assert rows[-1]["usual_low_30d"] == pytest.approx(10.0 / 1.05)
+        assert rows[0]["usual_low_30d"] is None
 
 
 class TestBuildFrame:

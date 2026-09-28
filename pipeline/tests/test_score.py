@@ -12,8 +12,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.scoring.features import PRICE_COLUMN
-from src.scoring.score import MIN_OBSERVATIONS, _trend_direction, score, theil_sen_slope
+from src.scoring.features import PRICE_COLUMN, extract_rows
+from src.scoring.score import (
+    MIN_OBSERVATIONS,
+    _same_day_move,
+    _trend_direction,
+    score,
+    theil_sen_slope,
+)
 from tests.conftest import price_history_doc
 
 # 6 relevés : le dernier a donc exactement MIN_OBSERVATIONS observations
@@ -33,9 +39,8 @@ class TestScore:
         assert doc["predictedPrice"] == 10.0
         assert doc["actualPrice"] == 8.0
         assert doc["currency"] == "EUR"
-        # Une baisse d'un seul jour est l'affaire du jour, pas une tendance :
-        # le score la mesure déjà (voir TestTrendDirection).
-        assert doc["trendDirection"] == "stable"
+        # -20 % sous une fourchette habituelle de ±5 % : signalé le jour même.
+        assert doc["trendDirection"] == "down"
         assert doc["computedAt"] is not None
 
     def test_prix_au_dessus_de_la_moyenne_donne_un_score_negatif(self, db, today):
@@ -46,7 +51,7 @@ class TestScore:
 
         doc = db["deal_scores"].find_one({"_id": "u1"})
         assert doc["score"] == -25.0
-        assert doc["trendDirection"] == "stable"
+        assert doc["trendDirection"] == "up"
 
     def test_arrondis(self, db, today):
         db["price_history"].insert_one(
@@ -177,6 +182,57 @@ class TestReferenceRobuste:
         )
 
         assert score(db) == 0
+
+
+class TestBaisseDuJour:
+    """La tendance doit signaler une baisse le jour même où elle apparaît."""
+
+    def test_petite_variation_dans_la_fourchette_n_est_pas_signalee(self, db, today):
+        """-2 % sur un prix stable : sous le plancher de ±5 %, c'est du bruit."""
+        db["price_history"].insert_one(
+            price_history_doc("u1", [10.0] * 5 + [9.8], today)
+        )
+        score(db)
+
+        assert db["deal_scores"].find_one({"_id": "u1"})["trendDirection"] == "stable"
+
+    def test_baisse_du_jour_malgre_un_releve_aberrant_passe(self, db, today):
+        """Un 500 € dans l'historique ne masque ni la référence ni la baisse."""
+        db["price_history"].insert_one(
+            price_history_doc("u1", [50.0, 50.0, 500.0, 50.0, 50.0, 50.0, 45.0], today)
+        )
+        score(db)
+
+        assert db["deal_scores"].find_one({"_id": "u1"})["trendDirection"] == "down"
+
+    def test_produit_volatil_fourchette_plus_large(self, today):
+        """Un prix qui oscille de ±10 % au quotidien : -8 % n'a rien d'inhabituel.
+
+        La MAD élargit la fourchette (≈ 70–143 €) : pas de mouvement du jour.
+        """
+        prices = [100.0, 110.0, 90.0, 108.0, 92.0, 100.0, 92.0]
+        latest = extract_rows(price_history_doc("u1", prices, today))[-1]
+
+        assert _same_day_move(latest) is None
+        # Le même -8 % sur un produit stable, lui, est signalé.
+        stable = extract_rows(price_history_doc("u1", [100.0] * 6 + [92.0], today))[-1]
+        assert _same_day_move(stable) == "down"
+
+
+class TestSameDayMove:
+    @staticmethod
+    def row(price, low=9.5, high=10.5):
+        return {PRICE_COLUMN: price, "usual_low_30d": low, "usual_high_30d": high}
+
+    @pytest.mark.parametrize(
+        "price,expected",
+        [(8.0, "down"), (12.0, "up"), (10.0, None), (9.6, None), (10.4, None)],
+    )
+    def test_position_par_rapport_a_la_fourchette(self, price, expected):
+        assert _same_day_move(self.row(price)) == expected
+
+    def test_sans_fourchette(self):
+        assert _same_day_move(self.row(8.0, low=None, high=None)) is None
 
 
 class TestTrendDirection:

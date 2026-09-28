@@ -151,7 +151,7 @@ pipeline/src/
   config.py                 — MONGODB_URI + DB_NAME from .env
   maintenance/purge_dead_products.py — deletes products the scrapper can no longer read
   refine/build_price_history.py  — aggregates items_raw → price_history
-  scoring/features.py       — extracts per-product time-series rows (baseline_price_30d, n_inliers, n_observations)
+  scoring/features.py       — extracts per-product time-series rows (baseline_price_30d, n_inliers, usual_low_30d / usual_high_30d, n_observations)
   scoring/score.py          — scores latest price vs own 30-day rolling average → deal_scores
 ```
 
@@ -183,7 +183,7 @@ Scoring logic (no trained model, no cross-product comparison):
 - `score = (predictedPrice - actualPrice) / predictedPrice * 100`
 - `predictedPrice` = mean of that product's own prices over the prior 30 days, **after a Hampel filter** (`features.robust_baseline`): in log space, prices further than `HAMPEL_K = 3` robust standard deviations (MAD × 1.4826) from the median are dropped, the band never narrower than ±`MIN_BAND_PCT = 5` % (Amazon prices move in steps, the MAD is often 0). A single misread price (×10) or a past flash sale no longer drags the reference. Only the reference is filtered — never today's price (a real deal *is* an outlier), and never `price_history` (the chart shows what was actually read)
 - Requires `MIN_OBSERVATIONS = 5` prior prices **kept by the filter** inside the 30-day window (`n_inliers`); products with fewer are skipped
-- `trendDirection` = Theil–Sen slope (median of pairwise slopes, `score.theil_sen_slope`) over the product's own price history, relative to its median price, threshold ±0.5 %/day (`up` / `down` / `stable`). Robust like the reference price: one misread price cannot flip it, and a one-day jump is not a trend (the score already measures it) — a move must last to register
+- `trendDirection` must flag a move **the day it happens**. Two signals, in order: (1) *same-day move* — today's price outside the product's usual range (`features.usual_price_range`: the Hampel band of the prior 30 days, never narrower than ±5 %, wider for volatile products) → `down` / `up`; (2) otherwise the *trajectory* — Theil–Sen slope (median of pairwise slopes, `score.theil_sen_slope`) over the whole price history, relative to its median price, threshold ±0.5 %/day. Least squares caught same-day moves only through the last point's leverage — the same leverage that let one misread price in the history flip the trend
 - Stale/unreliable scores are deleted from `deal_scores` after each run
 - Products flagged `unavailable` in `price_history` (page redirected away on last visit) are skipped outright, whatever their price freshness
 
