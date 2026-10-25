@@ -195,6 +195,12 @@ jitter of 5 min to 3 h): `jitter >> scrape >> purge >> refine >> score`. The
 full 1000-page crawl takes ~100 min, and a run killed half-way would hide every
 product it did not reach.
 
+A `cleanup_logs` task runs outside that chain (a failed scrape must not stop
+it): it deletes Airflow's own task logs older than `AIRFLOW_LOG_RETENTION_DAYS`
+(default 30). Airflow 2 never prunes them, and in k8s they live on the
+fixed-size `airflow-logs` PVC mounted in the scheduler — with `LocalExecutor`
+the task runs in that same Pod.
+
 Supports two execution backends via `PIPELINE_EXECUTOR` env var:
 - `docker` (default, local dev): `DockerOperator`, launches sibling containers on the host's Docker socket
 - `kubernetes`: `KubernetesPodOperator`, launches Pods in-cluster (used in k8s deployment)

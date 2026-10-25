@@ -1,6 +1,7 @@
 """Daily pipeline: scrape Amazon -> purge the products the scrapper can no
 longer read -> refine into price_history -> score every product's current price
-against its own price history.
+against its own price history. Alongside, a housekeeping task deletes Airflow's
+own task logs past LOG_RETENTION_DAYS.
 
 Each step runs in its own ephemeral container, reusing the images already
 built by CI (.github/workflows/scrapper.yml and pipeline.yml).
@@ -17,6 +18,7 @@ import os
 import random
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
@@ -26,6 +28,7 @@ REGISTRY = os.environ.get("IMAGE_REGISTRY", "ghcr.io/YOUR_GITHUB_USERNAME/item_s
 MONGODB_URI = os.environ.get("MONGODB_URI", "")
 NAMESPACE = os.environ.get("AIRFLOW_K8S_NAMESPACE", "price-tracker")
 SECRET_NAME = os.environ.get("PIPELINE_SECRET_NAME", "price-tracker-secrets")
+LOG_RETENTION_DAYS = int(os.environ.get("AIRFLOW_LOG_RETENTION_DAYS", "30"))
 
 default_args = {
     "owner": "airflow",
@@ -92,6 +95,38 @@ def _random_night_delay() -> None:
     time.sleep(delay_seconds)
 
 
+def _cleanup_old_logs() -> None:
+    """Delete Airflow log files older than LOG_RETENTION_DAYS, then the empty
+    directories left behind.
+
+    Airflow 2 never prunes its task logs, and in k8s they sit on a fixed-size
+    PVC (k8s/base/airflow-scheduler.yaml). This runs in-process: with
+    LocalExecutor the task executes in the scheduler Pod, the one that mounts
+    that volume.
+    """
+    from airflow.configuration import conf
+
+    base = Path(conf.get("logging", "base_log_folder"))
+    cutoff = time.time() - LOG_RETENTION_DAYS * 86400
+    deleted = 0
+    # Profondeur d'abord : un dossier n'est examiné qu'une fois ses fichiers
+    # supprimés, ce qui permet de le retirer s'il est devenu vide.
+    for root, dirs, files in os.walk(base, topdown=False):
+        for name in files:
+            path = Path(root) / name
+            # Le lien `scheduler/latest` est réécrit par le scheduler.
+            if path.is_symlink():
+                continue
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                deleted += 1
+        for name in dirs:
+            path = Path(root) / name
+            if not path.is_symlink() and not any(path.iterdir()):
+                path.rmdir()
+    print(f"Deleted {deleted} log file(s) older than {LOG_RETENTION_DAYS} days from {base}")
+
+
 with DAG(
     dag_id="price_pipeline_dag",
     description="Scrape -> purge -> refine -> score the deal-tracking pipeline",
@@ -130,5 +165,10 @@ with DAG(
     score = _build_task(
         "score", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.scoring.score"]
     )
+
+    # Hors de la chaîne : une panne du scrape ne doit pas empêcher le ménage,
+    # sinon c'est le jour où les logs grossissent le plus qu'ils ne sont plus
+    # nettoyés.
+    _cleanup = PythonOperator(task_id="cleanup_logs", python_callable=_cleanup_old_logs)
 
     jitter >> scrape >> purge >> refine >> score

@@ -5,6 +5,10 @@ metadata:
   namespace: price-tracker
 spec:
   replicas: 1
+  # Le volume des logs est ReadWriteOnce : l'ancien Pod doit le lâcher avant
+  # que le nouveau le monte (et deux schedulers ne doivent jamais coexister).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: airflow-scheduler
@@ -16,6 +20,10 @@ spec:
       # Doit pouvoir créer/surveiller des Pods (KubernetesPodOperator) :
       # cf. airflow-rbac.yaml.
       serviceAccountName: airflow-scheduler
+      # L'image Airflow tourne en uid 50000 / gid 0 : le volume doit être
+      # inscriptible par le groupe 0.
+      securityContext:
+        fsGroup: 0
       imagePullSecrets:
         - name: ghcr-pull-secret
       containers:
@@ -23,6 +31,12 @@ spec:
           image: ghcr.io/REPLACE_GITHUB_OWNER/item_scrapper-airflow:main
           imagePullPolicy: Always
           command: ["airflow", "scheduler"]
+          # Avec LocalExecutor, les logs des tâches sont écrits sur le disque
+          # de ce Pod et servis par `airflow serve-logs` (lancé par le
+          # scheduler) ; le webserver vient les lire ici en HTTP.
+          ports:
+            - name: worker-logs
+              containerPort: 8793
           envFrom:
             - configMapRef:
                 name: price-tracker-config
@@ -31,6 +45,19 @@ spec:
               value: LocalExecutor
             - name: AIRFLOW__CORE__LOAD_EXAMPLES
               value: "false"
+            # Le hostname enregistré avec chaque tâche est l'adresse à laquelle
+            # le webserver ira chercher son log. Par défaut c'est le nom du Pod,
+            # qu'aucun DNS du cluster ne résout : on publie l'IP du Pod à la
+            # place.
+            - name: AIRFLOW__CORE__HOSTNAME_CALLABLE
+              value: airflow.utils.net.get_host_ip_address
+            # Le webserver signe sa requête de log avec cette clé et le serveur
+            # de logs la vérifie : sans la même valeur des deux côtés -> 403.
+            - name: AIRFLOW__WEBSERVER__SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AIRFLOW_SECRET_KEY
             - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
               valueFrom:
                 secretKeyRef:
@@ -46,6 +73,9 @@ spec:
                 secretKeyRef:
                   name: price-tracker-secrets
                   key: MONGODB_URI
+          volumeMounts:
+            - name: logs
+              mountPath: /opt/airflow/logs
           resources:
             requests:
               cpu: "250m"
@@ -53,3 +83,20 @@ spec:
             limits:
               cpu: "1"
               memory: "2Gi"
+      volumes:
+        # Persiste les logs des tâches au-delà d'un redémarrage du Pod : sans
+        # lui, chaque redéploiement efface l'historique des runs.
+        - name: logs
+          persistentVolumeClaim:
+            claimName: airflow-logs
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: airflow-logs
+  namespace: price-tracker
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
