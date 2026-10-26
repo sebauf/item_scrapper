@@ -195,6 +195,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fuel-stations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stations-service autour d’un point, avec carburants et prix */
+        get: operations["FuelStationController_search"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -345,6 +362,74 @@ export interface components {
         AddFavoriteDto: {
             /** @description Identifiant produit encodé, renvoyé par /products/{id} ou une liste */
             id: string;
+        };
+        FuelPriceResponse: {
+            /** @enum {string} */
+            code: "gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc";
+            /**
+             * @description Prix au litre en euros, null pendant une rupture déclarée sans prix
+             * @example 1.689
+             */
+            price: number | null;
+            /** @description Déclaration du prix par la station (ISO 8601) — pas la date de notre import */
+            updatedAt: string | null;
+            /** @description Vendu, avec un prix, et sans rupture en cours */
+            available: boolean;
+            /** @description Début de la rupture en cours */
+            shortageSince: string | null;
+            /** @description Prix déclaré il y a plus de `staleAfterHours` heures */
+            isStale: boolean;
+        };
+        FuelStationResponse: {
+            /**
+             * @description Identifiant officiel du point de vente
+             * @example 69003001
+             */
+            id: string;
+            /**
+             * @description Enseigne unifiée, d’après OpenStreetMap (ODbL) — null si inconnue
+             * @example TotalEnergies
+             */
+            brand: string | null;
+            /**
+             * @description Nom de la station sur OpenStreetMap — null si inconnu
+             * @example TotalEnergies Lyon Félix Faure
+             */
+            name: string | null;
+            /** @example 12 avenue Félix Faure */
+            address: string;
+            /** @example Lyon */
+            city: string;
+            /** @example 69003 */
+            postcode: string;
+            /**
+             * @description R = route, A = autoroute
+             * @enum {string|null}
+             */
+            roadType: "R" | "A" | null;
+            /** @example 45.75938 */
+            latitude: number;
+            /** @example 4.85491 */
+            longitude: number;
+            /**
+             * @description Distance au centre de recherche, à vol d’oiseau
+             * @example 1.234
+             */
+            distanceKm: number;
+            /** @description Carburants vendus par la station */
+            fuels: components["schemas"]["FuelPriceResponse"][];
+        };
+        FuelStationSearchResponse: {
+            stations: components["schemas"]["FuelStationResponse"][];
+            /** @description Vrai si d’autres stations dépassaient le plafond de la réponse */
+            truncated: boolean;
+            /** @description Dernier import du flux officiel */
+            lastImportAt: string | null;
+            /**
+             * @description Seuil au-delà duquel un prix est signalé ancien
+             * @example 72
+             */
+            staleAfterHours: number;
         };
     };
     responses: never;
@@ -753,6 +838,43 @@ export interface operations {
                 content?: never;
             };
             /** @description Identifiant mal formé */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    FuelStationController_search: {
+        parameters: {
+            query: {
+                /** @description Latitude du centre de recherche (WGS 84) */
+                lat: string;
+                /** @description Longitude du centre de recherche (WGS 84) */
+                lng: string;
+                /** @description Rayon de recherche en km, au plus 30 */
+                radiusKm?: string;
+                /** @description Ne garder que les stations qui le vendent */
+                fuel?: "gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc";
+                /** @description « price » exige « fuel » */
+                sort?: "distance" | "price";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelStationSearchResponse"];
+                };
+            };
+            /** @description Position, rayon, carburant ou tri invalide */
             400: {
                 headers: {
                     [name: string]: unknown;

@@ -50,6 +50,18 @@ export const REQUIRED_INDEXES: readonly IndexDefinition[] = [
     name: 'score_desc',
     reason: 'dashboard : comptage des scores au-dessus du seuil de bonne affaire',
   },
+  {
+    collection: 'fuel_stations',
+    keys: { location: '2dsphere' },
+    name: 'location_2dsphere',
+    reason: 'carte des carburants : $geoNear est refusé par Mongo sans index géospatial',
+  },
+  {
+    collection: 'fuel_stations',
+    keys: { importedAt: -1 },
+    name: 'importedAt_desc',
+    reason: 'carte des carburants : date du dernier import du flux officiel',
+  },
 ];
 
 /** Crée les index manquants. Renvoie les noms de ceux effectivement créés. */

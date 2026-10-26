@@ -31,6 +31,15 @@ const links = [
     ),
   },
   {
+    href: '/fuel',
+    label: 'Carburants',
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 20V5a2 2 0 012-2h6a2 2 0 012 2v15M3 20h12M7 8h4M14 9h2a2 2 0 012 2v5a1.5 1.5 0 003 0V8l-3-3" />
+      </svg>
+    ),
+  },
+  {
     href: '/favorites',
     label: 'Favoris',
     icon: (

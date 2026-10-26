@@ -24,10 +24,10 @@ function renderAt(pathname: string) {
 }
 
 describe('NavLinks', () => {
-  it('rend les quatre entrées, en desktop et en mobile', () => {
+  it('rend les cinq entrées, en desktop et en mobile', () => {
     renderAt('/');
 
-    expect(screen.getAllByRole('link')).toHaveLength(8);
+    expect(screen.getAllByRole('link')).toHaveLength(10);
     expect(screen.getAllByText('Dashboard')).toHaveLength(2);
   });
 
@@ -36,6 +36,7 @@ describe('NavLinks', () => {
     ['/keywords', 'Mots-clés'],
     ['/products', 'Suivi'],
     ['/favorites', 'Favoris'],
+    ['/fuel', 'Carburants'],
   ])('marque %s comme actif', (pathname, label) => {
     renderAt(pathname);
 

@@ -27,6 +27,10 @@ export type KeywordDeals = Schemas['KeywordDealsResponse'];
 export type Dashboard = Schemas['DashboardResponse'];
 export type TrendDirection = NonNullable<ProductSummary['trendDirection']>;
 export type TrackedUrlSummary = Schemas['TrackedUrlSummaryResponse'];
+export type FuelStationSearchResult = Schemas['FuelStationSearchResponse'];
+export type FuelStation = Schemas['FuelStationResponse'];
+export type FuelPrice = Schemas['FuelPriceResponse'];
+export type FuelCode = FuelPrice['code'];
 
 const BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
 const API = `${BASE_URL}/api/v1`;
@@ -160,4 +164,12 @@ export function addFavorite(id: string): Promise<void> {
 
 export function removeFavorite(id: string): Promise<void> {
   return request<void>(`/favorites/${id}`, { method: 'DELETE' });
+}
+
+/**
+ * `queryString` est produit par `buildFuelQueryString` (lib/fuel.ts), donc déjà
+ * normalisé : le backend refuse une position ou un carburant aberrants.
+ */
+export function searchFuelStations(queryString: string): Promise<FuelStationSearchResult> {
+  return request<FuelStationSearchResult>(`/fuel-stations${queryString}`);
 }

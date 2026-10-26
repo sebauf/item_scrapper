@@ -1,4 +1,4 @@
-import type { ProductSummary } from '@/lib/api';
+import type { FuelPrice, FuelStation, ProductSummary } from '@/lib/api';
 
 /**
  * Produit de référence pour les tests de rendu.
@@ -24,6 +24,36 @@ export function aProduct(overrides: Partial<ProductSummary> = {}): ProductSummar
     predictedPrice: null,
     trendDirection: null,
     isDeal: false,
+    ...overrides,
+  };
+}
+
+/** Prix de carburant disponible et frais par défaut. */
+export function aFuelPrice(overrides: Partial<FuelPrice> = {}): FuelPrice {
+  return {
+    code: 'gazole',
+    price: 1.689,
+    updatedAt: '2026-10-26T07:42:00.000Z',
+    available: true,
+    shortageSince: null,
+    isStale: false,
+    ...overrides,
+  };
+}
+
+export function aFuelStation(overrides: Partial<FuelStation> = {}): FuelStation {
+  return {
+    id: '69003001',
+    brand: 'TotalEnergies',
+    name: 'TotalEnergies Lyon Félix Faure',
+    address: '12 avenue Félix Faure',
+    city: 'Lyon',
+    postcode: '69003',
+    roadType: 'R',
+    latitude: 45.75938,
+    longitude: 4.85491,
+    distanceKm: 1.234,
+    fuels: [aFuelPrice()],
     ...overrides,
   };
 }
