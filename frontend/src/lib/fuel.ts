@@ -134,6 +134,25 @@ export function formatDistance(km: number): string {
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1).replace('.', ',')} km`;
 }
 
+function comparable(value: string): string {
+  return value.normalize('NFKD').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+}
+
+/**
+ * Libellé d'une station : l'enseigne en titre, et le nom OpenStreetMap en
+ * complément seulement s'il apporte quelque chose — « Carrefour » sous
+ * « Carrefour » est du bruit, « Aire de Saint-Rémy (A31) » ne l'est pas.
+ *
+ * Sans enseigne (station absente d'OSM, ~5 %), le nom tient lieu de titre ;
+ * sans l'un ni l'autre, on le dit plutôt que d'inventer.
+ */
+export function stationLabel(station: FuelStation): { title: string; detail: string | null } {
+  const { brand, name } = station;
+  if (brand === null) return { title: name ?? 'Enseigne inconnue', detail: null };
+  const redundant = name === null || comparable(name) === comparable(brand);
+  return { title: brand, detail: redundant ? null : name };
+}
+
 export function fuelOf(station: FuelStation, code: FuelCode): FuelPrice | null {
   return station.fuels.find((fuel) => fuel.code === code) ?? null;
 }

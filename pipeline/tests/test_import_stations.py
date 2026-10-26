@@ -73,6 +73,17 @@ def test_normalise_les_champs_descriptifs():
     assert station["postcode"] == "1000"
     assert station["roadType"] is None
     assert station["importedAt"] == NOW
+    assert station["brand"] is None
+    assert station["name"] is None
+
+
+def test_ajoute_l_enseigne_trouvee_par_identifiant():
+    brands = {"69003001": {"brand": "TotalEnergies", "name": "Total Access Lyon Félix Faure"}}
+
+    station = parse_station(record(), NOW, brands)
+
+    assert station["brand"] == "TotalEnergies"
+    assert station["name"] == "Total Access Lyon Félix Faure"
 
 
 def test_garde_l_ordre_d_affichage_des_carburants():
@@ -193,6 +204,32 @@ def test_accepte_une_baisse_moderee_du_nombre_de_stations(db):
     import_stations(db, [record(i) for i in range(5)], now=NOW + timedelta(hours=5))
 
     assert len(ids(db)) == 5
+
+
+def test_enregistre_les_enseignes(db):
+    import_stations(db, [record(1), record(2)], {"1": {"brand": "Avia", "name": None}}, now=NOW)
+
+    assert db["fuel_stations"].find_one({"_id": "1"})["brand"] == "Avia"
+    assert db["fuel_stations"].find_one({"_id": "2"})["brand"] is None
+
+
+def test_sans_export_osm_garde_les_enseignes_connues(db):
+    import_stations(db, [record(1)], {"1": {"brand": "Avia", "name": "Avia Lyon"}}, now=NOW)
+
+    import_stations(db, [record(1, gazole_prix=1.5)], None, now=NOW + timedelta(hours=5))
+
+    doc = db["fuel_stations"].find_one({"_id": "1"})
+    assert doc["fuels"][0]["price"] == 1.5
+    assert (doc["brand"], doc["name"]) == ("Avia", "Avia Lyon")
+
+
+def test_un_export_osm_a_jour_remplace_l_enseigne(db):
+    # Station rachetée : l'export fait foi dès qu'il est disponible.
+    import_stations(db, [record(1)], {"1": {"brand": "Esso", "name": None}}, now=NOW)
+
+    import_stations(db, [record(1)], {"1": {"brand": "Avia", "name": None}}, now=NOW + timedelta(hours=5))
+
+    assert db["fuel_stations"].find_one({"_id": "1"})["brand"] == "Avia"
 
 
 # --- fetch_records ---------------------------------------------------------

@@ -386,6 +386,16 @@ export interface components {
              * @example 69003001
              */
             id: string;
+            /**
+             * @description Enseigne unifiée, d’après OpenStreetMap (ODbL) — null si inconnue
+             * @example TotalEnergies
+             */
+            brand: string | null;
+            /**
+             * @description Nom de la station sur OpenStreetMap — null si inconnu
+             * @example TotalEnergies Lyon Félix Faure
+             */
+            name: string | null;
             /** @example 12 avenue Félix Faure */
             address: string;
             /** @example Lyon */

@@ -22,9 +22,11 @@ function renderList(stations = [aFuelStation()], fuel: 'gazole' | null = 'gazole
 const text = (s: string) => s.replace(/\s/g, ' ');
 
 describe('FuelStationList', () => {
-  it('affiche adresse, distance et prix du carburant choisi', () => {
+  it('affiche enseigne, adresse, distance et prix du carburant choisi', () => {
     renderList();
 
+    expect(screen.getByText('TotalEnergies')).toBeInTheDocument();
+    expect(screen.getByText(/TotalEnergies Lyon Félix Faure/)).toBeInTheDocument();
     expect(screen.getByText('12 avenue Félix Faure')).toBeInTheDocument();
     expect(screen.getByText(/69003 Lyon · 1,2 km/)).toBeInTheDocument();
     // En gros à droite, et dans la pastille du carburant.

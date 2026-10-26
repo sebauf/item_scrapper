@@ -25,6 +25,8 @@ export function aFuelPrice(overrides: Partial<FuelPriceRow> = {}): FuelPriceRow 
 export function aFuelStation(overrides: Partial<FuelStationRow> = {}): FuelStationRow {
   return {
     id: '69003001',
+    brand: 'TotalEnergies',
+    name: 'TotalEnergies Lyon Félix Faure',
     address: '12 avenue Félix Faure',
     city: 'Lyon',
     postcode: '69003',

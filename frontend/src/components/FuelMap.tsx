@@ -4,7 +4,7 @@ import L from 'leaflet';
 import { useEffect, useMemo, useRef } from 'react';
 import { Circle, MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import type { FuelCode, FuelStation } from '@/lib/api';
-import { formatDistance, fuelOf, type PriceTier } from '@/lib/fuel';
+import { formatDistance, fuelOf, stationLabel, type PriceTier } from '@/lib/fuel';
 import { FuelBadge } from './FuelStationList';
 
 /**
@@ -121,7 +121,8 @@ export default function FuelMap({
       className="h-full w-full"
     >
       <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        // Couvre aussi les enseignes, tirées d'OSM (licence ODbL, cf. pipeline/src/fuel/brands.py).
+        attribution='&copy; contributeurs <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> (fond et enseignes)'
         url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         maxZoom={19}
       />
@@ -133,47 +134,55 @@ export default function FuelMap({
         radius={radiusKm * 1000}
         pathOptions={{ color: '#4f46e5', weight: 1, fillOpacity: 0.04 }}
       />
-      {stations.map((station) => (
-        <Marker
-          key={station.id}
-          position={[station.latitude, station.longitude]}
-          icon={markerFor(station, fuel, tierOf, station.id === selectedId)}
-          zIndexOffset={station.id === selectedId ? 1000 : 0}
-          eventHandlers={{ click: () => onSelect(station.id) }}
-          ref={(marker) => {
-            if (marker) markers.current.set(station.id, marker);
-            else markers.current.delete(station.id);
-          }}
-        >
-          <Popup>
-            <div className="space-y-1.5 min-w-48">
-              <p className="font-semibold">{station.address || 'Adresse inconnue'}</p>
-              <p className="text-xs opacity-70">
-                {station.postcode} {station.city} · {formatDistance(station.distanceKm)}
-                {station.roadType === 'A' && ' · autoroute'}
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {station.fuels.map((f) => (
-                  <FuelBadge
-                    key={f.code}
-                    fuel={f}
-                    tier={f.code === fuel && f.price !== null ? tierOf(f.price) : null}
-                    emphasized={f.code === fuel}
-                  />
-                ))}
+      {stations.map((station) => {
+        const label = stationLabel(station);
+        return (
+          <Marker
+            key={station.id}
+            position={[station.latitude, station.longitude]}
+            title={label.title}
+            icon={markerFor(station, fuel, tierOf, station.id === selectedId)}
+            zIndexOffset={station.id === selectedId ? 1000 : 0}
+            eventHandlers={{ click: () => onSelect(station.id) }}
+            ref={(marker) => {
+              if (marker) markers.current.set(station.id, marker);
+              else markers.current.delete(station.id);
+            }}
+          >
+            <Popup>
+              <div className="flex flex-col items-start gap-1 min-w-48">
+                <p className="font-semibold">
+                  {label.title}
+                  {label.detail && <span className="font-normal opacity-70"> · {label.detail}</span>}
+                </p>
+                <p>{station.address || 'Adresse inconnue'}</p>
+                <p className="text-xs opacity-70">
+                  {station.postcode} {station.city} · {formatDistance(station.distanceKm)}
+                  {station.roadType === 'A' && ' · autoroute'}
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {station.fuels.map((f) => (
+                    <FuelBadge
+                      key={f.code}
+                      fuel={f}
+                      tier={f.code === fuel && f.price !== null ? tierOf(f.price) : null}
+                      emphasized={f.code === fuel}
+                    />
+                  ))}
+                </div>
+                <a
+                  href={`https://www.openstreetmap.org/directions?to=${station.latitude},${station.longitude}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block text-xs"
+                >
+                  Itinéraire ↗
+                </a>
               </div>
-              <a
-                href={`https://www.openstreetmap.org/directions?to=${station.latitude},${station.longitude}`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block text-xs"
-              >
-                Itinéraire ↗
-              </a>
-            </div>
-          </Popup>
-        </Marker>
-      ))}
+            </Popup>
+          </Marker>
+        );
+      })}
     </MapContainer>
   );
 }

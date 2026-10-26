@@ -266,6 +266,17 @@ with `timezone=UTC`.
   `TruncatedFeedError` and touches nothing. API coordinates are degrees × 100 000.
   A fuel is *sold* if it has a price or a temporary shortage (`rupture_type =
   definitive` drops it), *available* if priced with no shortage.
+- `pipeline/src/fuel/brands.py` — **brand (enseigne)**, absent from the official
+  feed, comes from OpenStreetMap: OSM stations carry the official id in
+  `ref:FR:prix-carburants`, so the match is by **exact id**, never by distance.
+  Source: the OSM export CSV (bz2) on data.gouv.fr, fetched on each import
+  (~95 % of stations matched). `BRAND_ALIASES` folds OSM spellings into one label
+  (`Total Access` → `TotalEnergies`, `Super U` → `Système U`, `E. Leclerc` →
+  `E.Leclerc`…); unknown values are kept as-is. `operator` is ignored on purpose
+  (it is the operating company, not the brand). If the export is unreachable or
+  truncated, the import keeps the brands already stored — prices still update.
+  OSM data is **ODbL**: attribution is required wherever brands are shown (the
+  map's attribution line covers it).
 - `backend/src/modules/fuel/` — read-only context, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
   sort requires `fuel`). `$geoNear` on the `location_2dsphere` index (created by
@@ -326,7 +337,7 @@ This is the only applicative component deliberately exposed outside the cluster.
 - `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`, plus l'identité de l'article : `ean` (GTIN-13 vérifié), `brand`, `mpn`, `quantity` (`{ amount, unit }` en L ou kg), `packSize`, `doses` — tous nullables, une fiche ne publiant pas toujours son code-barres
 - `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
-- `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
+- `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `brand` (unified OSM brand or null), `name` (OSM station name or null), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 

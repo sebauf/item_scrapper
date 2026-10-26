@@ -1,6 +1,13 @@
 import type { FuelCode, FuelPrice, FuelStation } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { FUEL_LABELS, formatDistance, formatLiterPrice, fuelOf, type PriceTier } from '@/lib/fuel';
+import {
+  FUEL_LABELS,
+  formatDistance,
+  formatLiterPrice,
+  fuelOf,
+  stationLabel,
+  type PriceTier,
+} from '@/lib/fuel';
 
 const TIER_CLASSES: Record<PriceTier, string> = {
   low: 'bg-deal-soft text-deal border-deal-border',
@@ -74,6 +81,7 @@ export function FuelStationList({ stations, fuel, tierOf, selectedId, onSelect }
       {stations.map((station) => {
         const selected = fuel ? fuelOf(station, fuel) : null;
         const active = station.id === selectedId;
+        const label = stationLabel(station);
         const freshest = station.fuels
           .map((f) => f.updatedAt)
           .filter((d): d is string => d !== null)
@@ -94,7 +102,11 @@ export function FuelStationList({ stations, fuel, tierOf, selectedId, onSelect }
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="font-medium text-foreground truncate">{station.address || 'Adresse inconnue'}</p>
+                  <p className="font-semibold text-foreground truncate">
+                    {label.title}
+                    {label.detail && <span className="font-normal text-muted"> · {label.detail}</span>}
+                  </p>
+                  <p className="text-sm text-foreground/80 truncate">{station.address || 'Adresse inconnue'}</p>
                   <p className="text-xs text-muted">
                     {station.postcode} {station.city} · {formatDistance(station.distanceKm)}
                     {station.roadType === 'A' && ' · autoroute'}

@@ -8,6 +8,7 @@ import {
   formatLiterPrice,
   parseFuelSearchParams,
   priceTiers,
+  stationLabel,
 } from './fuel';
 
 describe('parseFuelSearchParams', () => {
@@ -81,6 +82,24 @@ describe('formats', () => {
   it('affiche la distance en mètres sous le kilomètre', () => {
     expect(formatDistance(0.4)).toBe('400 m');
     expect(formatDistance(12.345)).toBe('12,3 km');
+  });
+});
+
+describe('stationLabel', () => {
+  it('enseigne en titre, nom OSM en complément', () => {
+    expect(stationLabel(aFuelStation({ brand: 'Esso', name: 'Esso Aire de Saint Rémy (A31)' }))).toEqual({
+      title: 'Esso',
+      detail: 'Esso Aire de Saint Rémy (A31)',
+    });
+  });
+
+  it('n’affiche pas un nom qui répète l’enseigne', () => {
+    expect(stationLabel(aFuelStation({ brand: 'E.Leclerc', name: 'E. Leclerc' })).detail).toBeNull();
+  });
+
+  it('se rabat sur le nom sans enseigne, puis le dit', () => {
+    expect(stationLabel(aFuelStation({ brand: null, name: 'Garage du Centre' })).title).toBe('Garage du Centre');
+    expect(stationLabel(aFuelStation({ brand: null, name: null })).title).toBe('Enseigne inconnue');
   });
 });
 

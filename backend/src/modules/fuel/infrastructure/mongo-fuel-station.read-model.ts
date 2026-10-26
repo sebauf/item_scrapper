@@ -13,6 +13,8 @@ import { nearStationsPipeline } from './fuel-station.stages';
 export interface FuelStationDocument {
   _id: string;
   location: { type: 'Point'; coordinates: [number, number] };
+  brand?: string | null;
+  name?: string | null;
   address?: string;
   city?: string;
   postcode?: string;
@@ -27,6 +29,8 @@ export function toStationRow(doc: FuelStationDocument): FuelStationRow {
   const [longitude, latitude] = doc.location.coordinates;
   return {
     id: doc._id,
+    brand: doc.brand ?? null,
+    name: doc.name ?? null,
     address: doc.address ?? '',
     city: doc.city ?? '',
     postcode: doc.postcode ?? '',

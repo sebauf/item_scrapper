@@ -38,6 +38,22 @@ export class FuelStationResponse {
   @ApiProperty({ description: 'Identifiant officiel du point de vente', example: '69003001' })
   id!: string;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'TotalEnergies',
+    description: 'Enseigne unifiée, d’après OpenStreetMap (ODbL) — null si inconnue',
+  })
+  brand!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    example: 'TotalEnergies Lyon Félix Faure',
+    description: 'Nom de la station sur OpenStreetMap — null si inconnu',
+  })
+  name!: string | null;
+
   @ApiProperty({ example: '12 avenue Félix Faure' })
   address!: string;
 

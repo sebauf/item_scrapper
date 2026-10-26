@@ -67,6 +67,8 @@ describe('toStationRow', () => {
       city: 'Lyon',
       postcode: '69003',
       roadType: 'A',
+      brand: 'Avia',
+      name: 'Avia Lyon',
       fuels: [
         {
           code: 'gazole',
@@ -85,6 +87,8 @@ describe('toStationRow', () => {
       longitude: 4.85491,
       distanceKm: 1.234,
       roadType: 'A',
+      brand: 'Avia',
+      name: 'Avia Lyon',
     });
     expect(row.fuels).toHaveLength(1);
   });
@@ -92,6 +96,14 @@ describe('toStationRow', () => {
   it('tolère un document partiel', () => {
     const row = toStationRow({ _id: '1', location: { type: 'Point', coordinates: [2.35, 48.85] } });
 
-    expect(row).toMatchObject({ address: '', city: '', roadType: null, distanceKm: 0, fuels: [] });
+    expect(row).toMatchObject({
+      address: '',
+      city: '',
+      roadType: null,
+      brand: null,
+      name: null,
+      distanceKm: 0,
+      fuels: [],
+    });
   });
 });

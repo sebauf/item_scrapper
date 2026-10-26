@@ -14,6 +14,14 @@ export interface FuelPriceRow {
 
 export interface FuelStationRow {
   id: string;
+  /**
+   * Enseigne unifiée (« TotalEnergies », « E.Leclerc »…), d'après OpenStreetMap
+   * — le flux officiel ne la donne pas. null si la station n'y est pas
+   * rapprochée.
+   */
+  brand: string | null;
+  /** Nom de la station sur OpenStreetMap, null si inconnu. */
+  name: string | null;
   address: string;
   city: string;
   postcode: string;

@@ -25,6 +25,9 @@ Trois notions distinctes, à ne pas confondre :
 - **disponible** : vendu, avec un prix, et sans rupture en cours ;
 - **fraîcheur** : `updatedAt`, la date de déclaration *par la station*. Ce
   n'est pas la date de l'import (`importedAt`), qui ne dit rien du prix.
+
+L'enseigne (`brand`) et le nom (`name`) ne viennent pas du flux officiel, qui
+les ignore, mais d'OpenStreetMap (cf. brands.py).
 """
 import json
 from datetime import datetime, timezone
@@ -32,7 +35,10 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from pymongo import ReplaceOne
+from pymongo.collection import Collection
 from pymongo.database import Database
+
+from src.fuel.brands import fetch_osm_stations
 
 DATASET_URL = (
     "https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
@@ -133,7 +139,9 @@ def parse_fuel(record: dict, fuel: str) -> dict | None:
     }
 
 
-def parse_station(record: dict, imported_at: datetime) -> dict | None:
+def parse_station(
+    record: dict, imported_at: datetime, brands: dict[str, dict] | None = None
+) -> dict | None:
     """Document `fuel_stations`, ou None si la station est inexploitable.
 
     Inexploitable : sans identifiant, sans coordonnées (impossible à placer sur
@@ -149,6 +157,7 @@ def parse_station(record: dict, imported_at: datetime) -> dict | None:
     if not fuels:
         return None
 
+    osm = (brands or {}).get(str(station_id), {})
     return {
         "_id": str(station_id),
         # GeoJSON : longitude d'abord. L'inverse placerait Lyon dans l'océan
@@ -159,6 +168,8 @@ def parse_station(record: dict, imported_at: datetime) -> dict | None:
         "postcode": str(record.get("cp") or "").strip(),
         # R = route, A = autoroute (prix généralement plus élevés).
         "roadType": record.get("pop") if record.get("pop") in ("R", "A") else None,
+        "brand": osm.get("brand"),
+        "name": osm.get("name"),
         "fuels": fuels,
         "importedAt": imported_at,
     }
@@ -168,7 +179,20 @@ class TruncatedFeedError(RuntimeError):
     """Le flux ramène trop peu de stations pour qu'on lui fasse confiance."""
 
 
-def import_stations(db: Database, records: list[dict], now: datetime | None = None) -> int:
+def _known_brands(collection: Collection) -> dict[str, dict]:
+    """Enseignes déjà en base, pour un import où l'export OSM a échoué."""
+    return {
+        doc["_id"]: {"brand": doc.get("brand"), "name": doc.get("name")}
+        for doc in collection.find({}, {"brand": 1, "name": 1})
+    }
+
+
+def import_stations(
+    db: Database,
+    records: list[dict],
+    brands: dict[str, dict] | None = None,
+    now: datetime | None = None,
+) -> int:
     """Remplace `fuel_stations` par le contenu du flux. Renvoie le nombre de
     stations importées.
 
@@ -176,11 +200,20 @@ def import_stations(db: Database, records: list[dict], now: datetime | None = No
     pas rester sur la carte avec son dernier prix. Mais uniquement après le
     garde-fou — c'est la seule étape qui supprime, et elle ne doit jamais le
     faire sur la foi d'une réponse incomplète.
+
+    `brands` à None (export OSM indisponible) : on garde les enseignes déjà
+    connues plutôt que de les effacer. Les prix, eux, sont mis à jour — une
+    panne de data.gouv.fr ne doit pas bloquer l'essentiel.
     """
     imported_at = now or datetime.now(timezone.utc).replace(tzinfo=None)
-    stations = [s for s in (parse_station(r, imported_at) for r in records) if s is not None]
-
     collection = db["fuel_stations"]
+    if brands is None:
+        brands = _known_brands(collection)
+
+    stations = [
+        s for s in (parse_station(r, imported_at, brands) for r in records) if s is not None
+    ]
+
     known = collection.count_documents({})
     if not stations or len(stations) < known * MIN_KEPT_RATIO:
         raise TruncatedFeedError(
@@ -200,5 +233,14 @@ if __name__ == "__main__":
 
     client = MongoClient(MONGODB_URI)
     records = fetch_records()
-    count = import_stations(client[DB_NAME], records)
+    try:
+        brands = fetch_osm_stations()
+    except (OSError, ValueError) as error:
+        print(f"brands: OSM export unavailable ({error}), keeping known brands")
+        brands = None
+
+    db = client[DB_NAME]
+    count = import_stations(db, records, brands)
+    branded = db["fuel_stations"].count_documents({"brand": {"$ne": None}})
     print(f"fuel_stations: {count} stations imported ({len(records)} records received)")
+    print(f"brands: {branded}/{count} stations matched to a brand")

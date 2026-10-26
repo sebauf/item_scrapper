@@ -37,6 +37,8 @@ describe('Fuel — API', () => {
     expect(body.lastImportAt).toBe('2026-10-26T10:00:00.000Z');
     expect(body.stations[0]).toMatchObject({
       id: '69003001',
+      brand: 'TotalEnergies',
+      name: 'TotalEnergies Lyon Félix Faure',
       latitude: 45.75938,
       longitude: 4.85491,
       distanceKm: 1.234,

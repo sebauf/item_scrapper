@@ -92,7 +92,8 @@ compteurs à zéro — c'est au client de décider s'il affiche une 404.
 Paramètres de `/fuel-stations` : `lat`, `lng` (obligatoires), `radiusKm` (≤ 30,
 défaut 10), `fuel` (`gazole` · `e10` · `sp98` · `sp95` · `e85` · `gplc`), `sort`
 (`distance` par défaut, `price` exige `fuel`). Au plus 200 stations, `truncated`
-signale la coupure. Chaque prix porte `isStale` : déclaré par la station il y a
+signale la coupure. Chaque station porte `brand` et `name` (enseigne et nom
+d'après OpenStreetMap, `null` si la station n'y est pas rapprochée). Chaque prix porte `isStale` : déclaré par la station il y a
 plus de 72 h (`fuel/domain/freshness-policy.ts`). Un prix ancien est **signalé,
 pas masqué** — l'inverse de la règle ci-dessous, et volontairement : ici c'est la
 station qui déclare, un prix inchangé depuis quatre jours peut être exact.

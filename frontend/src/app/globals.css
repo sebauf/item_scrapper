@@ -146,6 +146,8 @@ html {
 .leaflet-container a.leaflet-popup-close-button {
   color: var(--color-muted);
 }
-.leaflet-popup-content p {
+/* Spécificité renforcée : leaflet.css est chargé après cette feuille (import
+   du composant carte) et rétablirait sinon ses marges de 1,3em. */
+.leaflet-container .leaflet-popup-content p {
   margin: 0;
 }
