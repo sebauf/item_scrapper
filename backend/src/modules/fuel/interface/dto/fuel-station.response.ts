@@ -82,6 +82,11 @@ export class FuelStationResponse {
 
   @ApiProperty({ type: [FuelPriceResponse], description: 'Carburants vendus par la station' })
   fuels!: FuelPriceResponse[];
+
+  @ApiProperty({
+    description: 'Station favorite — surveillée par l’alerte de réapprovisionnement',
+  })
+  isFavorite!: boolean;
 }
 
 export class FuelStationSearchResponse {
@@ -96,4 +101,12 @@ export class FuelStationSearchResponse {
 
   @ApiProperty({ example: 72, description: 'Seuil au-delà duquel un prix est signalé ancien' })
   staleAfterHours!: number;
+}
+
+export class FavoriteStationResponse {
+  @ApiProperty({ description: 'Identifiant officiel du point de vente', example: '69003001' })
+  id!: string;
+
+  @ApiProperty({ description: 'Date de mise en favori (ISO 8601)' })
+  addedAt!: string;
 }

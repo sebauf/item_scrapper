@@ -2,6 +2,8 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { FuelStationReadModel, NearbyStations } from '../application/ports/fuel-station.read-model';
 import { SearchFuelStationsQuery } from '../application/queries/search-fuel-stations.query';
+import { FavoriteStationRepository } from '../domain/favorite-station.repository';
+import { InMemoryFavoriteStationRepository } from '../testing/in-memory-favorite-station.repository';
 import { aFuelStation, EMPTY_NEARBY, FakeFuelStationReadModel } from '../testing/fakes';
 import { FuelStationController } from './fuel.controller';
 import { FuelStationSearchResponse } from './dto/fuel-station.response';
@@ -14,7 +16,11 @@ describe('Fuel — API', () => {
     readModel = new FakeFuelStationReadModel(result);
     app = await createTestApp({
       controllers: [FuelStationController],
-      providers: [SearchFuelStationsQuery, { provide: FuelStationReadModel, useValue: readModel }],
+      providers: [
+        SearchFuelStationsQuery,
+        { provide: FuelStationReadModel, useValue: readModel },
+        { provide: FavoriteStationRepository, useValue: new InMemoryFavoriteStationRepository() },
+      ],
     });
   }
 
@@ -43,6 +49,7 @@ describe('Fuel — API', () => {
       longitude: 4.85491,
       distanceKm: 1.234,
       fuels: [{ code: 'gazole', price: 1.689, available: true }],
+      isFavorite: false,
     });
     expect(typeof body.stations[0].fuels[0].isStale).toBe('boolean');
     expect(readModel.calls[0]).toMatchObject({ fuel: 'gazole', sort: 'price', radiusKm: 5 });

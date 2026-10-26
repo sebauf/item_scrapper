@@ -195,6 +195,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fuel-stations/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stations favorites, de la plus récente à la plus ancienne */
+        get: operations["FuelFavoriteController_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/fuel-stations/favorites/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Mettre une station en favori (idempotent) */
+        put: operations["FuelFavoriteController_add"];
+        post?: never;
+        /** Retirer une station des favorites (idempotent) */
+        delete: operations["FuelFavoriteController_remove"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fuel-stations": {
         parameters: {
             query?: never;
@@ -363,6 +398,15 @@ export interface components {
             /** @description Identifiant produit encodé, renvoyé par /products/{id} ou une liste */
             id: string;
         };
+        FavoriteStationResponse: {
+            /**
+             * @description Identifiant officiel du point de vente
+             * @example 69003001
+             */
+            id: string;
+            /** @description Date de mise en favori (ISO 8601) */
+            addedAt: string;
+        };
         FuelPriceResponse: {
             /** @enum {string} */
             code: "gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc";
@@ -418,6 +462,8 @@ export interface components {
             distanceKm: number;
             /** @description Carburants vendus par la station */
             fuels: components["schemas"]["FuelPriceResponse"][];
+            /** @description Station favorite — surveillée par l’alerte de réapprovisionnement */
+            isFavorite: boolean;
         };
         FuelStationSearchResponse: {
             stations: components["schemas"]["FuelStationResponse"][];
@@ -831,6 +877,88 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Favori retiré */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identifiant mal formé */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    FuelFavoriteController_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FavoriteStationResponse"][];
+                };
+            };
+        };
+    };
+    FuelFavoriteController_add: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant officiel du point de vente */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Station favorite */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Identifiant mal formé */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Station absente du flux officiel */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    FuelFavoriteController_remove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant officiel du point de vente */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Favorite retirée */
             204: {
                 headers: {
                     [name: string]: unknown;

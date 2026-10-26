@@ -1,6 +1,7 @@
 import { InvalidStationSearch } from '../../domain/fuel.errors';
 import { STALE_AFTER_HOURS } from '../../domain/freshness-policy';
 import { aFuelPrice, aFuelStation, FakeFuelStationReadModel } from '../../testing/fakes';
+import { InMemoryFavoriteStationRepository } from '../../testing/in-memory-favorite-station.repository';
 import { SearchFuelStationsQuery } from './search-fuel-stations.query';
 
 describe('SearchFuelStationsQuery', () => {
@@ -10,7 +11,7 @@ describe('SearchFuelStationsQuery', () => {
   it('transmet une recherche validée au read model', async () => {
     const readModel = new FakeFuelStationReadModel();
 
-    await new SearchFuelStationsQuery(readModel).execute({ ...lyon, fuel: 'e10' }, now);
+    await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute({ ...lyon, fuel: 'e10' }, now);
 
     expect(readModel.calls[0]).toMatchObject({ latitude: 45.7578, fuel: 'e10', sort: 'distance' });
   });
@@ -18,7 +19,7 @@ describe('SearchFuelStationsQuery', () => {
   it('refuse une recherche invalide sans appeler le read model', async () => {
     const readModel = new FakeFuelStationReadModel();
 
-    await expect(new SearchFuelStationsQuery(readModel).execute({ lat: '45' }, now)).rejects.toThrow(
+    await expect(new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute({ lat: '45' }, now)).rejects.toThrow(
       InvalidStationSearch,
     );
     expect(readModel.calls).toHaveLength(0);
@@ -45,7 +46,7 @@ describe('SearchFuelStationsQuery', () => {
       lastImportAt: new Date('2026-10-26T10:00:00.000Z'),
     });
 
-    const result = await new SearchFuelStationsQuery(readModel).execute(lyon, now);
+    const result = await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(lyon, now);
 
     expect(result.truncated).toBe(true);
     expect(result.lastImportAt).toBe('2026-10-26T10:00:00.000Z');
@@ -72,11 +73,27 @@ describe('SearchFuelStationsQuery', () => {
   });
 
   it('une base vide donne une liste vide, pas une erreur', async () => {
-    const result = await new SearchFuelStationsQuery(new FakeFuelStationReadModel()).execute(
+    const result = await new SearchFuelStationsQuery(new FakeFuelStationReadModel(), new InMemoryFavoriteStationRepository()).execute(
       lyon,
       now,
     );
 
     expect(result).toMatchObject({ stations: [], truncated: false, lastImportAt: null });
+  });
+
+  it('marque les stations favorites', async () => {
+    const readModel = new FakeFuelStationReadModel({
+      stations: [aFuelStation({ id: '1' }), aFuelStation({ id: '2' })],
+      truncated: false,
+      lastImportAt: null,
+    });
+    const favorites = new InMemoryFavoriteStationRepository({ '2': new Date() });
+
+    const result = await new SearchFuelStationsQuery(readModel, favorites).execute(lyon, now);
+
+    expect(result.stations.map((s) => [s.id, s.isFavorite])).toEqual([
+      ['1', false],
+      ['2', true],
+    ]);
   });
 });

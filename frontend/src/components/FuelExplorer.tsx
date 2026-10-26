@@ -195,6 +195,10 @@ export function FuelExplorer({ params, result }: FuelExplorerProps) {
             {result.truncated && ' (liste plafonnée — réduisez le rayon pour tout voir)'}
             {' · '}
             <span title={`Prix déclarés il y a plus de ${result.staleAfterHours} h`}>⚠️ = prix ancien</span>
+            {' · '}
+            <span title="Une station favorite déclenche une alerte quand un carburant y redevient disponible">
+              ★ = alerte de réapprovisionnement
+            </span>
           </p>
           <FuelStationList
             stations={result.stations}

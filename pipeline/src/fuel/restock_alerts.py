@@ -1,5 +1,10 @@
 """Alerte de réapprovisionnement : prévient un agent (Hermes) par webhook quand
-un carburant surveillé redevient disponible dans une station proche.
+un carburant surveillé redevient disponible dans une station surveillée.
+
+Stations surveillées : les **favorites** (collection `favorite_stations`,
+gérée depuis la carte des carburants via le backend), plus, si elle est
+configurée, toutes celles d'une **zone** autour d'un point. Sans zone, seules
+les favorites déclenchent une alerte.
 
 L'import remplace `fuel_stations` à chaque passage (cf. import_stations.py) :
 l'état précédent n'est conservé nulle part. Le passage « en rupture → de
@@ -13,11 +18,12 @@ nouvelle station, ou une station supprimée puis revenue) n'est pas un
 réapprovisionnement : rien ne dit qu'elle était en rupture. Un carburant qui
 n'était pas vendu du tout ne l'est pas davantage.
 
-Tout est piloté par l'environnement ; sans `FUEL_WATCH_LAT` / `FUEL_WATCH_LNG`,
-la fonctionnalité est désactivée et l'import se comporte comme avant :
+Configuration par l'environnement ; sans webhook ni zone, la fonctionnalité
+est désactivée et l'import se comporte comme s'il n'existait pas :
 
-- `FUEL_WATCH_LAT`, `FUEL_WATCH_LNG` : centre de la zone surveillée, en degrés ;
-- `FUEL_WATCH_RADIUS_KM` : rayon, 5 km par défaut ;
+- `FUEL_WATCH_LAT`, `FUEL_WATCH_LNG` : centre de la zone surveillée, en degrés
+  (facultatif — sans eux, seules les favorites sont surveillées) ;
+- `FUEL_WATCH_RADIUS_KM` : rayon de la zone, 5 km par défaut ;
 - `FUEL_WATCH_FUELS` : codes surveillés séparés par des virgules, `gazole` par
   défaut ;
 - `FUEL_RESTOCK_WEBHOOK_URL` : route webhook de l'agent, par exemple
@@ -44,6 +50,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pymongo.collection import Collection
+from pymongo.database import Database
 
 DEFAULT_RADIUS_KM = 5.0
 DEFAULT_FUELS = ("gazole",)
@@ -66,8 +73,9 @@ FUEL_LABELS = {
 
 @dataclass(frozen=True)
 class RestockWatch:
-    lat: float
-    lng: float
+    # Centre de la zone ; None (les deux) si seules les favorites sont surveillées.
+    lat: float | None
+    lng: float | None
     radius_km: float
     fuels: tuple[str, ...]
     webhook_url: str | None
@@ -82,12 +90,16 @@ class RestockWatch:
         l'import des prix de toute la France.
         """
         lat, lng = environ.get("FUEL_WATCH_LAT"), environ.get("FUEL_WATCH_LNG")
-        if not lat or not lng:
+        url = environ.get("FUEL_RESTOCK_WEBHOOK_URL")
+        if not url and not (lat or lng):
+            return None
+        if bool(lat) != bool(lng):
+            print("restock: FUEL_WATCH_LAT et FUEL_WATCH_LNG vont ensemble, alerte désactivée")
             return None
         try:
             watch = cls(
-                lat=float(lat),
-                lng=float(lng),
+                lat=float(lat) if lat else None,
+                lng=float(lng) if lng else None,
                 radius_km=float(environ.get("FUEL_WATCH_RADIUS_KM") or DEFAULT_RADIUS_KM),
                 fuels=tuple(
                     code.strip().lower()
@@ -100,7 +112,9 @@ class RestockWatch:
         except ValueError as error:
             print(f"restock: configuration illisible ({error}), alerte désactivée")
             return None
-        if not (-90 <= watch.lat <= 90 and -180 <= watch.lng <= 180) or watch.radius_km <= 0:
+        if watch.has_zone and (
+            not (-90 <= watch.lat <= 90 and -180 <= watch.lng <= 180) or watch.radius_km <= 0
+        ):
             print("restock: zone surveillée hors limites, alerte désactivée")
             return None
         unknown = set(watch.fuels) - set(FUEL_LABELS)
@@ -114,6 +128,15 @@ class RestockWatch:
             return None
         return watch
 
+    @property
+    def has_zone(self) -> bool:
+        return self.lat is not None and self.lng is not None
+
+
+def favorite_station_ids(db: Database) -> set[str]:
+    """Identifiants des stations favorites, écrites par le backend."""
+    return {doc["_id"] for doc in db["favorite_stations"].find({}, {"_id": 1})}
+
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
@@ -123,29 +146,40 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
 
 
-def watched_stations(collection: Collection, watch: RestockWatch) -> dict[str, dict]:
-    """Stations de la zone surveillée, par identifiant, distance comprise.
+def watched_stations(
+    collection: Collection, watch: RestockWatch, favorite_ids: set[str]
+) -> dict[str, dict]:
+    """Stations surveillées — favorites ou dans la zone — par identifiant.
 
-    Distance calculée en Python plutôt qu'avec `$geoNear` : une seule passe
-    sur ~10 000 documents réduits à leur position et leurs carburants, et le
-    même code tourne sous mongomock, qui ne connaît pas les requêtes
-    géographiques.
+    `distanceKm` est la distance au centre de la zone (favorites hors zone
+    comprises), None sans zone. Calculée en Python plutôt qu'avec `$geoNear` :
+    une seule passe sur ~10 000 documents réduits à leur position et leurs
+    carburants, et le même code tourne sous mongomock, qui ne connaît pas les
+    requêtes géographiques.
     """
     stations = {}
     projection = {"location": 1, "fuels": 1, "brand": 1, "name": 1, "address": 1,
                   "city": 1, "postcode": 1}
     for doc in collection.find({}, projection):
-        lng, lat = doc["location"]["coordinates"]
-        distance = haversine_km(watch.lat, watch.lng, lat, lng)
-        if distance <= watch.radius_km:
-            stations[doc["_id"]] = {**doc, "distanceKm": round(distance, 2)}
+        distance = None
+        if watch.has_zone:
+            lng, lat = doc["location"]["coordinates"]
+            distance = haversine_km(watch.lat, watch.lng, lat, lng)
+        favorite = doc["_id"] in favorite_ids
+        if favorite or (distance is not None and distance <= watch.radius_km):
+            stations[doc["_id"]] = {
+                **doc,
+                "distanceKm": round(distance, 2) if distance is not None else None,
+                "favorite": favorite,
+            }
     return stations
 
 
 def detect_restocks(
     before: dict[str, dict], after: dict[str, dict], fuels: tuple[str, ...]
 ) -> list[dict]:
-    """Carburants passés d'indisponible à disponible, du plus proche au plus loin."""
+    """Carburants passés d'indisponible à disponible : favorites d'abord, puis
+    du plus proche au plus loin."""
     restocks = []
     for station_id, station in after.items():
         previous = before.get(station_id)
@@ -164,13 +198,19 @@ def detect_restocks(
                     "address": station.get("address"),
                     "postcode": station.get("postcode"),
                     "city": station.get("city"),
+                    "favorite": station["favorite"],
                     "distanceKm": station["distanceKm"],
                     "fuel": fuel["code"],
                     "price": fuel["price"],
                     "updatedAt": fuel["updatedAt"],
                     "shortageSince": was.get("shortageSince"),
                 })
-    return sorted(restocks, key=lambda r: (r["distanceKm"], r["stationId"], r["fuel"]))
+    return sorted(restocks, key=lambda r: (
+        not r["favorite"],
+        r["distanceKm"] if r["distanceKm"] is not None else math.inf,
+        r["stationId"],
+        r["fuel"],
+    ))
 
 
 def _paris_tz():
@@ -200,15 +240,15 @@ def format_summary(restocks: list[dict], watch: RestockWatch) -> str:
     """
     stations = {r["stationId"] for r in restocks}
     labels = ", ".join(FUEL_LABELS[code] for code in watch.fuels)
-    lines = [
-        f"⛽ {labels} de retour dans {len(stations)} station(s) "
-        f"à moins de {_decimal(watch.radius_km)} km :"
-    ]
+    lines = [f"⛽ {labels} de retour dans {len(stations)} station(s) :"]
     for r in restocks:
+        bullet = "★" if r["favorite"] else "•"
         who = r["brand"] or r["name"] or "Station"
         where = ", ".join(p for p in (r["address"], f"{r['postcode']} {r['city']}".strip()) if p)
         price = f"{r['price']:.3f} €".replace(".", ",")
-        line = f"• {FUEL_LABELS[r['fuel']]} — {who}, {where} — {price} ({_decimal(r['distanceKm'])} km)"
+        line = f"{bullet} {FUEL_LABELS[r['fuel']]} — {who}, {where} — {price}"
+        if r["distanceKm"] is not None:
+            line += f" ({_decimal(r['distanceKm'])} km)"
         if r["shortageSince"] is not None:
             line += f", en rupture depuis le {_local(r['shortageSince'])}"
         lines.append(line)
@@ -226,8 +266,11 @@ def build_payload(restocks: list[dict], watch: RestockWatch, imported_at: dateti
         # Champ lu par Hermes pour filtrer les routes par `events`.
         "event_type": "fuel_restock",
         "importedAt": imported_at,
-        "zone": {"lat": watch.lat, "lng": watch.lng, "radiusKm": watch.radius_km,
-                 "fuels": list(watch.fuels)},
+        "fuels": list(watch.fuels),
+        "zone": (
+            {"lat": watch.lat, "lng": watch.lng, "radiusKm": watch.radius_km}
+            if watch.has_zone else None
+        ),
         "count": len(restocks),
         "summary": format_summary(restocks, watch),
         "restocks": restocks,

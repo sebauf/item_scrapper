@@ -18,6 +18,7 @@ from src.fuel.restock_alerts import (
     RestockWatch,
     alert_restocks,
     detect_restocks,
+    favorite_station_ids,
     format_summary,
     haversine_km,
     sign,
@@ -59,13 +60,18 @@ def in_shortage(station_id, **fields):
                   gazole_rupture_debut="2026-10-24T12:30:00+00:00", **fields)
 
 
-def run(db, before_records, after_records, w=None):
+def run(db, before_records, after_records, w=None, favorites=frozenset()):
     """Deux imports successifs ; renvoie les réapprovisionnements détectés."""
     w = w or watch()
     import_stations(db, before_records, now=NOW)
-    before = watched_stations(db["fuel_stations"], w)
+    before = watched_stations(db["fuel_stations"], w, set(favorites))
     import_stations(db, after_records, now=LATER)
-    return detect_restocks(before, watched_stations(db["fuel_stations"], w), w.fuels)
+    return detect_restocks(before, watched_stations(db["fuel_stations"], w, set(favorites)), w.fuels)
+
+
+NO_ZONE = dict(lat=None, lng=None)
+# Marseille : ~280 km de Bellecour.
+FAR = {"latitude": "4329650", "longitude": "536980"}
 
 
 # --- detect_restocks -------------------------------------------------------
@@ -80,6 +86,7 @@ def test_detecte_un_gazole_de_retour_apres_une_rupture(db):
     assert r["shortageSince"] == datetime(2026, 10, 24, 12, 30)
     assert r["city"] == "Lyon"
     assert 1 < r["distanceKm"] < 3
+    assert r["favorite"] is False
 
 
 def test_une_rupture_avec_prix_affiche_compte_aussi(db):
@@ -115,10 +122,39 @@ def test_ignore_les_carburants_non_surveilles(db):
 
 
 def test_ignore_les_stations_hors_zone(db):
-    # Marseille : ~280 km.
-    far = {"latitude": "4329650", "longitude": "536980"}
+    assert run(db, [in_shortage(1, **FAR)], [record(1, **FAR)]) == []
 
-    assert run(db, [in_shortage(1, **far)], [record(1, **far)]) == []
+
+def test_surveille_une_favorite_hors_zone(db):
+    restocks = run(db, [in_shortage(1, **FAR)], [record(1, **FAR)], favorites={"1"})
+
+    assert [(r["stationId"], r["favorite"]) for r in restocks] == [("1", True)]
+    assert restocks[0]["distanceKm"] > 200
+
+
+def test_sans_zone_seules_les_favorites_comptent(db):
+    restocks = run(
+        db,
+        [in_shortage(1), in_shortage(2)],
+        [record(1), record(2)],
+        watch(**NO_ZONE),
+        favorites={"2"},
+    )
+
+    assert [r["stationId"] for r in restocks] == ["2"]
+    assert restocks[0]["distanceKm"] is None
+
+
+def test_les_favorites_passent_en_tete(db):
+    near = {"latitude": "4575800", "longitude": "483200"}  # Bellecour même
+    restocks = run(
+        db,
+        [in_shortage(1, **FAR), in_shortage(2, **near)],
+        [record(1, **FAR), record(2, **near)],
+        favorites={"1"},
+    )
+
+    assert [r["stationId"] for r in restocks] == ["1", "2"]
 
 
 def test_trie_du_plus_proche_au_plus_loin(db):
@@ -135,9 +171,17 @@ def test_haversine_lyon_paris():
 # --- RestockWatch.from_env -------------------------------------------------
 
 
-def test_desactive_sans_position():
+def test_desactive_sans_webhook_ni_zone():
     assert RestockWatch.from_env({}) is None
-    assert RestockWatch.from_env({"FUEL_WATCH_LAT": "45.7"}) is None
+
+
+def test_un_webhook_seul_surveille_les_favorites():
+    w = RestockWatch.from_env({"FUEL_RESTOCK_WEBHOOK_URL": "http://h/webhooks/x",
+                               "FUEL_RESTOCK_WEBHOOK_SECRET": "abc"})
+
+    assert w is not None
+    assert w.has_zone is False
+    assert w.fuels == ("gazole",)
 
 
 def test_valeurs_par_defaut():
@@ -159,6 +203,7 @@ def test_lit_toute_la_configuration():
 
 @pytest.mark.parametrize("extra", [
     {"FUEL_WATCH_LAT": "abc"},
+    {"FUEL_WATCH_LNG": ""},  # une seule coordonnée
     {"FUEL_WATCH_LAT": "91"},
     {"FUEL_WATCH_RADIUS_KM": "0"},
     {"FUEL_WATCH_FUELS": "diesel"},
@@ -172,7 +217,7 @@ def test_une_configuration_invalide_desactive_sans_lever(extra):
 
 
 def restock(**fields):
-    base = {"stationId": "1", "brand": "Avia", "name": None, "address": "12 avenue Félix Faure",
+    base = {"stationId": "1", "favorite": False, "brand": "Avia", "name": None, "address": "12 avenue Félix Faure",
             "postcode": "69003", "city": "Lyon", "distanceKm": 1.84, "fuel": "gazole",
             "price": 1.719, "updatedAt": LATER, "shortageSince": datetime(2026, 10, 24, 12, 30)}
     base.update(fields)
@@ -182,9 +227,17 @@ def restock(**fields):
 def test_le_resume_est_lisible_tel_quel():
     summary = format_summary([restock()], watch())
 
-    assert summary.splitlines()[0] == "⛽ Gazole de retour dans 1 station(s) à moins de 5 km :"
+    assert summary.splitlines()[0] == "⛽ Gazole de retour dans 1 station(s) :"
     assert "Avia, 12 avenue Félix Faure, 69003 Lyon — 1,719 € (1,84 km)" in summary
     assert "en rupture depuis le 24/10 à" in summary
+
+
+def test_le_resume_marque_les_favorites_et_omet_une_distance_inconnue():
+    summary = format_summary([restock(favorite=True, distanceKm=None)], watch(**NO_ZONE))
+
+    line = summary.splitlines()[1]
+    assert line.startswith("★ Gazole — Avia")
+    assert "km" not in line
 
 
 def test_le_resume_tolere_une_station_anonyme_sans_date_de_rupture():
@@ -225,10 +278,10 @@ def sent(monkeypatch):
 
 def test_envoie_un_webhook_signe_et_verifiable(db, sent):
     import_stations(db, [in_shortage(1)], now=NOW)
-    before = watched_stations(db["fuel_stations"], watch())
+    before = watched_stations(db["fuel_stations"], watch(), set())
     import_stations(db, [record(1)], now=LATER)
 
-    alert_restocks(watch(), before, watched_stations(db["fuel_stations"], watch()), LATER)
+    alert_restocks(watch(), before, watched_stations(db["fuel_stations"], watch(), set()), LATER)
 
     assert len(sent) == 1
     request = sent[0]
@@ -241,6 +294,8 @@ def test_envoie_un_webhook_signe_et_verifiable(db, sent):
     payload = json.loads(request.data)
     assert payload["event_type"] == "fuel_restock"
     assert payload["count"] == 1
+    assert payload["fuels"] == ["gazole"]
+    assert payload["zone"] == {"lat": 45.7578, "lng": 4.832, "radiusKm": 5.0}
     assert payload["importedAt"] == "2026-10-26T17:00:00+00:00"
     assert payload["restocks"][0]["shortageSince"] == "2026-10-24T12:30:00+00:00"
     assert payload["summary"].startswith("⛽ Gazole de retour")
@@ -254,7 +309,7 @@ def test_n_envoie_rien_sans_reapprovisionnement(sent):
 def test_sans_url_detecte_mais_n_envoie_rien(db, sent):
     restocks = alert_restocks(watch(webhook_url=None), {"1": {"fuels": [
         {"code": "gazole", "available": False, "shortageSince": None}]}},
-        {"1": {"distanceKm": 1.0, "fuels": [
+        {"1": {"distanceKm": 1.0, "favorite": False, "fuels": [
             {"code": "gazole", "available": True, "price": 1.7, "updatedAt": LATER}]}}, LATER)
 
     assert len(restocks) == 1
@@ -267,8 +322,17 @@ def test_un_echec_d_envoi_ne_fait_pas_echouer_l_import(monkeypatch, capsys):
 
     monkeypatch.setattr(module, "urlopen", failing_urlopen)
     before = {"1": {"fuels": [{"code": "gazole", "available": False, "shortageSince": None}]}}
-    after = {"1": {"distanceKm": 1.0, "fuels": [
+    after = {"1": {"distanceKm": 1.0, "favorite": False, "fuels": [
         {"code": "gazole", "available": True, "price": 1.7, "updatedAt": LATER}]}}
 
     assert len(alert_restocks(watch(), before, after, LATER)) == 1
     assert "alerte perdue" in capsys.readouterr().out
+
+
+def test_lit_les_favorites_ecrites_par_le_backend(db):
+    db["favorite_stations"].insert_many([
+        {"_id": "69003001", "addedAt": NOW},
+        {"_id": "13001001", "addedAt": NOW},
+    ])
+
+    assert favorite_station_ids(db) == {"69003001", "13001001"}

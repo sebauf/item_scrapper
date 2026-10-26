@@ -278,10 +278,13 @@ with `timezone=UTC`.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
 - `pipeline/src/fuel/restock_alerts.py` — **restock alert**, opt-in (off unless
-  `FUEL_WATCH_LAT` / `FUEL_WATCH_LNG` are set). The import overwrites the
-  previous state, so a restock is only observable *during* the import: the
-  watched zone (`FUEL_WATCH_RADIUS_KM`, default 5; `FUEL_WATCH_FUELS`, default
-  `gazole`) is read before and after, and a fuel going `available: false` →
+  `FUEL_RESTOCK_WEBHOOK_URL` or a zone is set). Watched stations = the user's
+  **favourite stations** (`favorite_stations`, starred on the fuel map) ∪ the
+  optional zone (`FUEL_WATCH_LAT` / `FUEL_WATCH_LNG`, `FUEL_WATCH_RADIUS_KM`
+  default 5); without a zone, only favourites alert. `FUEL_WATCH_FUELS`
+  defaults to `gazole`. The import overwrites the previous state, so a restock
+  is only observable *during* the import: watched stations are read before and
+  after, and a fuel going `available: false` →
   `true` triggers **one** webhook per import to `FUEL_RESTOCK_WEBHOOK_URL`
   (meant for a Hermes agent route), signed with Hermes' Generic V2 scheme
   (`X-Webhook-Signature-V2` = HMAC-SHA256 of `<timestamp>.<body>` with
@@ -291,10 +294,15 @@ with `timezone=UTC`.
   import. In k8s these vars live in `secrets.env` (task Pods only read the
   Secret — and the zone is the user's home); in Docker, `pipeline_tasks.py`
   relays them from the Airflow env.
-- `backend/src/modules/fuel/` — read-only context, `GET /api/v1/fuel-stations`
+- `backend/src/modules/fuel/` — reads `fuel_stations`, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
   sort requires `fuel`). `$geoNear` on the `location_2dsphere` index (created by
   the backend's `ensureIndexes`), capped at 200 stations (`truncated` flag).
+  Each station carries `isFavorite`. Also owns **favourite stations**
+  (`favorite_stations`, the only fuel collection the backend writes):
+  `GET /api/v1/fuel-stations/favorites`, `PUT` / `DELETE
+  /api/v1/fuel-stations/favorites/:id` (idempotent, 204; `PUT` → 404 if the
+  station is not in the feed, 400 if the id is not digits).
 - **Freshness** (`fuel/domain/freshness-policy.ts`, `STALE_AFTER_HOURS = 72`) is
   judged on the station's own declaration date (`updatedAt`), never on our import
   date — and stale prices are **flagged, not hidden** (an old price may simply be
@@ -302,7 +310,9 @@ with `timezone=UTC`.
 - `frontend/src/app/fuel/page.tsx` — Leaflet map (`react-leaflet`, OpenStreetMap
   tiles, client-only via `next/dynamic`) + list. Searches go through the URL
   (the backend is unreachable from the browser). Browser geolocation requires
-  HTTPS; « Rechercher ici » (pan the map) works without it.
+  HTTPS; « Rechercher ici » (pan the map) works without it. Each listed station
+  has a star (`FavoriteStationButton`, optimistic, rolled back on failure) that
+  adds it to the favourite stations watched by the restock alert.
 
 ### Key frontend files
 
@@ -352,6 +362,7 @@ This is the only applicative component deliberately exposed outside the cluster.
 - `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `brand` (unified OSM brand or null), `name` (OSM station name or null), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
+- `favorite_stations` — the user's favourite fuel stations, keyed by `_id` = official station id; field `addedAt`. Written only by the backend (star on the fuel map), read by the pipeline's restock alert. Not purged when a station leaves the feed (it becomes useful again if the station comes back)
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 

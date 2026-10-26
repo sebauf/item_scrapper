@@ -52,4 +52,9 @@ export class FakeFuelStationReadModel extends FuelStationReadModel {
     this.calls.push(search);
     return Promise.resolve(this.result);
   }
+
+  /** Une station existe si le résultat préparé la contient. */
+  exists(stationId: string): Promise<boolean> {
+    return Promise.resolve(this.result.stations.some((station) => station.id === stationId));
+  }
 }

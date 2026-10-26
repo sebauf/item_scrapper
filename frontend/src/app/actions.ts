@@ -2,8 +2,10 @@
 import { revalidatePath } from 'next/cache';
 import {
   addFavorite,
+  addFavoriteStation,
   ApiError,
   removeFavorite,
+  removeFavoriteStation,
   trackKeyword,
   trackProductUrl,
   untrackKeyword,
@@ -99,4 +101,21 @@ export async function removeFavoriteAction(id: string): Promise<void> {
   revalidatePath('/favorites');
   revalidatePath(`/product/${id}`);
   revalidatePath('/products');
+}
+
+/**
+ * Stations favorites — ce sont elles que surveille l'alerte de
+ * réapprovisionnement du pipeline. Les erreurs remontent : le bouton étoile
+ * annule alors son bascule optimiste.
+ */
+export async function addFavoriteStationAction(stationId: string): Promise<void> {
+  if (!stationId) return;
+  await addFavoriteStation(stationId);
+  revalidatePath('/fuel');
+}
+
+export async function removeFavoriteStationAction(stationId: string): Promise<void> {
+  if (!stationId) return;
+  await removeFavoriteStation(stationId);
+  revalidatePath('/fuel');
 }

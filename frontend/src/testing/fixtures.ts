@@ -54,6 +54,7 @@ export function aFuelStation(overrides: Partial<FuelStation> = {}): FuelStation 
     longitude: 4.85491,
     distanceKm: 1.234,
     fuels: [aFuelPrice()],
+    isFavorite: false,
     ...overrides,
   };
 }

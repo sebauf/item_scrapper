@@ -19,6 +19,8 @@ vi.mock('@/lib/api', async (importOriginal) => {
     untrackProductUrl: vi.fn(),
     addFavorite: vi.fn(),
     removeFavorite: vi.fn(),
+    addFavoriteStation: vi.fn(),
+    removeFavoriteStation: vi.fn(),
   };
 });
 
@@ -190,5 +192,34 @@ describe('favoris', () => {
     vi.mocked(api.addFavorite).mockRejectedValue(new ApiError(500, null, 'boom'));
 
     await expect(actions.addFavoriteAction('aWQ')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('stations favorites', () => {
+  it('ajoute la station et rafraîchit la carte', async () => {
+    await actions.addFavoriteStationAction('69003001');
+
+    expect(api.addFavoriteStation).toHaveBeenCalledWith('69003001');
+    expect(revalidatePath).toHaveBeenCalledWith('/fuel');
+  });
+
+  it('retire la station et rafraîchit la carte', async () => {
+    await actions.removeFavoriteStationAction('69003001');
+
+    expect(api.removeFavoriteStation).toHaveBeenCalledWith('69003001');
+    expect(revalidatePath).toHaveBeenCalledWith('/fuel');
+  });
+
+  it('laisse remonter un échec, pour que l’étoile s’annule', async () => {
+    vi.mocked(api.addFavoriteStation).mockRejectedValue(new ApiError(404, 'FUEL_STATION_NOT_FOUND', 'x'));
+
+    await expect(actions.addFavoriteStationAction('99999999')).rejects.toBeInstanceOf(ApiError);
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('ne fait rien sur un identifiant vide', async () => {
+    await actions.addFavoriteStationAction('');
+
+    expect(api.addFavoriteStation).not.toHaveBeenCalled();
   });
 });
