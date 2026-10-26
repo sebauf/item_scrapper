@@ -9,6 +9,13 @@ x-airflow-common: &airflow-common
     # Passed through to the DockerOperator tasks (scrape/refine/train/score)
     MONGODB_URI: ${MONGODB_URI:-mongodb://admin:password@mongodb:27017/scrapper?authSource=admin}
     PIPELINE_EXECUTOR: ${PIPELINE_EXECUTOR:-docker}
+    # Alerte de réapprovisionnement carburant (optionnelle, cf. infra/.env.example)
+    FUEL_WATCH_LAT: ${FUEL_WATCH_LAT:-}
+    FUEL_WATCH_LNG: ${FUEL_WATCH_LNG:-}
+    FUEL_WATCH_RADIUS_KM: ${FUEL_WATCH_RADIUS_KM:-}
+    FUEL_WATCH_FUELS: ${FUEL_WATCH_FUELS:-}
+    FUEL_RESTOCK_WEBHOOK_URL: ${FUEL_RESTOCK_WEBHOOK_URL:-}
+    FUEL_RESTOCK_WEBHOOK_SECRET: ${FUEL_RESTOCK_WEBHOOK_SECRET:-}
     IMAGE_REGISTRY: ${IMAGE_REGISTRY:-ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper}
     AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
     AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY:-}

@@ -23,6 +23,18 @@ MONGODB_URI = os.environ.get("MONGODB_URI", "")
 NAMESPACE = os.environ.get("AIRFLOW_K8S_NAMESPACE", "price-tracker")
 SECRET_NAME = os.environ.get("PIPELINE_SECRET_NAME", "price-tracker-secrets")
 
+# Variables optionnelles relayées telles quelles aux conteneurs Docker (alerte de
+# réapprovisionnement, cf. pipeline/src/fuel/restock_alerts.py). En Kubernetes,
+# les Pods lisent tout le Secret : rien à relayer.
+PASSTHROUGH_ENV = (
+    "FUEL_WATCH_LAT",
+    "FUEL_WATCH_LNG",
+    "FUEL_WATCH_RADIUS_KM",
+    "FUEL_WATCH_FUELS",
+    "FUEL_RESTOCK_WEBHOOK_URL",
+    "FUEL_RESTOCK_WEBHOOK_SECRET",
+)
+
 
 def _build_docker_task(task_id: str, image: str, command: list[str] | None):
     from airflow.providers.docker.operators.docker import DockerOperator
@@ -35,7 +47,10 @@ def _build_docker_task(task_id: str, image: str, command: list[str] | None):
         network_mode="item_scrapper_net",
         auto_remove="success",
         mount_tmp_dir=False,
-        environment={"MONGODB_URI": MONGODB_URI},
+        environment={
+            "MONGODB_URI": MONGODB_URI,
+            **{name: os.environ[name] for name in PASSTHROUGH_ENV if os.environ.get(name)},
+        },
     )
 
 

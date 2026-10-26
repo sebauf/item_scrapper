@@ -277,6 +277,20 @@ with `timezone=UTC`.
   truncated, the import keeps the brands already stored — prices still update.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
+- `pipeline/src/fuel/restock_alerts.py` — **restock alert**, opt-in (off unless
+  `FUEL_WATCH_LAT` / `FUEL_WATCH_LNG` are set). The import overwrites the
+  previous state, so a restock is only observable *during* the import: the
+  watched zone (`FUEL_WATCH_RADIUS_KM`, default 5; `FUEL_WATCH_FUELS`, default
+  `gazole`) is read before and after, and a fuel going `available: false` →
+  `true` triggers **one** webhook per import to `FUEL_RESTOCK_WEBHOOK_URL`
+  (meant for a Hermes agent route), signed with Hermes' Generic V2 scheme
+  (`X-Webhook-Signature-V2` = HMAC-SHA256 of `<timestamp>.<body>` with
+  `FUEL_RESTOCK_WEBHOOK_SECRET`). The payload carries a ready-to-send French
+  `summary`, so the route can run `deliver_only`. New stations and fuels not
+  sold before are not restocks. A failed send is logged, never fails the
+  import. In k8s these vars live in `secrets.env` (task Pods only read the
+  Secret — and the zone is the user's home); in Docker, `pipeline_tasks.py`
+  relays them from the Airflow env.
 - `backend/src/modules/fuel/` — read-only context, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
   sort requires `fuel`). `$geoNear` on the `location_2dsphere` index (created by
