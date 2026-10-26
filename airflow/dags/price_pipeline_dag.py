@@ -4,15 +4,7 @@ against its own price history. Alongside, a housekeeping task deletes Airflow's
 own task logs past LOG_RETENTION_DAYS.
 
 Each step runs in its own ephemeral container, reusing the images already
-built by CI (.github/workflows/scrapper.yml and pipeline.yml).
-
-Two execution backends are supported, picked at import time via the
-PIPELINE_EXECUTOR env var:
-  - "docker" (default): DockerOperator, launches sibling containers on the
-    host's Docker engine. Used by infra/docker-compose.yml for local dev.
-  - "kubernetes": KubernetesPodOperator, launches Pods in the cluster. Used
-    by the Airflow deployment in k8s/ (see k8s/base/airflow-rbac.yaml for
-    the ServiceAccount permissions this needs).
+built by CI; see pipeline_tasks.py for the docker / kubernetes backends.
 """
 import os
 import random
@@ -23,11 +15,8 @@ from pathlib import Path
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
-EXECUTOR = os.environ.get("PIPELINE_EXECUTOR", "docker").lower()
-REGISTRY = os.environ.get("IMAGE_REGISTRY", "ghcr.io/YOUR_GITHUB_USERNAME/item_scrapper")
-MONGODB_URI = os.environ.get("MONGODB_URI", "")
-NAMESPACE = os.environ.get("AIRFLOW_K8S_NAMESPACE", "price-tracker")
-SECRET_NAME = os.environ.get("PIPELINE_SECRET_NAME", "price-tracker-secrets")
+from pipeline_tasks import REGISTRY, build_task
+
 LOG_RETENTION_DAYS = int(os.environ.get("AIRFLOW_LOG_RETENTION_DAYS", "30"))
 
 default_args = {
@@ -36,53 +25,6 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "execution_timeout": timedelta(hours=2),
 }
-
-
-def _build_docker_task(task_id: str, image: str, command: list[str] | None):
-    from airflow.providers.docker.operators.docker import DockerOperator
-
-    return DockerOperator(
-        task_id=task_id,
-        image=image,
-        command=command,
-        docker_url="unix://var/run/docker.sock",
-        network_mode="item_scrapper_net",
-        auto_remove="success",
-        mount_tmp_dir=False,
-        environment={"MONGODB_URI": MONGODB_URI},
-    )
-
-
-def _build_k8s_task(task_id: str, image: str, command: list[str] | None):
-    from kubernetes.client import models as k8s
-    from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
-
-    return KubernetesPodOperator(
-        task_id=task_id,
-        name=f"price-pipeline-{task_id}",
-        namespace=NAMESPACE,
-        image=image,
-        # Les images portent le tag mobile `main`, réécrit à chaque push : sans
-        # cette ligne, Kubernetes retombe sur `IfNotPresent` et réutilise
-        # indéfiniment la couche déjà présente sur le nœud. Une tâche pointant
-        # du code tout juste publié s'exécuterait alors dans l'image de la
-        # veille — d'où l'échec d'une étape nouvellement ajoutée au DAG, qui
-        # n'existe pas encore dans l'image en cache. C'est la même politique
-        # que celle des Deployments de k8s/base.
-        image_pull_policy="Always",
-        cmds=command if command else None,
-        env_from=[k8s.V1EnvFromSource(secret_ref=k8s.V1SecretEnvSource(name=SECRET_NAME))],
-        image_pull_secrets=[k8s.V1LocalObjectReference(name="ghcr-pull-secret")],
-        is_delete_operator_pod=True,
-        get_logs=True,
-        in_cluster=True,
-    )
-
-
-def _build_task(task_id: str, image: str, command: list[str] | None = None):
-    if EXECUTOR == "kubernetes":
-        return _build_k8s_task(task_id, image, command)
-    return _build_docker_task(task_id, image, command)
 
 
 def _random_night_delay() -> None:
@@ -147,22 +89,22 @@ with DAG(
     # mince. Un run tué en route ne perd pas que des prix — les écrans
     # masquent les produits non rafraîchis par le dernier passage, donc une
     # moitié du catalogue disparaîtrait de l'affichage jusqu'au run suivant.
-    scrape = _build_task("scrape", image=f"{REGISTRY}-scrapper:main")
+    scrape = build_task("scrape", image=f"{REGISTRY}-scrapper:main")
     scrape.execution_timeout = timedelta(hours=3)
 
     # Avant le refine : celui-ci reconstruit price_history depuis items_raw,
     # donc purger après lui ferait ressusciter les documents supprimés.
-    purge = _build_task(
+    purge = build_task(
         "purge",
         image=f"{REGISTRY}-pipeline:main",
         command=["python", "-m", "src.maintenance.purge_dead_products"],
     )
 
-    refine = _build_task(
+    refine = build_task(
         "refine", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.refine.build_price_history"]
     )
 
-    score = _build_task(
+    score = build_task(
         "score", image=f"{REGISTRY}-pipeline:main", command=["python", "-m", "src.scoring.score"]
     )
 

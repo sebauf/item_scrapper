@@ -3,6 +3,7 @@ import { ConfigModule } from './config/config.module';
 import { HealthModule } from './health/health.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { FavoriteModule } from './modules/favorite/favorite.module';
+import { FuelModule } from './modules/fuel/fuel.module';
 import { KeywordModule } from './modules/keyword/keyword.module';
 import { ProductTrackingModule } from './modules/product-tracking/product-tracking.module';
 import { MongoModule } from './shared/infrastructure/mongo/mongo.module';
@@ -20,6 +21,7 @@ import { MongoModule } from './shared/infrastructure/mongo/mongo.module';
     CatalogModule,
     ProductTrackingModule,
     FavoriteModule,
+    FuelModule,
   ],
 })
 export class AppModule {}

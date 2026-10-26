@@ -41,6 +41,7 @@ src/
     │   ├── infrastructure/    implémentations MongoDB des ports
     │   ├── interface/         controller + DTO d'entrée/sortie
     │   └── testing/           doubles de test (exclus du build)
+    ├── fuel/          contexte « carburants » — lecture seule (fuel_stations)
     └── catalog/       contexte « produits et prix » — lecture seule
         ├── domain/            ProductId, ProductQuery (objets-valeurs),
         │                      DealPolicy (le seuil de bonne affaire)
@@ -79,6 +80,7 @@ Préfixe `/api/v1` (sauf les sondes, volontairement hors versionnement).
 | `DELETE` | `/api/v1/keywords/{keyword}` | 204 (idempotent) · 404 inconnu |
 | `GET` | `/api/v1/keywords/{keyword}/products` | 200 · 400 filtre invalide |
 | `GET` | `/api/v1/products/{id}` | 200 · 400 id mal formé · 404 inconnu |
+| `GET` | `/api/v1/fuel-stations` | 200 — stations autour d'un point · 400 position/rayon/carburant/tri invalide |
 | `GET` | `/health/live` | 200 — le processus répond |
 | `GET` | `/health/ready` | 200 · 503 si MongoDB est injoignable |
 
@@ -86,6 +88,14 @@ Paramètres de `/keywords/{keyword}/products` : `q` (titre), `deals` (1/0),
 `min`, `max` (prix), `sort` (`deals` · `price_asc` · `price_desc` · `discount`),
 `page` (24 produits par page). Un mot-clé inconnu renvoie 200 avec des
 compteurs à zéro — c'est au client de décider s'il affiche une 404.
+
+Paramètres de `/fuel-stations` : `lat`, `lng` (obligatoires), `radiusKm` (≤ 30,
+défaut 10), `fuel` (`gazole` · `e10` · `sp98` · `sp95` · `e85` · `gplc`), `sort`
+(`distance` par défaut, `price` exige `fuel`). Au plus 200 stations, `truncated`
+signale la coupure. Chaque prix porte `isStale` : déclaré par la station il y a
+plus de 72 h (`fuel/domain/freshness-policy.ts`). Un prix ancien est **signalé,
+pas masqué** — l'inverse de la règle ci-dessous, et volontairement : ici c'est la
+station qui déclare, un prix inchangé depuis quatre jours peut être exact.
 
 ### Fraîcheur : seul le dernier passage du scrapper est affiché
 
@@ -133,6 +143,7 @@ La base est partagée entre les services ; l'écriture ne l'est pas.
 | `keywords` | **backend** (et encore le scrapper, cf. dette ci-dessous) | oui |
 | `items_raw` | scrapper | oui |
 | `price_history`, `deal_scores` | pipeline | oui |
+| `fuel_stations` | pipeline (import du flux carburants) | oui |
 
 **Dette assumée** : le scrapper lit encore `keywords` directement au lieu de
 passer par `GET /api/v1/keywords`, et y seede ses mots-clés par défaut. La

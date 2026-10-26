@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Stack
 
 - **Scrapper** (`scrapper/`): Node.js + TypeScript, clean architecture (domain / application / infrastructure), [Crawlee](https://crawlee.dev/) with `PlaywrightCrawler`, MongoDB driver v6
-- **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB
-- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline via a single DAG
+- **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`
+- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (3×/day)
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
 - **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4 — **no DB driver**; calls the backend API server-side (`BACKEND_URL`)
 - **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend
@@ -52,6 +52,7 @@ python -m src.pipeline             # run full pipeline (purge + refine + score)
 python -m src.maintenance.purge_dead_products   # purge only (deletes data)
 python -m src.refine.build_price_history        # refine only
 python -m src.scoring.score                     # score only
+python -m src.fuel.import_stations              # import fuel prices (calls data.economie.gouv.fr)
 
 pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
 python -m pytest                      # unit tests — no MongoDB needed
@@ -187,7 +188,7 @@ Scoring logic (no trained model, no cross-product comparison):
 - Stale/unreliable scores are deleted from `deal_scores` after each run
 - Products flagged `unavailable` in `price_history` (page redirected away on last visit) are skipped outright, whatever their price freshness
 
-### Airflow DAG
+### Airflow DAGs
 
 `airflow/dags/price_pipeline_dag.py` — daily DAG (`0 1 * * *`, then a random
 jitter of 5 min to 3 h): `jitter >> scrape >> purge >> refine >> score`. The
@@ -200,6 +201,16 @@ it): it deletes Airflow's own task logs older than `AIRFLOW_LOG_RETENTION_DAYS`
 (default 30). Airflow 2 never prunes them, and in k8s they live on the
 fixed-size `airflow-logs` PVC mounted in the scheduler — with `LocalExecutor`
 the task runs in that same Pod.
+
+`airflow/dags/fuel_prices_dag.py` — fuel prices, `0 7,12,18 * * *` **Europe/Paris**
+(the `start_date` carries the time zone, DST included), single task
+`import_fuel_stations` in the pipeline image. Independent of the scrape DAG, no
+jitter (public API, no anti-bot), `max_active_runs=1` (two concurrent imports
+would delete each other's stations).
+
+Both DAGs build their container tasks through `airflow/dags/pipeline_tasks.py`
+(listed in `.airflowignore`; importable because Airflow puts `dags_folder` on
+`sys.path`).
 
 Supports two execution backends via `PIPELINE_EXECUTOR` env var:
 - `docker` (default, local dev): `DockerOperator`, launches sibling containers on the host's Docker socket
@@ -241,12 +252,40 @@ revisited. The three settings travel together. Product *detail*
 is deliberately exempt — favourites and tracked URLs are explicit user choices and
 stay reachable by direct link.
 
+### Fuel prices — official open data, not scraping
+
+Source: « Prix des carburants en France — Flux instantané v2 » on
+data.economie.gouv.fr (Licence Ouverte; stations selling > 500 m³/year must
+declare every price change and shortage). Read through the Opendatasoft
+`exports/json` endpoint (whole dataset in one call; `records` caps at 10 000),
+with `timezone=UTC`.
+
+- `pipeline/src/fuel/import_stations.py` — one `fuel_stations` doc per station,
+  **replaced** on each import; stations absent from the feed are deleted, but only
+  after a guard: an import yielding fewer than half the known stations raises
+  `TruncatedFeedError` and touches nothing. API coordinates are degrees × 100 000.
+  A fuel is *sold* if it has a price or a temporary shortage (`rupture_type =
+  definitive` drops it), *available* if priced with no shortage.
+- `backend/src/modules/fuel/` — read-only context, `GET /api/v1/fuel-stations`
+  (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
+  sort requires `fuel`). `$geoNear` on the `location_2dsphere` index (created by
+  the backend's `ensureIndexes`), capped at 200 stations (`truncated` flag).
+- **Freshness** (`fuel/domain/freshness-policy.ts`, `STALE_AFTER_HOURS = 72`) is
+  judged on the station's own declaration date (`updatedAt`), never on our import
+  date — and stale prices are **flagged, not hidden** (an old price may simply be
+  unchanged). Opposite of the Amazon freshness rule on purpose.
+- `frontend/src/app/fuel/page.tsx` — Leaflet map (`react-leaflet`, OpenStreetMap
+  tiles, client-only via `next/dynamic`) + list. Searches go through the URL
+  (the backend is unreachable from the browser). Browser geolocation requires
+  HTTPS; « Rechercher ici » (pan the map) works without it.
+
 ### Key frontend files
 
 - `src/app/page.tsx` — dashboard: global counters + best deals per keyword
 - `src/app/keywords/page.tsx` — tracked keywords, add/remove via Server Actions
 - `src/app/keyword/[slug]/page.tsx` — product grid, server-side filter/sort/paginate
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
+- `src/app/fuel/page.tsx` + `src/components/FuelExplorer.tsx` / `FuelMap.tsx` — fuel-price map; `src/lib/fuel.ts` holds its URL parsing and display rules
 - `src/lib/api.ts` — the single data access point: typed client over the backend API
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
@@ -287,6 +326,7 @@ This is the only applicative component deliberately exposed outside the cluster.
 - `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`, plus l'identité de l'article : `ean` (GTIN-13 vérifié), `brand`, `mpn`, `quantity` (`{ amount, unit }` en L ou kg), `packSize`, `doses` — tous nullables, une fiche ne publiant pas toujours son code-barres
 - `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
+- `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 

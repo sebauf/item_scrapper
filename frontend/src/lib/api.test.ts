@@ -9,6 +9,7 @@ import {
   getTrackedUrls,
   isFavorite,
   removeFavorite,
+  searchFuelStations,
   searchProducts,
   trackKeyword,
   trackProductUrl,
@@ -233,5 +234,19 @@ describe('getProduct', () => {
     errorResponse(500, { code: 'X', message: 'boom' });
 
     await expect(getProduct('aWQ')).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('searchFuelStations', () => {
+  it('appelle /fuel-stations avec la query string déjà normalisée', async () => {
+    const fetchMock = jsonResponse({ stations: [], truncated: false, lastImportAt: null, staleAfterHours: 72 });
+
+    const result = await searchFuelStations('?lat=45.7578&lng=4.8320&radiusKm=10&sort=price&fuel=e10');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${API}/fuel-stations?lat=45.7578&lng=4.8320&radiusKm=10&sort=price&fuel=e10`,
+      expect.objectContaining({ cache: 'no-store' }),
+    );
+    expect(result.staleAfterHours).toBe(72);
   });
 });
