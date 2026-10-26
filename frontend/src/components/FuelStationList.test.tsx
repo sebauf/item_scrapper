@@ -2,7 +2,14 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { aFuelPrice, aFuelStation } from '@/testing/fixtures';
-import { FuelStationList } from './FuelStationList';
+
+vi.mock('@/app/actions', () => ({
+  addFavoriteStationAction: vi.fn(),
+  removeFavoriteStationAction: vi.fn(),
+}));
+
+const actions = await import('@/app/actions');
+const { FuelStationList } = await import('./FuelStationList');
 
 /**
  * La liste est la seule vue des stations testable sans navigateur (la carte
@@ -59,9 +66,27 @@ describe('FuelStationList', () => {
   it('sélectionne une station au clic', async () => {
     const { onSelect } = renderList();
 
-    await userEvent.click(screen.getByRole('button'));
+    await userEvent.click(screen.getByRole('button', { name: /12 avenue Félix Faure/ }));
 
     expect(onSelect).toHaveBeenCalledWith('69003001');
+  });
+
+  it('affiche l’étoile d’une station favorite', () => {
+    renderList([aFuelStation({ isFavorite: true })]);
+
+    expect(screen.getByRole('button', { name: 'Retirer des stations favorites' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('met une station en favori sans la sélectionner', async () => {
+    const { onSelect } = renderList();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ajouter aux stations favorites' }));
+
+    expect(actions.addFavoriteStationAction).toHaveBeenCalledWith('69003001');
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('explique une liste vide', () => {

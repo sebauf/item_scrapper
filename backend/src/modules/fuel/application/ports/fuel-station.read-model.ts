@@ -48,4 +48,7 @@ export interface NearbyStations {
  */
 export abstract class FuelStationReadModel {
   abstract findNear(search: StationSearch): Promise<NearbyStations>;
+
+  /** Vrai si la station figure dans le dernier import du flux. */
+  abstract exists(stationId: string): Promise<boolean>;
 }

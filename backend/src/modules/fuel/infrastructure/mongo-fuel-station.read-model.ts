@@ -69,4 +69,11 @@ export class MongoFuelStationReadModel extends FuelStationReadModel {
       lastImportAt: latest?.importedAt ?? null,
     };
   }
+
+  async exists(stationId: string): Promise<boolean> {
+    const doc = await this.db
+      .collection<FuelStationDocument>('fuel_stations')
+      .findOne({ _id: stationId }, { projection: { _id: 1 } });
+    return doc !== null;
+  }
 }

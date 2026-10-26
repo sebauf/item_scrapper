@@ -8,6 +8,7 @@ import {
   stationLabel,
   type PriceTier,
 } from '@/lib/fuel';
+import { FavoriteStationButton } from './FavoriteStationButton';
 
 const TIER_CLASSES: Record<PriceTier, string> = {
   low: 'bg-deal-soft text-deal border-deal-border',
@@ -89,12 +90,14 @@ export function FuelStationList({ stations, fuel, tierOf, selectedId, onSelect }
           .at(-1);
 
         return (
-          <li key={station.id}>
+          // L'étoile est une sœur du bouton de sélection, pas une enfant : un
+          // bouton dans un bouton est du HTML invalide.
+          <li key={station.id} className="relative">
             <button
               type="button"
               onClick={() => onSelect(station.id)}
               aria-pressed={active}
-              className={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+              className={`w-full text-left rounded-2xl border py-3 pl-4 pr-14 transition-colors ${
                 active
                   ? 'border-accent bg-accent-soft'
                   : 'border-border bg-surface hover:bg-surface-hover'
@@ -130,6 +133,14 @@ export function FuelStationList({ stations, fuel, tierOf, selectedId, onSelect }
               </div>
               {freshest && <p className="mt-1.5 text-[11px] text-faint">Dernière déclaration {timeAgo(freshest)}</p>}
             </button>
+            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              <FavoriteStationButton
+                // `key` : un nouveau résultat serveur doit réinitialiser l'état optimiste.
+                key={String(station.isFavorite)}
+                stationId={station.id}
+                initialFavorite={station.isFavorite}
+              />
+            </div>
           </li>
         );
       })}

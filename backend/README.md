@@ -41,7 +41,7 @@ src/
     │   ├── infrastructure/    implémentations MongoDB des ports
     │   ├── interface/         controller + DTO d'entrée/sortie
     │   └── testing/           doubles de test (exclus du build)
-    ├── fuel/          contexte « carburants » — lecture seule (fuel_stations)
+    ├── fuel/          contexte « carburants » — lit fuel_stations, écrit favorite_stations
     └── catalog/       contexte « produits et prix » — lecture seule
         ├── domain/            ProductId, ProductQuery (objets-valeurs),
         │                      DealPolicy (le seuil de bonne affaire)
@@ -81,6 +81,9 @@ Préfixe `/api/v1` (sauf les sondes, volontairement hors versionnement).
 | `GET` | `/api/v1/keywords/{keyword}/products` | 200 · 400 filtre invalide |
 | `GET` | `/api/v1/products/{id}` | 200 · 400 id mal formé · 404 inconnu |
 | `GET` | `/api/v1/fuel-stations` | 200 — stations autour d'un point · 400 position/rayon/carburant/tri invalide |
+| `GET` | `/api/v1/fuel-stations/favorites` | 200 — stations favorites (`id`, `addedAt`) |
+| `PUT` | `/api/v1/fuel-stations/favorites/{id}` | 204 (idempotent) · 400 id mal formé · 404 station absente du flux |
+| `DELETE` | `/api/v1/fuel-stations/favorites/{id}` | 204 (idempotent) · 400 id mal formé |
 | `GET` | `/health/live` | 200 — le processus répond |
 | `GET` | `/health/ready` | 200 · 503 si MongoDB est injoignable |
 
@@ -93,7 +96,8 @@ Paramètres de `/fuel-stations` : `lat`, `lng` (obligatoires), `radiusKm` (≤ 3
 défaut 10), `fuel` (`gazole` · `e10` · `sp98` · `sp95` · `e85` · `gplc`), `sort`
 (`distance` par défaut, `price` exige `fuel`). Au plus 200 stations, `truncated`
 signale la coupure. Chaque station porte `brand` et `name` (enseigne et nom
-d'après OpenStreetMap, `null` si la station n'y est pas rapprochée). Chaque prix porte `isStale` : déclaré par la station il y a
+d'après OpenStreetMap, `null` si la station n'y est pas rapprochée) et
+`isFavorite`. Chaque prix porte `isStale` : déclaré par la station il y a
 plus de 72 h (`fuel/domain/freshness-policy.ts`). Un prix ancien est **signalé,
 pas masqué** — l'inverse de la règle ci-dessous, et volontairement : ici c'est la
 station qui déclare, un prix inchangé depuis quatre jours peut être exact.
@@ -145,6 +149,7 @@ La base est partagée entre les services ; l'écriture ne l'est pas.
 | `items_raw` | scrapper | oui |
 | `price_history`, `deal_scores` | pipeline | oui |
 | `fuel_stations` | pipeline (import du flux carburants) | oui |
+| `favorite_stations` | **backend** (étoile de la carte carburants) — relue par l'alerte de réapprovisionnement du pipeline | oui |
 
 **Dette assumée** : le scrapper lit encore `keywords` directement au lieu de
 passer par `GET /api/v1/keywords`, et y seede ses mots-clés par défaut. La

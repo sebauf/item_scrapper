@@ -173,3 +173,12 @@ export function removeFavorite(id: string): Promise<void> {
 export function searchFuelStations(queryString: string): Promise<FuelStationSearchResult> {
   return request<FuelStationSearchResult>(`/fuel-stations${queryString}`);
 }
+
+/** Idempotent : une station déjà favorite le reste (204 dans les deux cas). */
+export function addFavoriteStation(stationId: string): Promise<void> {
+  return request<void>(`/fuel-stations/favorites/${encodeURIComponent(stationId)}`, { method: 'PUT' });
+}
+
+export function removeFavoriteStation(stationId: string): Promise<void> {
+  return request<void>(`/fuel-stations/favorites/${encodeURIComponent(stationId)}`, { method: 'DELETE' });
+}
