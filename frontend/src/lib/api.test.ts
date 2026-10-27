@@ -239,7 +239,13 @@ describe('getProduct', () => {
 
 describe('searchFuelStations', () => {
   it('appelle /fuel-stations avec la query string déjà normalisée', async () => {
-    const fetchMock = jsonResponse({ stations: [], truncated: false, lastImportAt: null, staleAfterHours: 72 });
+    const fetchMock = jsonResponse({
+      stations: [],
+      truncated: false,
+      brands: [],
+      lastImportAt: null,
+      staleAfterHours: 72,
+    });
 
     const result = await searchFuelStations('?lat=45.7578&lng=4.8320&radiusKm=10&sort=price&fuel=e10');
 

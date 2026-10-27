@@ -3,11 +3,12 @@ import { Db } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
 import { MAX_STATIONS, StationSearch } from '../domain/station-search';
 import {
+  BrandCount,
   FuelStationReadModel,
   FuelStationRow,
   NearbyStations,
 } from '../application/ports/fuel-station.read-model';
-import { nearStationsPipeline } from './fuel-station.stages';
+import { nearBrandsPipeline, nearStationsPipeline } from './fuel-station.stages';
 
 /** Forme écrite par pipeline/src/fuel/import_stations.py. */
 export interface FuelStationDocument {
@@ -49,6 +50,14 @@ export function toStationRow(doc: FuelStationDocument): FuelStationRow {
   };
 }
 
+/**
+ * Ordre alphabétique français, trié ici plutôt qu'en `$sort` : l'ordre binaire
+ * de Mongo rangerait « Élan » après « Total ».
+ */
+export function sortBrands(brands: BrandCount[]): BrandCount[] {
+  return [...brands].sort((a, b) => a.brand.localeCompare(b.brand, 'fr', { sensitivity: 'base' }));
+}
+
 @Injectable()
 export class MongoFuelStationReadModel extends FuelStationReadModel {
   constructor(@Inject(MONGO_DB) private readonly db: Db) {
@@ -58,14 +67,18 @@ export class MongoFuelStationReadModel extends FuelStationReadModel {
   async findNear(search: StationSearch): Promise<NearbyStations> {
     const collection = this.db.collection<FuelStationDocument>('fuel_stations');
 
-    const [docs, latest] = await Promise.all([
+    const [docs, brands, latest] = await Promise.all([
       collection.aggregate<FuelStationDocument>(nearStationsPipeline(search)).toArray(),
+      collection
+        .aggregate<{ _id: string; stationCount: number }>(nearBrandsPipeline(search))
+        .toArray(),
       collection.findOne({}, { sort: { importedAt: -1 }, projection: { importedAt: 1 } }),
     ]);
 
     return {
       stations: docs.slice(0, MAX_STATIONS).map(toStationRow),
       truncated: docs.length > MAX_STATIONS,
+      brands: sortBrands(brands.map(({ _id, stationCount }) => ({ brand: _id, stationCount }))),
       lastImportAt: latest?.importedAt ?? null,
     };
   }

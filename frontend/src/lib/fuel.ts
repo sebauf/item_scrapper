@@ -1,4 +1,4 @@
-import type { FuelCode, FuelPrice, FuelStation } from './api';
+import type { BrandCount, FuelCode, FuelPrice, FuelStation } from './api';
 
 /**
  * Logique d'affichage de la carte des carburants — tout ce qui se teste sans
@@ -24,6 +24,14 @@ export const FUEL_LABELS: Record<FuelCode, string> = {
 export const RADIUS_OPTIONS = [5, 10, 20, 30] as const;
 export const DEFAULT_RADIUS_KM = 10;
 export const DEFAULT_FUEL: FuelCode = 'gazole';
+/**
+ * Enseigne affichée à la première visite. Libellé exact du pipeline
+ * (`BRAND_ALIASES` y ramène « Total », « Total Access »…) : le backend compare
+ * à l'identique.
+ */
+export const DEFAULT_BRAND = 'TotalEnergies';
+/** Même borne que le backend (`MAX_BRAND_LENGTH`) : au-delà, il refuserait. */
+const MAX_BRAND_LENGTH = 60;
 
 /** Centre affiché tant que l'utilisateur n'a pas donné sa position. */
 export const DEFAULT_CENTER = { lat: 48.8566, lng: 2.3522, label: 'Paris' } as const;
@@ -37,6 +45,8 @@ export interface FuelSearchParams {
   /** null = tous les carburants. */
   fuel: FuelCode | null;
   sort: FuelSort;
+  /** null = toutes les enseignes. */
+  brand: string | null;
   /** Faux tant que la position est celle par défaut, pas celle de l'utilisateur. */
   located: boolean;
 }
@@ -56,6 +66,11 @@ function isFuelCode(value: string): value is FuelCode {
  *
  * `fuel=all` désigne « tous les carburants » : l'absence du paramètre vaut
  * Gazole, pour qu'une première visite affiche directement des prix sur la carte.
+ * Même convention pour `brand=all` : l'absence vaut TotalEnergies.
+ *
+ * Une enseigne inconnue n'est pas « aberrante » : la liste dépend de la zone,
+ * on ne peut pas la valider ici. Elle est transmise telle quelle et donnera au
+ * pire une liste vide, que l'écran explique.
  */
 export function parseFuelSearchParams(
   sp: Record<string, string | string[] | undefined>,
@@ -76,12 +91,21 @@ export function parseFuelSearchParams(
   // Sans carburant, aucun prix à comparer : le tri par prix n'existe pas.
   const sort: FuelSort = fuel !== null && first(sp.sort) !== 'distance' ? 'price' : 'distance';
 
+  const brandRaw = (first(sp.brand) ?? '').trim();
+  const brand =
+    brandRaw === 'all'
+      ? null
+      : brandRaw === '' || brandRaw.length > MAX_BRAND_LENGTH
+        ? DEFAULT_BRAND
+        : brandRaw;
+
   return {
     lat: located ? lat : DEFAULT_CENTER.lat,
     lng: located ? lng : DEFAULT_CENTER.lng,
     radiusKm,
     fuel,
     sort,
+    brand,
     located,
   };
 }
@@ -100,6 +124,7 @@ export function buildFuelApiQuery(params: FuelSearchParams): string {
     sort: params.sort,
   });
   if (params.fuel !== null) sp.set('fuel', params.fuel);
+  if (params.brand !== null) sp.set('brand', params.brand);
   return `?${sp.toString()}`;
 }
 
@@ -116,6 +141,8 @@ export function buildFuelPageHref(params: Partial<FuelSearchParams>): string {
   if (params.fuel === null) sp.set('fuel', 'all');
   else if (params.fuel !== undefined && params.fuel !== DEFAULT_FUEL) sp.set('fuel', params.fuel);
   if (params.fuel !== null && params.sort === 'distance') sp.set('sort', 'distance');
+  if (params.brand === null) sp.set('brand', 'all');
+  else if (params.brand !== undefined && params.brand !== DEFAULT_BRAND) sp.set('brand', params.brand);
   const qs = sp.toString();
   return qs ? `/fuel?${qs}` : '/fuel';
 }
@@ -151,6 +178,18 @@ export function stationLabel(station: FuelStation): { title: string; detail: str
   if (brand === null) return { title: name ?? 'Enseigne inconnue', detail: null };
   const redundant = name === null || comparable(name) === comparable(brand);
   return { title: brand, detail: redundant ? null : name };
+}
+
+/**
+ * Options du sélecteur d'enseigne : celles que l'API a trouvées dans la zone,
+ * plus l'enseigne choisie si elle n'y est pas — sinon le `<select>` afficherait
+ * une autre valeur que celle réellement filtrée.
+ */
+export function brandOptions(brands: BrandCount[], selected: string | null): BrandCount[] {
+  if (selected === null || brands.some((entry) => entry.brand === selected)) return brands;
+  return [...brands, { brand: selected, stationCount: 0 }].sort((a, b) =>
+    a.brand.localeCompare(b.brand, 'fr', { sensitivity: 'base' }),
+  );
 }
 
 export function fuelOf(station: FuelStation, code: FuelCode): FuelPrice | null {

@@ -89,12 +89,27 @@ export class FuelStationResponse {
   isFavorite!: boolean;
 }
 
+export class BrandCountResponse {
+  @ApiProperty({ example: 'TotalEnergies', description: 'Enseigne unifiée (OpenStreetMap, ODbL)' })
+  brand!: string;
+
+  @ApiProperty({ example: 12, description: 'Stations de l’enseigne dans la zone' })
+  stationCount!: number;
+}
+
 export class FuelStationSearchResponse {
   @ApiProperty({ type: [FuelStationResponse] })
   stations!: FuelStationResponse[];
 
   @ApiProperty({ description: 'Vrai si d’autres stations dépassaient le plafond de la réponse' })
   truncated!: boolean;
+
+  @ApiProperty({
+    type: [BrandCountResponse],
+    description:
+      'Enseignes présentes dans le rayon (carburant appliqué, enseigne non), par ordre alphabétique',
+  })
+  brands!: BrandCountResponse[];
 
   @ApiProperty({ type: String, nullable: true, description: 'Dernier import du flux officiel' })
   lastImportAt!: string | null;

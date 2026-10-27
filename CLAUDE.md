@@ -296,7 +296,10 @@ with `timezone=UTC`.
   relays them from the Airflow env.
 - `backend/src/modules/fuel/` — reads `fuel_stations`, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
-  sort requires `fuel`). `$geoNear` on the `location_2dsphere` index (created by
+  sort requires `fuel`; `brand` = exact unified label, filtered inside `$geoNear`
+  so the 200 cap applies after it). The response carries `brands[]` — brands in
+  the radius with their station count, fuel filter applied but **not** the brand
+  filter (otherwise the selector would only offer the chosen brand). `$geoNear` on the `location_2dsphere` index (created by
   the backend's `ensureIndexes`), capped at 200 stations (`truncated` flag).
   Each station carries `isFavorite`. Also owns **favourite stations**
   (`favorite_stations`, the only fuel collection the backend writes):
@@ -310,7 +313,9 @@ with `timezone=UTC`.
 - `frontend/src/app/fuel/page.tsx` — Leaflet map (`react-leaflet`, OpenStreetMap
   tiles, client-only via `next/dynamic`) + list. Searches go through the URL
   (the backend is unreachable from the browser). Browser geolocation requires
-  HTTPS; « Rechercher ici » (pan the map) works without it. Each listed station
+  HTTPS; « Rechercher ici » (pan the map) works without it. Brand selector
+  defaults to **TotalEnergies** (`DEFAULT_BRAND` in `lib/fuel.ts`); `brand=all`
+  in the URL shows every brand, as `fuel=all` does for fuels. Each listed station
   has a star (`FavoriteStationButton`, optimistic, rolled back on failure) that
   adds it to the favourite stations watched by the restock alert.
 

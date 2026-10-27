@@ -1,7 +1,7 @@
 import { Document } from 'mongodb';
 import { MAX_STATIONS, StationSearch } from '../domain/station-search';
-import { toStationRow } from './mongo-fuel-station.read-model';
-import { nearStationsPipeline } from './fuel-station.stages';
+import { sortBrands, toStationRow } from './mongo-fuel-station.read-model';
+import { nearBrandsPipeline, nearStationsPipeline } from './fuel-station.stages';
 
 /**
  * Comme pour aggregation-stages.spec.ts côté Catalog : on fige la *forme* du
@@ -30,6 +30,14 @@ describe('nearStationsPipeline', () => {
     expect(first.$geoNear.query).toEqual({ 'fuels.code': 'e85' });
   });
 
+  it('filtre l’enseigne pendant le parcours, avant le plafond', () => {
+    const [first] = nearStationsPipeline(
+      StationSearch.create({ ...lyon, fuel: 'gazole', brand: 'TotalEnergies' }),
+    );
+
+    expect(first.$geoNear.query).toEqual({ 'fuels.code': 'gazole', brand: 'TotalEnergies' });
+  });
+
   it('demande une station de plus que le plafond, pour détecter la coupure', () => {
     const stages = nearStationsPipeline(StationSearch.create(lyon));
 
@@ -55,6 +63,33 @@ describe('nearStationsPipeline', () => {
       'distanceMeters',
     ]);
     expect(JSON.stringify(stages[sortIndex - 1])).toContain('"e10"');
+  });
+});
+
+describe('nearBrandsPipeline', () => {
+  const lyon = { lat: '45.7578', lng: '4.8320' };
+
+  it('compte les enseignes de la zone, carburant appliqué mais pas l’enseigne choisie', () => {
+    const stages = nearBrandsPipeline(
+      StationSearch.create({ ...lyon, radiusKm: '5', fuel: 'gazole', brand: 'TotalEnergies' }),
+    );
+
+    expect(stages[0].$geoNear).toMatchObject({ maxDistance: 5000, query: { 'fuels.code': 'gazole' } });
+    expect(stages).toContainEqual({ $match: { brand: { $type: 'string' } } });
+    expect(stages.at(-1)).toEqual({ $group: { _id: '$brand', stationCount: { $sum: 1 } } });
+  });
+});
+
+describe('sortBrands', () => {
+  it('range les enseignes dans l’ordre alphabétique français, accents compris', () => {
+    const sorted = sortBrands([
+      { brand: 'TotalEnergies', stationCount: 3 },
+      { brand: 'Élan', stationCount: 1 },
+      { brand: 'Esso', stationCount: 2 },
+      { brand: 'Avia', stationCount: 1 },
+    ]);
+
+    expect(sorted.map((b) => b.brand)).toEqual(['Avia', 'Élan', 'Esso', 'TotalEnergies']);
   });
 });
 

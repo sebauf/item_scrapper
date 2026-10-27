@@ -18,10 +18,21 @@ const { FuelStationList } = await import('./FuelStationList');
  */
 const noTier = () => null;
 
-function renderList(stations = [aFuelStation()], fuel: 'gazole' | null = 'gazole') {
+function renderList(
+  stations = [aFuelStation()],
+  fuel: 'gazole' | null = 'gazole',
+  brand: string | null = null,
+) {
   const onSelect = vi.fn();
   render(
-    <FuelStationList stations={stations} fuel={fuel} tierOf={noTier} selectedId={null} onSelect={onSelect} />,
+    <FuelStationList
+      stations={stations}
+      fuel={fuel}
+      brand={brand}
+      tierOf={noTier}
+      selectedId={null}
+      onSelect={onSelect}
+    />,
   );
   return { onSelect };
 }
@@ -93,5 +104,12 @@ describe('FuelStationList', () => {
     renderList([], 'gazole');
 
     expect(screen.getByText(/Aucune station dans cette zone ne vend de Gazole/)).toBeInTheDocument();
+  });
+
+  it('explique une liste vide par l’enseigne filtrée', () => {
+    renderList([], 'gazole', 'TotalEnergies');
+
+    const message = screen.getByText(/Aucune station TotalEnergies dans cette zone/);
+    expect(message).toHaveTextContent(/ne vend de Gazole\. Choisissez une autre enseigne/);
   });
 });
