@@ -2,8 +2,8 @@
  * Politique de fraîcheur d'un prix de carburant.
  *
  * La date qui compte est celle de la **déclaration par la station**
- * (`updatedAt`), pas celle de notre import : le flux est relu trois fois par
- * jour, mais une station peut ne rien avoir déclaré depuis une semaine.
+ * (`updatedAt`), pas celle de notre import : le flux est relu toutes les
+ * 30 minutes, mais une station peut ne rien avoir déclaré depuis une semaine.
  *
  * Un prix ancien n'est pas forcément faux. La station doit déclarer chaque
  * changement : un prix daté de quatre jours peut simplement ne pas avoir

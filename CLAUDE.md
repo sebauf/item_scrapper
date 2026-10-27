@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Scrapper** (`scrapper/`): Node.js + TypeScript, clean architecture (domain / application / infrastructure), [Crawlee](https://crawlee.dev/) with `PlaywrightCrawler`, MongoDB driver v6
 - **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`
-- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (3×/day)
+- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (every 30 min)
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
 - **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4 — **no DB driver**; calls the backend API server-side (`BACKEND_URL`)
 - **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend
@@ -202,8 +202,8 @@ it): it deletes Airflow's own task logs older than `AIRFLOW_LOG_RETENTION_DAYS`
 fixed-size `airflow-logs` PVC mounted in the scheduler — with `LocalExecutor`
 the task runs in that same Pod.
 
-`airflow/dags/fuel_prices_dag.py` — fuel prices, `0 7,12,18 * * *` **Europe/Paris**
-(the `start_date` carries the time zone, DST included), single task
+`airflow/dags/fuel_prices_dag.py` — fuel prices, `*/30 * * * *` **Europe/Paris**
+(the `start_date` carries the time zone), single task
 `import_fuel_stations` in the pipeline image. Independent of the scrape DAG, no
 jitter (public API, no anti-bot), `max_active_runs=1` (two concurrent imports
 would delete each other's stations).

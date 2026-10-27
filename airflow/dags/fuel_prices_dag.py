@@ -1,4 +1,4 @@
-"""Prix des carburants : importe trois fois par jour le flux officiel des
+"""Prix des carburants : importe toutes les 30 minutes le flux officiel des
 stations-service dans `fuel_stations` (cf. pipeline/src/fuel/import_stations.py).
 
 Séparé de price_pipeline_dag, et volontairement :
@@ -9,11 +9,15 @@ Séparé de price_pipeline_dag, et volontairement :
 - **pas de dépendance au scrape.** Une panne côté Amazon ne doit pas figer les
   prix des carburants, et inversement.
 
-Horaires en heure de Paris (le `start_date` porte le fuseau, la cron s'y
-applique, heure d'été comprise) : 7 h pour les prix déclarés à l'ouverture,
-12 h et 18 h avant les trajets du midi et du soir. Le flux se rafraîchit toutes
-les 10 à 15 minutes ; importer plus souvent ne coûterait qu'une requête, il
-suffit de modifier la cron.
+Toutes les 30 minutes, jour et nuit (cron `*/30`, à :00 et :30 heure de Paris
+— le `start_date` porte le fuseau). Le flux se rafraîchit toutes les 10 à
+15 minutes : une demi-heure garde les prix et les ruptures à jour sans relire
+deux fois la même version, et l'alerte de réapprovisionnement (qui ne voit un
+retour en stock qu'au moment d'un import) part dans la demi-heure.
+
+Un run doit tenir dans cet intervalle, sinon `max_active_runs=1` empile les
+suivants : timeout de 10 min, une seule relance après 5 min, soit 25 min au
+pire. Un import raté n'a pas besoin de plus — le suivant arrive 30 min après.
 """
 from datetime import timedelta
 
@@ -24,18 +28,19 @@ from pipeline_tasks import REGISTRY, build_task
 
 default_args = {
     "owner": "airflow",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=10),
+    # 10 + 5 + 10 = 25 min au pire : le run se termine avant le suivant.
+    "retries": 1,
+    "retry_delay": timedelta(minutes=5),
     # Un seul appel HTTP et ~10 000 upserts : quelques dizaines de secondes en
     # temps normal. Au-delà, l'API est en difficulté et le run suivant fera mieux.
-    "execution_timeout": timedelta(minutes=15),
+    "execution_timeout": timedelta(minutes=10),
 }
 
 with DAG(
     dag_id="fuel_prices_dag",
     description="Import du flux officiel des prix des carburants -> fuel_stations",
     default_args=default_args,
-    schedule="0 7,12,18 * * *",
+    schedule="*/30 * * * *",
     start_date=pendulum.datetime(2026, 1, 1, tz="Europe/Paris"),
     catchup=False,
     # Deux imports concurrents se supprimeraient mutuellement leurs stations
