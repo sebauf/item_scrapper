@@ -13,6 +13,7 @@ describe('StationSearch', () => {
       radiusKm: DEFAULT_RADIUS_KM,
       fuel: null,
       sort: 'distance',
+      brand: null,
     });
     expect(search.radiusMeters).toBe(DEFAULT_RADIUS_KM * 1000);
   });
@@ -24,11 +25,16 @@ describe('StationSearch', () => {
   });
 
   it('traite une valeur vide comme absente', () => {
-    expect(StationSearch.create({ ...lyon, fuel: '', radiusKm: '', sort: '' })).toMatchObject({
+    expect(StationSearch.create({ ...lyon, fuel: '', radiusKm: '', sort: '', brand: '  ' })).toMatchObject({
       fuel: null,
+      brand: null,
       radiusKm: DEFAULT_RADIUS_KM,
       sort: 'distance',
     });
+  });
+
+  it('garde l’enseigne telle quelle, espaces de bord retirés', () => {
+    expect(StationSearch.create({ ...lyon, brand: ' TotalEnergies ' }).brand).toBe('TotalEnergies');
   });
 
   it.each([
@@ -40,6 +46,7 @@ describe('StationSearch', () => {
     [{ ...lyon, radiusKm: String(MAX_RADIUS_KM + 1) }, '« radiusKm »'],
     [{ ...lyon, fuel: 'kerosene' }, '« fuel »'],
     [{ ...lyon, sort: 'name' }, '« sort »'],
+    [{ ...lyon, brand: 'x'.repeat(61) }, '« brand »'],
   ])('refuse %j', (raw, message) => {
     expect(() => StationSearch.create(raw)).toThrow(InvalidStationSearch);
     expect(() => StationSearch.create(raw)).toThrow(message);

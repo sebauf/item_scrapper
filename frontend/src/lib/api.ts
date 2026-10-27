@@ -31,6 +31,7 @@ export type FuelStationSearchResult = Schemas['FuelStationSearchResponse'];
 export type FuelStation = Schemas['FuelStationResponse'];
 export type FuelPrice = Schemas['FuelPriceResponse'];
 export type FuelCode = FuelPrice['code'];
+export type BrandCount = Schemas['BrandCountResponse'];
 
 const BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
 const API = `${BASE_URL}/api/v1`;

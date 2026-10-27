@@ -39,7 +39,12 @@ export function aFuelStation(overrides: Partial<FuelStationRow> = {}): FuelStati
   };
 }
 
-export const EMPTY_NEARBY: NearbyStations = { stations: [], truncated: false, lastImportAt: null };
+export const EMPTY_NEARBY: NearbyStations = {
+  stations: [],
+  truncated: false,
+  brands: [],
+  lastImportAt: null,
+};
 
 export class FakeFuelStationReadModel extends FuelStationReadModel {
   readonly calls: StationSearch[] = [];

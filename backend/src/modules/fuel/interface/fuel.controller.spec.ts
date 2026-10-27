@@ -30,12 +30,13 @@ describe('Fuel — API', () => {
     await start({
       stations: [aFuelStation()],
       truncated: false,
+      brands: [{ brand: 'TotalEnergies', stationCount: 1 }],
       lastImportAt: new Date('2026-10-26T10:00:00.000Z'),
     });
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/v1/fuel-stations?lat=45.7578&lng=4.832&fuel=gazole&sort=price&radiusKm=5',
+      url: '/api/v1/fuel-stations?lat=45.7578&lng=4.832&fuel=gazole&sort=price&radiusKm=5&brand=TotalEnergies',
     });
 
     expect(response.statusCode).toBe(200);
@@ -52,7 +53,13 @@ describe('Fuel — API', () => {
       isFavorite: false,
     });
     expect(typeof body.stations[0].fuels[0].isStale).toBe('boolean');
-    expect(readModel.calls[0]).toMatchObject({ fuel: 'gazole', sort: 'price', radiusKm: 5 });
+    expect(body.brands).toEqual([{ brand: 'TotalEnergies', stationCount: 1 }]);
+    expect(readModel.calls[0]).toMatchObject({
+      fuel: 'gazole',
+      sort: 'price',
+      radiusKm: 5,
+      brand: 'TotalEnergies',
+    });
   });
 
   it('400 sans position', async () => {

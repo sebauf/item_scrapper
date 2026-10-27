@@ -62,17 +62,28 @@ export function FuelBadge({
 export interface FuelStationListProps {
   stations: FuelStation[];
   fuel: FuelCode | null;
+  /** Enseigne filtrée, null = toutes — sert seulement à expliquer une liste vide. */
+  brand?: string | null;
   tierOf: (price: number) => PriceTier | null;
   selectedId: string | null;
   onSelect: (id: string) => void;
 }
 
-export function FuelStationList({ stations, fuel, tierOf, selectedId, onSelect }: FuelStationListProps) {
+export function FuelStationList({
+  stations,
+  fuel,
+  brand = null,
+  tierOf,
+  selectedId,
+  onSelect,
+}: FuelStationListProps) {
   if (stations.length === 0) {
     return (
       <p className="rounded-2xl border border-border bg-surface px-4 py-8 text-center text-sm text-muted">
-        Aucune station dans cette zone{fuel ? ` ne vend de ${FUEL_LABELS[fuel]}` : ''}. Élargissez le
-        rayon ou déplacez la carte.
+        Aucune station{brand ? ` ${brand}` : ''} dans cette zone
+        {fuel ? ` ne vend de ${FUEL_LABELS[fuel]}` : ''}.
+        {brand ? ' Choisissez une autre enseigne, élargissez' : ' Élargissez'} le rayon ou déplacez la
+        carte.
       </p>
     );
   }

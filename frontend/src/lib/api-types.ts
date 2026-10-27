@@ -465,10 +465,24 @@ export interface components {
             /** @description Station favorite — surveillée par l’alerte de réapprovisionnement */
             isFavorite: boolean;
         };
+        BrandCountResponse: {
+            /**
+             * @description Enseigne unifiée (OpenStreetMap, ODbL)
+             * @example TotalEnergies
+             */
+            brand: string;
+            /**
+             * @description Stations de l’enseigne dans la zone
+             * @example 12
+             */
+            stationCount: number;
+        };
         FuelStationSearchResponse: {
             stations: components["schemas"]["FuelStationResponse"][];
             /** @description Vrai si d’autres stations dépassaient le plafond de la réponse */
             truncated: boolean;
+            /** @description Enseignes présentes dans le rayon (carburant appliqué, enseigne non), par ordre alphabétique */
+            brands: components["schemas"]["BrandCountResponse"][];
             /** @description Dernier import du flux officiel */
             lastImportAt: string | null;
             /**
@@ -987,6 +1001,8 @@ export interface operations {
                 fuel?: "gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc";
                 /** @description « price » exige « fuel » */
                 sort?: "distance" | "price";
+                /** @description Ne garder que cette enseigne — libellé exact, tel que renvoyé dans `brands` */
+                brand?: string;
             };
             header?: never;
             path?: never;

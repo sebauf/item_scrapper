@@ -33,11 +33,22 @@ export interface FuelStationRow {
   fuels: FuelPriceRow[];
 }
 
+export interface BrandCount {
+  brand: string;
+  /** Stations de l'enseigne dans le rayon (et vendant le carburant demandé). */
+  stationCount: number;
+}
+
 export interface NearbyStations {
   /** Déjà triées selon `StationSearch.sort`, au plus `MAX_STATIONS`. */
   stations: FuelStationRow[];
   /** Vrai si d'autres stations correspondaient au-delà du plafond. */
   truncated: boolean;
+  /**
+   * Enseignes de la zone, filtre enseigne **non** appliqué, triées par ordre
+   * alphabétique français.
+   */
+  brands: BrandCount[];
   /** Dernier import réussi du flux, null sur une base vide. */
   lastImportAt: Date | null;
 }

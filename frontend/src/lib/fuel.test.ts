@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { aFuelPrice, aFuelStation } from '@/testing/fixtures';
 import {
+  brandOptions,
   buildFuelApiQuery,
   buildFuelPageHref,
   DEFAULT_CENTER,
@@ -19,6 +20,7 @@ describe('parseFuelSearchParams', () => {
       radiusKm: 10,
       fuel: 'gazole',
       sort: 'price',
+      brand: 'TotalEnergies',
       located: false,
     });
   });
@@ -26,7 +28,15 @@ describe('parseFuelSearchParams', () => {
   it('lit une position, un rayon et un carburant valides', () => {
     expect(
       parseFuelSearchParams({ lat: '45.7578', lng: '4.832', radius: '5', fuel: 'e85', sort: 'distance' }),
-    ).toEqual({ lat: 45.7578, lng: 4.832, radiusKm: 5, fuel: 'e85', sort: 'distance', located: true });
+    ).toEqual({
+      lat: 45.7578,
+      lng: 4.832,
+      radiusKm: 5,
+      fuel: 'e85',
+      sort: 'distance',
+      brand: 'TotalEnergies',
+      located: true,
+    });
   });
 
   it('retombe sur les défauts devant des valeurs aberrantes', () => {
@@ -43,11 +53,54 @@ describe('parseFuelSearchParams', () => {
   });
 });
 
+describe('enseigne', () => {
+  it('TotalEnergies par défaut, toutes avec brand=all, sinon celle demandée', () => {
+    expect(parseFuelSearchParams({}).brand).toBe('TotalEnergies');
+    expect(parseFuelSearchParams({ brand: 'all' }).brand).toBeNull();
+    expect(parseFuelSearchParams({ brand: ' E.Leclerc ' }).brand).toBe('E.Leclerc');
+  });
+
+  it('retombe sur le défaut devant une enseigne vide ou démesurée', () => {
+    expect(parseFuelSearchParams({ brand: '' }).brand).toBe('TotalEnergies');
+    expect(parseFuelSearchParams({ brand: 'x'.repeat(61) }).brand).toBe('TotalEnergies');
+  });
+
+  it('transmet l’enseigne à l’API, sauf quand on les veut toutes', () => {
+    expect(buildFuelApiQuery(parseFuelSearchParams({}))).toContain('brand=TotalEnergies');
+    expect(buildFuelApiQuery(parseFuelSearchParams({ brand: 'all' }))).not.toContain('brand=');
+  });
+
+  it('fait l’aller-retour dans l’URL de la page, défaut omis', () => {
+    const base = parseFuelSearchParams({});
+    expect(buildFuelPageHref(base)).toBe('/fuel');
+    expect(buildFuelPageHref({ ...base, brand: null })).toBe('/fuel?brand=all');
+
+    const href = buildFuelPageHref({ ...base, brand: 'Système U' });
+    const parsed = parseFuelSearchParams(Object.fromEntries(new URL(href, 'http://x').searchParams));
+    expect(parsed.brand).toBe('Système U');
+  });
+
+  it('propose l’enseigne choisie même absente de la zone', () => {
+    const brands = [
+      { brand: 'Avia', stationCount: 1 },
+      { brand: 'Esso', stationCount: 2 },
+    ];
+
+    expect(brandOptions(brands, 'Esso')).toBe(brands);
+    expect(brandOptions(brands, null)).toBe(brands);
+    expect(brandOptions(brands, 'Carrefour').map((b) => [b.brand, b.stationCount])).toEqual([
+      ['Avia', 1],
+      ['Carrefour', 0],
+      ['Esso', 2],
+    ]);
+  });
+});
+
 describe('buildFuelApiQuery', () => {
   it('envoie toujours la position et le rayon, arrondis', () => {
     const query = buildFuelApiQuery(parseFuelSearchParams({ lat: '45.757812', lng: '4.83204' }));
 
-    expect(query).toBe('?lat=45.7578&lng=4.8320&radiusKm=10&sort=price&fuel=gazole');
+    expect(query).toBe('?lat=45.7578&lng=4.8320&radiusKm=10&sort=price&fuel=gazole&brand=TotalEnergies');
   });
 
   it('omet le carburant quand on les veut tous', () => {

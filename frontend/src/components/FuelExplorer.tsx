@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react';
 import type { FuelStationSearchResult } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import {
+  brandOptions,
   buildFuelPageHref,
   DEFAULT_CENTER,
   FUEL_CODES,
@@ -126,6 +127,23 @@ export function FuelExplorer({ params, result }: FuelExplorerProps) {
           </select>
         </label>
 
+        <label className="inline-flex items-center gap-1.5 text-muted">
+          Enseigne
+          {/* Valeur « all » plutôt que "" : c'est déjà le mot de l'URL pour « toutes ». */}
+          <select
+            value={params.brand ?? 'all'}
+            onChange={(event) => go({ brand: event.target.value === 'all' ? null : event.target.value })}
+            className="rounded-lg border border-border bg-surface px-2 py-1 text-foreground"
+          >
+            <option value="all">Toutes</option>
+            {brandOptions(result.brands, params.brand).map(({ brand, stationCount }) => (
+              <option key={brand} value={brand}>
+                {brand} ({stationCount})
+              </option>
+            ))}
+          </select>
+        </label>
+
         {params.fuel !== null && (
           <label className="inline-flex items-center gap-1.5 text-muted">
             Trier par
@@ -190,7 +208,8 @@ export function FuelExplorer({ params, result }: FuelExplorerProps) {
 
         <div className="lg:h-[calc(100vh-14rem)] lg:overflow-y-auto lg:pr-1">
           <p className="mb-2 text-sm text-muted">
-            {result.stations.length} station{result.stations.length > 1 ? 's' : ''} à moins de{' '}
+            {result.stations.length} station{result.stations.length > 1 ? 's' : ''}
+            {params.brand !== null && ` ${params.brand}`} à moins de{' '}
             {params.radiusKm} km
             {result.truncated && ' (liste plafonnée — réduisez le rayon pour tout voir)'}
             {' · '}
@@ -203,6 +222,7 @@ export function FuelExplorer({ params, result }: FuelExplorerProps) {
           <FuelStationList
             stations={result.stations}
             fuel={params.fuel}
+            brand={params.brand}
             tierOf={tierOf}
             selectedId={selectedId}
             onSelect={setSelectedId}

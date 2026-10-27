@@ -3,7 +3,12 @@ import { FavoriteStationRepository } from '../../domain/favorite-station.reposit
 import { FuelType } from '../../domain/fuel-type';
 import { isStale, STALE_AFTER_HOURS } from '../../domain/freshness-policy';
 import { RawStationSearch, StationSearch } from '../../domain/station-search';
-import { FuelPriceRow, FuelStationReadModel, FuelStationRow } from '../ports/fuel-station.read-model';
+import {
+  BrandCount,
+  FuelPriceRow,
+  FuelStationReadModel,
+  FuelStationRow,
+} from '../ports/fuel-station.read-model';
 
 export interface FuelPriceView {
   code: FuelType;
@@ -24,6 +29,8 @@ export interface FuelStationView extends Omit<FuelStationRow, 'fuels'> {
 export interface FuelStationSearchResult {
   stations: FuelStationView[];
   truncated: boolean;
+  /** Enseignes de la zone, filtre enseigne non appliqué — pour le sélecteur. */
+  brands: BrandCount[];
   lastImportAt: string | null;
   /** Seuil appliqué pour `isStale`, pour que l'écran puisse l'expliquer. */
   staleAfterHours: number;
@@ -49,7 +56,7 @@ export class SearchFuelStationsQuery {
 
   async execute(raw: RawStationSearch, now: Date = new Date()): Promise<FuelStationSearchResult> {
     const search = StationSearch.create(raw);
-    const [{ stations, truncated, lastImportAt }, favorites] = await Promise.all([
+    const [{ stations, truncated, brands, lastImportAt }, favorites] = await Promise.all([
       this.readModel.findNear(search),
       this.favorites.list(),
     ]);
@@ -58,6 +65,7 @@ export class SearchFuelStationsQuery {
     return {
       stations: stations.map((station) => toView(station, now, favoriteIds)),
       truncated,
+      brands,
       lastImportAt: lastImportAt?.toISOString() ?? null,
       staleAfterHours: STALE_AFTER_HOURS,
     };

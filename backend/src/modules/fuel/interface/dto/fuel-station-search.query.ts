@@ -3,6 +3,7 @@ import { IsOptional, IsString } from 'class-validator';
 import { FUEL_TYPES } from '../../domain/fuel-type';
 import {
   DEFAULT_RADIUS_KM,
+  MAX_BRAND_LENGTH,
   MAX_RADIUS_KM,
   RawStationSearch,
   STATION_SORT_OPTIONS,
@@ -48,4 +49,13 @@ export class FuelStationSearchQueryDto implements RawStationSearch {
   @IsOptional()
   @IsString()
   sort?: string;
+
+  @ApiPropertyOptional({
+    example: 'TotalEnergies',
+    maxLength: MAX_BRAND_LENGTH,
+    description: 'Ne garder que cette enseigne — libellé exact, tel que renvoyé dans `brands`',
+  })
+  @IsOptional()
+  @IsString()
+  brand?: string;
 }

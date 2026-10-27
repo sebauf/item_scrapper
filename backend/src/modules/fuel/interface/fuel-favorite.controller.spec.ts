@@ -36,6 +36,7 @@ describe('Fuel favorites — API', () => {
           useValue: new FakeFuelStationReadModel({
             stations: [aFuelStation({ id: '69003001' })],
             truncated: false,
+            brands: [],
             lastImportAt: null,
           }),
         },

@@ -43,6 +43,7 @@ describe('SearchFuelStationsQuery', () => {
         }),
       ],
       truncated: true,
+      brands: [],
       lastImportAt: new Date('2026-10-26T10:00:00.000Z'),
     });
 
@@ -81,10 +82,32 @@ describe('SearchFuelStationsQuery', () => {
     expect(result).toMatchObject({ stations: [], truncated: false, lastImportAt: null });
   });
 
+  it('transmet l’enseigne demandée et renvoie les enseignes de la zone', async () => {
+    const brands = [
+      { brand: 'Esso', stationCount: 2 },
+      { brand: 'TotalEnergies', stationCount: 5 },
+    ];
+    const readModel = new FakeFuelStationReadModel({
+      stations: [],
+      truncated: false,
+      brands,
+      lastImportAt: null,
+    });
+
+    const result = await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(
+      { ...lyon, brand: 'TotalEnergies' },
+      now,
+    );
+
+    expect(readModel.calls[0].brand).toBe('TotalEnergies');
+    expect(result.brands).toEqual(brands);
+  });
+
   it('marque les stations favorites', async () => {
     const readModel = new FakeFuelStationReadModel({
       stations: [aFuelStation({ id: '1' }), aFuelStation({ id: '2' })],
       truncated: false,
+      brands: [],
       lastImportAt: null,
     });
     const favorites = new InMemoryFavoriteStationRepository({ '2': new Date() });
