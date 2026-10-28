@@ -282,17 +282,23 @@ with `timezone=UTC`.
   **favourite stations** (`favorite_stations`, starred on the fuel map) ∪ the
   optional zone (`FUEL_WATCH_LAT` / `FUEL_WATCH_LNG`, `FUEL_WATCH_RADIUS_KM`
   default 5); without a zone, only favourites alert. `FUEL_WATCH_FUELS`
-  defaults to `gazole`. The import overwrites the previous state, so a restock
-  is only observable *during* the import: watched stations are read before and
-  after, and a fuel going `available: false` →
-  `true` triggers **one** webhook per import to `FUEL_RESTOCK_WEBHOOK_URL`
+  defaults to `gazole`. The import keeps no history, and a station closing its
+  shortages without re-declaring a price drops out of `fuel_stations` for a
+  while — so the alert keeps its own **last known state** per (watched station
+  × watched fuel) in `fuel_watch_state`, after each import. A **restock** = a
+  fuel now `available: true` whose last known state is `available: false`,
+  however many imports in between. Absent station / absent fuel never changes
+  the state; a first sighting is recorded without alerting; states of stations
+  no longer watched are deleted. Restocks trigger
+  **one** webhook per import to `FUEL_RESTOCK_WEBHOOK_URL`
   (meant for a Hermes agent route), signed with Hermes' Generic V2 scheme
   (`X-Webhook-Signature-V2` = HMAC-SHA256 of `<timestamp>.<body>` with
   `FUEL_RESTOCK_WEBHOOK_SECRET`). The payload carries a ready-to-send French
   `summary`, so the route can run `deliver_only`. New stations and fuels not
   sold before are not restocks. A failed send is logged, never fails the
-  import. In k8s these vars live in `secrets.env` (task Pods only read the
-  Secret — and the zone is the user's home); in Docker, `pipeline_tasks.py`
+  import, and leaves the state at « shortage », so the alert is retried on the
+  next import (every 30 min while the agent is down). In k8s these vars live
+  in `secrets.env` (task Pods only read the Secret — and the zone is the user's home); in Docker, `pipeline_tasks.py`
   relays them from the Airflow env.
 - `backend/src/modules/fuel/` — reads `fuel_stations`, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
@@ -368,6 +374,7 @@ This is the only applicative component deliberately exposed outside the cluster.
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `brand` (unified OSM brand or null), `name` (OSM station name or null), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
 - `favorite_stations` — the user's favourite fuel stations, keyed by `_id` = official station id; field `addedAt`. Written only by the backend (star on the fuel map), read by the pipeline's restock alert. Not purged when a station leaves the feed (it becomes useful again if the station comes back)
+- `fuel_watch_state` — last known state of each (watched station × watched fuel), keyed by `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `available`, `shortageSince`, `seenAt`. Written only by the restock alert (`restock_alerts.py`), after each import
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 
