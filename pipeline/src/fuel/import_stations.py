@@ -232,12 +232,7 @@ if __name__ == "__main__":
     from pymongo import MongoClient
 
     from src.config import DB_NAME, MONGODB_URI
-    from src.fuel.restock_alerts import (
-        RestockWatch,
-        alert_restocks,
-        favorite_station_ids,
-        watched_stations,
-    )
+    from src.fuel.restock_alerts import RestockWatch, alert_restocks
 
     client = MongoClient(MONGODB_URI)
     records = fetch_records()
@@ -248,11 +243,7 @@ if __name__ == "__main__":
         brands = None
 
     db = client[DB_NAME]
-    # L'état d'avant doit être lu avant l'import, qui l'écrase : c'est le seul
-    # moment où un réapprovisionnement est observable (cf. restock_alerts.py).
     watch = RestockWatch.from_env(os.environ)
-    favorites = favorite_station_ids(db) if watch else set()
-    before = watched_stations(db["fuel_stations"], watch, favorites) if watch else {}
 
     imported_at = datetime.now(timezone.utc).replace(tzinfo=None)
     count = import_stations(db, records, brands, now=imported_at)
@@ -261,5 +252,4 @@ if __name__ == "__main__":
     print(f"brands: {branded}/{count} stations matched to a brand")
 
     if watch:
-        after = watched_stations(db["fuel_stations"], watch, favorites)
-        alert_restocks(watch, before, after, imported_at)
+        alert_restocks(db, watch, imported_at)

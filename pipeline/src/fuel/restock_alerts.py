@@ -6,17 +6,31 @@ gérée depuis la carte des carburants via le backend), plus, si elle est
 configurée, toutes celles d'une **zone** autour d'un point. Sans zone, seules
 les favorites déclenchent une alerte.
 
-L'import remplace `fuel_stations` à chaque passage (cf. import_stations.py) :
-l'état précédent n'est conservé nulle part. Le passage « en rupture → de
-retour » n'est donc visible qu'à un seul moment, pendant l'import, en comparant
-la base avant et après. C'est ce que fait ce module, sans rien écrire en base.
+L'import remplace `fuel_stations` à chaque passage (cf. import_stations.py) et
+n'en garde aucun historique. Comparer à l'import précédent ne suffit pas : une
+station qui clôt ses ruptures sans redéclarer de prix passe par un état « ni
+prix, ni rupture », où elle (ou le carburant) disparaît de `fuel_stations` ; au
+retour du prix, l'import précédent ne dit plus qu'elle était en rupture. Ce
+module tient donc son propre **dernier état connu** de chaque couple (station
+surveillée × carburant surveillé), dans `fuel_watch_state`, qu'il est seul à
+écrire (`_id` = `<stationId>:<carburant>`, `available`, `shortageSince`,
+`seenAt`).
 
-Définition retenue : un carburant est **réapprovisionné** s'il était vendu mais
-indisponible (`available: false`) à l'import précédent et disponible
-(`available: true`) à celui-ci. Une station absente de l'import précédent (une
-nouvelle station, ou une station supprimée puis revenue) n'est pas un
-réapprovisionnement : rien ne dit qu'elle était en rupture. Un carburant qui
-n'était pas vendu du tout ne l'est pas davantage.
+Définition retenue : un carburant est **réapprovisionné** s'il est disponible
+(`available: true`) à cet import et que son dernier état connu est « en
+rupture » (`available: false`), quel que soit le nombre d'imports écoulés
+entre les deux. Règles de mise à jour, après chaque import :
+
+- carburant présent, disponible ou non → l'état enregistré devient le sien ;
+- station absente, carburant absent (non vendu, ou ni prix ni rupture) → rien
+  ne change : un état ambigu n'efface jamais le dernier état connu ;
+- aucun état enregistré (station ou carburant vu pour la première fois) → on
+  l'enregistre sans alerter : rien ne dit qu'il était en rupture ;
+- station qui n'est plus surveillée (favorite retirée, zone déplacée) → son
+  état est supprimé, sans quoi une station remise en favorite des mois plus
+  tard alerterait sur un état périmé. Une station absente du flux qui n'est
+  pas favorite est conservée tant qu'une zone est configurée : sans sa
+  position, impossible de dire si elle en sort.
 
 Configuration par l'environnement ; sans webhook ni zone, la fonctionnalité
 est désactivée et l'import se comporte comme s'il n'existait pas :
@@ -36,8 +50,10 @@ et `X-Webhook-Timestamp` en secondes Unix. Hermes refuse un horodatage à plus
 de 5 minutes de son horloge, ce qui bloque le rejeu d'une requête interceptée.
 
 Un échec d'envoi ne fait jamais échouer l'import : les prix doivent être à jour
-même si l'agent est arrêté. L'alerte est alors perdue, et le journal du run
-Airflow le dit.
+même si l'agent est arrêté. Les carburants concernés restent alors « en
+rupture » dans `fuel_watch_state`, et l'alerte repart à l'import suivant —
+toutes les 30 minutes tant que l'agent ne répond pas, ce qui est préférable à
+une alerte perdue.
 """
 import hashlib
 import hmac
@@ -49,6 +65,7 @@ from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from pymongo import ReplaceOne
 from pymongo.collection import Collection
 from pymongo.database import Database
 
@@ -175,22 +192,27 @@ def watched_stations(
     return stations
 
 
+def state_id(station_id: str, fuel: str) -> str:
+    return f"{station_id}:{fuel}"
+
+
 def detect_restocks(
-    before: dict[str, dict], after: dict[str, dict], fuels: tuple[str, ...]
-) -> list[dict]:
-    """Carburants passés d'indisponible à disponible : favorites d'abord, puis
-    du plus proche au plus loin."""
-    restocks = []
-    for station_id, station in after.items():
-        previous = before.get(station_id)
-        if previous is None:
-            continue
-        previous_fuels = {f["code"]: f for f in previous["fuels"]}
+    stations: dict[str, dict], states: dict[str, dict], fuels: tuple[str, ...], seen_at: datetime
+) -> tuple[list[dict], list[dict]]:
+    """Compare les stations surveillées à leur dernier état connu.
+
+    Renvoie les réapprovisionnements — favorites d'abord, puis du plus proche
+    au plus loin — et les nouveaux états à enregistrer. Seuls les carburants
+    présents produisent un état : un absent laisse l'ancien en place.
+    """
+    restocks, updates = [], []
+    for station_id, station in stations.items():
         for fuel in station["fuels"]:
-            was = previous_fuels.get(fuel["code"])
-            if fuel["code"] not in fuels or was is None:
+            if fuel["code"] not in fuels:
                 continue
-            if was["available"] is False and fuel["available"] is True:
+            known = states.get(state_id(station_id, fuel["code"]))
+            was_short = known is not None and known["available"] is False
+            if fuel["available"] and was_short:
                 restocks.append({
                     "stationId": station_id,
                     "brand": station.get("brand"),
@@ -203,14 +225,29 @@ def detect_restocks(
                     "fuel": fuel["code"],
                     "price": fuel["price"],
                     "updatedAt": fuel["updatedAt"],
-                    "shortageSince": was.get("shortageSince"),
+                    "shortageSince": known.get("shortageSince"),
                 })
-    return sorted(restocks, key=lambda r: (
+            shortage_since = None
+            if not fuel["available"]:
+                # Une rupture déclarée sans date garde celle déjà connue.
+                shortage_since = fuel.get("shortageSince") or (
+                    known.get("shortageSince") if was_short else None
+                )
+            updates.append({
+                "_id": state_id(station_id, fuel["code"]),
+                "stationId": station_id,
+                "fuel": fuel["code"],
+                "available": fuel["available"],
+                "shortageSince": shortage_since,
+                "seenAt": seen_at,
+            })
+    restocks.sort(key=lambda r: (
         not r["favorite"],
         r["distanceKm"] if r["distanceKm"] is not None else math.inf,
         r["stationId"],
         r["fuel"],
     ))
+    return restocks, updates
 
 
 def _paris_tz():
@@ -287,6 +324,8 @@ def send_webhook(url: str, secret: str, payload: dict, request_id: str) -> int:
 
     `X-Request-ID` est dérivé de l'import : Hermes ignore un identifiant déjà
     vu dans l'heure, donc un double envoi du même import ne notifie qu'une fois.
+    Le renvoi d'une alerte échouée, à l'import suivant, porte un nouvel
+    identifiant : c'est voulu, Hermes ne doit pas le dédupliquer.
     """
     body = json.dumps(payload, default=_json_default, ensure_ascii=False).encode()
     timestamp = int(time.time())
@@ -305,27 +344,62 @@ def send_webhook(url: str, secret: str, payload: dict, request_id: str) -> int:
         return response.status
 
 
-def alert_restocks(
-    watch: RestockWatch, before: dict[str, dict], after: dict[str, dict], imported_at: datetime
-) -> list[dict]:
-    """Détecte et notifie. Renvoie les réapprovisionnements détectés.
+def _stale_station_ids(
+    states: dict[str, dict], stations: dict[str, dict], present_ids: set[str],
+    favorite_ids: set[str], watch: RestockWatch,
+) -> set[str]:
+    """Stations dont l'état doit être oublié : ni favorites, ni dans la zone.
 
-    N'envoie rien s'il n'y en a aucun : l'agent n'est réveillé que pour un
-    événement réel. Ne lève jamais — cf. la docstring du module.
+    Une station absente du flux n'est jugée que sans zone (seules les
+    favorites comptent alors) ; avec une zone, sa position est inconnue et son
+    état reste en place — cf. la docstring du module.
     """
-    restocks = detect_restocks(before, after, watch.fuels)
-    print(f"restock: {len(after)} station(s) surveillée(s), {len(restocks)} réapprovisionnement(s)")
-    if not restocks:
-        return restocks
-    if not watch.webhook_url:
-        print("restock: FUEL_RESTOCK_WEBHOOK_URL absent, alerte non envoyée")
-        return restocks
+    stale = set()
+    for station_id in {state["stationId"] for state in states.values()}:
+        if station_id in stations or station_id in favorite_ids:
+            continue
+        if station_id in present_ids or not watch.has_zone:
+            stale.add(station_id)
+    return stale
 
-    payload = build_payload(restocks, watch, imported_at)
-    request_id = f"fuel-restock-{imported_at:%Y%m%dT%H%M%S}"
-    try:
-        status = send_webhook(watch.webhook_url, watch.webhook_secret, payload, request_id)
-        print(f"restock: webhook envoyé (HTTP {status})")
-    except Exception as error:  # noqa: BLE001 — l'import des prix prime sur l'alerte
-        print(f"restock: échec de l'envoi du webhook ({error}), alerte perdue")
+
+def alert_restocks(db: Database, watch: RestockWatch, imported_at: datetime) -> list[dict]:
+    """Détecte, notifie, puis met à jour `fuel_watch_state`. Renvoie les
+    réapprovisionnements détectés.
+
+    À appeler une fois, après l'import. N'envoie rien s'il n'y a aucun
+    réapprovisionnement : l'agent n'est réveillé que pour un événement réel.
+    Ne lève jamais sur un échec d'envoi — cf. la docstring du module.
+    """
+    collection = db["fuel_watch_state"]
+    favorite_ids = favorite_station_ids(db)
+    stations = watched_stations(db["fuel_stations"], watch, favorite_ids)
+    states = {doc["_id"]: doc for doc in collection.find({})}
+    restocks, updates = detect_restocks(stations, states, watch.fuels, imported_at)
+
+    present_ids = {doc["_id"] for doc in db["fuel_stations"].find({}, {"_id": 1})}
+    stale = _stale_station_ids(states, stations, present_ids, favorite_ids, watch)
+    watched_count = len(
+        set(stations) | favorite_ids | ({s["stationId"] for s in states.values()} - stale)
+    )
+    print(f"restock: {watched_count} station(s) surveillée(s), {len(restocks)} réapprovisionnement(s)")
+
+    if restocks and not watch.webhook_url:
+        print("restock: FUEL_RESTOCK_WEBHOOK_URL absent, alerte non envoyée")
+    elif restocks:
+        payload = build_payload(restocks, watch, imported_at)
+        request_id = f"fuel-restock-{imported_at:%Y%m%dT%H%M%S}"
+        try:
+            status = send_webhook(watch.webhook_url, watch.webhook_secret, payload, request_id)
+            print(f"restock: webhook envoyé (HTTP {status})")
+        except Exception as error:  # noqa: BLE001 — l'import des prix prime sur l'alerte
+            print(f"restock: échec de l'envoi du webhook ({error}), nouvel essai au prochain import")
+            # Ces carburants restent « en rupture » : l'alerte repartira.
+            unsent = {state_id(r["stationId"], r["fuel"]) for r in restocks}
+            updates = [u for u in updates if u["_id"] not in unsent]
+
+    if updates:
+        collection.bulk_write([ReplaceOne({"_id": u["_id"]}, u, upsert=True) for u in updates])
+    if stale:
+        collection.delete_many({"stationId": {"$in": sorted(stale)}})
     return restocks
