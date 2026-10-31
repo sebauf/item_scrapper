@@ -1,11 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db } from 'mongodb';
+import { UserId } from 'src/shared/domain/user-id';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
 import { findLastScrapeDay, onlyLastScrape } from 'src/shared/infrastructure/mongo/last-scrape';
 import {
   KeywordSummary,
   KeywordSummaryReadModel,
 } from '../application/ports/keyword-summary.read-model';
+import { KeywordDocument } from './mongo-keyword.repository';
 
 export interface RawKeywordStat {
   keyword: string;
@@ -13,23 +15,12 @@ export interface RawKeywordStat {
   lastScrape?: Date;
 }
 
-/** Document de `keywords`. `enabled` peut manquer sur les lignes historiques. */
-export interface KeywordDocument {
-  keyword: string;
-  enabled?: boolean;
-}
-
 /**
  * Un relevé « exploitable » : celui que les écrans savent afficher. Un document
  * d'`items_raw` sans titre ou sans prix est un scrape raté, il ne prouve pas
  * qu'un mot-clé a des produits.
- *
- * Exporté parce que le côté écriture s'en sert aussi (`MongoScrapedKeywords`) :
- * c'est le même prédicat qui décide qu'un mot-clé est listé et qu'il est
- * retirable.
  */
 export const USABLE_SCRAPE_MATCH = {
-  keyword: { $ne: null },
   title: { $ne: '' },
   price: { $ne: null },
 } as const;
@@ -46,123 +37,70 @@ export class MongoKeywordSummaryReadModel extends KeywordSummaryReadModel {
   }
 
   /**
-   * Deux sources fusionnées, cf. `mergeKeywordSummaries` pour la règle :
-   *  - la collection `keywords` ;
-   *  - les statistiques calculées sur `items_raw`.
-   *
-   * La collection `keywords` est lue **sans filtre** : les documents
-   * `enabled: false` ne s'affichent pas, mais la fusion a besoin de les
-   * connaître pour ne pas les ressusciter depuis `items_raw`.
+   * Les abonnements de `owner` (la collection `keywords` fait autorité sur la
+   * liste), habillés des statistiques d'`items_raw` — calculées sur ces seuls
+   * mots-clés, pas sur tout le catalogue.
    */
-  async listTracked(): Promise<KeywordSummary[]> {
+  async listTracked(owner: UserId): Promise<KeywordSummary[]> {
+    const names = await this.listTrackedNames(owner);
+    if (names.length === 0) return [];
+
     const lastScrapeDay = await findLastScrapeDay(this.db);
-
-    const [statsFacet, trackedDocs] = await Promise.all([
-      this.db
-        .collection('items_raw')
-        .aggregate<StatsFacet>([
-          { $match: { ...USABLE_SCRAPE_MATCH } },
-          {
-            // Deux comptages sur des périmètres différents, en une passe.
-            // `productCount` ne compte que le dernier passage — c'est le nombre
-            // de produits que la grille du mot-clé affichera. `lastScrape`,
-            // lui, reste calculé sur tout l'historique : un mot-clé dont aucun
-            // produit n'a survécu au dernier passage a bien été scrapé un jour,
-            // et afficher « jamais scrapé » serait faux.
-            $facet: {
-              fresh: [
-                { $match: onlyLastScrape({}, lastScrapeDay) },
-                { $group: { _id: '$keyword', productCount: { $sum: 1 } } },
-              ],
-              seen: [{ $group: { _id: '$keyword', lastScrape: { $max: '$scrapedAt' } } }],
-            },
+    const [facet] = await this.db
+      .collection('items_raw')
+      .aggregate<StatsFacet>([
+        { $match: { ...USABLE_SCRAPE_MATCH, keyword: { $in: names } } },
+        {
+          // Deux comptages sur des périmètres différents, en une passe.
+          // `productCount` ne compte que le dernier passage — c'est le nombre
+          // de produits que la grille du mot-clé affichera. `lastScrape`,
+          // lui, reste calculé sur tout l'historique : un mot-clé dont aucun
+          // produit n'a survécu au dernier passage a bien été scrapé un jour,
+          // et afficher « jamais scrapé » serait faux.
+          $facet: {
+            fresh: [
+              { $match: onlyLastScrape({}, lastScrapeDay) },
+              { $group: { _id: '$keyword', productCount: { $sum: 1 } } },
+            ],
+            seen: [{ $group: { _id: '$keyword', lastScrape: { $max: '$scrapedAt' } } }],
           },
-        ])
-        .toArray(),
-      this.db
-        .collection<KeywordDocument>('keywords')
-        .find({}, { projection: { keyword: 1, enabled: 1 } })
-        .toArray(),
-    ]);
+        },
+      ])
+      .toArray();
 
-    return mergeKeywordSummaries(trackedDocs, toKeywordStats(statsFacet[0]));
+    return mergeKeywordSummaries(names, toKeywordStats(facet));
   }
 
   /**
-   * Même règle que `listTracked`, sans les statistiques : le tableau de bord
-   * n'a besoin que des noms. Il passe donc par `distinct` plutôt que par le
-   * `$facet` — même ensemble de mots-clés, sans le comptage de produits ni le
-   * `$max` sur `scrapedAt` dont la page d'accueil n'a que faire.
-   *
-   * Le filtre est le même objet que celui de `listTracked`
-   * (`USABLE_SCRAPE_MATCH`), et pas une copie : un mot-clé dont aucun relevé
-   * n'est exploitable ne peut pas être retenu ici et absent là-bas.
+   * Le multikey index `keywords.subscribers` (cf. shared/infrastructure/mongo/
+   * indexes.ts) sert ce filtre : `{ subscribers: x }` sur un tableau teste
+   * l'appartenance.
    */
-  async listTrackedNames(): Promise<string[]> {
-    const [keywordDocs, scrapedKeywords] = await Promise.all([
-      this.db
-        .collection<KeywordDocument>('keywords')
-        .find({}, { projection: { keyword: 1, enabled: 1 } })
-        .toArray(),
-      this.db
-        .collection('items_raw')
-        .distinct('keyword', { ...USABLE_SCRAPE_MATCH }),
-    ]);
+  async listTrackedNames(owner: UserId): Promise<string[]> {
+    const docs = await this.db
+      .collection<KeywordDocument>('keywords')
+      .find({ subscribers: owner.value }, { projection: { keyword: 1 } })
+      .toArray();
 
-    return trackedKeywordNames(keywordDocs, scrapedKeywords as string[]);
+    return docs.map((doc) => doc.keyword).sort(frenchOrder);
   }
 }
 
-/**
- * La règle, et le seul endroit où elle est écrite : quels mots-clés l'UI
- * présente comme suivis.
- *
- * Trois cas, et c'est le troisième qui porte toute la subtilité :
- *
- * 1. document `enabled: true` → affiché. C'est le prédicat du scrapper
- *    (`MongoKeywordRepository.findEnabled`), donc exactement l'ensemble de ce
- *    qui sera relevé au prochain run — ce que la page promet.
- * 2. aucun document, mais des relevés dans `items_raw` → affiché. Ce sont les
- *    mots-clés scrapés avant que la collection `keywords` n'existe ; sans ça
- *    leurs produits deviendraient inatteignables depuis l'UI.
- * 3. document non `enabled: true`, avec des relevés → **masqué**. La version
- *    précédente ne connaissait que les documents `enabled: true`, si bien qu'un
- *    mot-clé retiré n'était plus « connu » et que le cas 2 le remettait dans la
- *    liste à partir de ses anciens relevés. Il y restait, badgé « En attente »
- *    et jamais rafraîchi, jusqu'à ce que la purge efface ses produits une
- *    quinzaine de jours plus tard. Retirer un mot-clé pose `enabled: false` et
- *    ne supprime pas la ligne (cf. l'agrégat `Keyword`) : il faut donc regarder
- *    tous les documents, pas les suivis.
- */
-export function trackedKeywordNames(
-  keywordDocs: readonly KeywordDocument[],
-  scrapedKeywords: readonly string[],
-): string[] {
-  const documented = new Set(keywordDocs.map((doc) => doc.keyword));
-
-  const names = keywordDocs.filter((doc) => doc.enabled === true).map((doc) => doc.keyword);
-  for (const keyword of scrapedKeywords) {
-    if (!documented.has(keyword)) names.push(keyword);
-  }
-
-  return names.sort((a, b) => a.localeCompare(b, 'fr'));
+function frenchOrder(a: string, b: string): number {
+  return a.localeCompare(b, 'fr');
 }
 
 /**
- * Habille la règle de `trackedKeywordNames` des statistiques d'`items_raw`.
- * Le compteur du tableau de bord applique la même règle sur la même source —
- * c'est ce qui garantit qu'il annonce le nombre de lignes que la page liste.
+ * Un résumé par mot-clé suivi, qu'il ait ou non des relevés : un mot-clé tout
+ * juste ajouté s'affiche avec `productCount: 0` et `lastScrape: null` en
+ * attendant le prochain passage du scrapper.
  */
 export function mergeKeywordSummaries(
-  keywordDocs: readonly KeywordDocument[],
+  names: readonly string[],
   stats: readonly RawKeywordStat[],
 ): KeywordSummary[] {
   const statsByKeyword = new Map(stats.map((stat) => [stat.keyword, stat]));
-
-  return trackedKeywordNames(
-    keywordDocs,
-    stats.map((stat) => stat.keyword),
-  ).map((keyword) => toSummary(keyword, statsByKeyword.get(keyword)));
+  return [...names].sort(frenchOrder).map((keyword) => toSummary(keyword, statsByKeyword.get(keyword)));
 }
 
 /**

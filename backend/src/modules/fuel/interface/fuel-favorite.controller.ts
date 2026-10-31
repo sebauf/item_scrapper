@@ -1,5 +1,7 @@
 import { Controller, Delete, Get, HttpCode, HttpStatus, Param, Put } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserId } from 'src/shared/domain/user-id';
+import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { AddFavoriteStationCommand } from '../application/commands/add-favorite-station.command';
 import { RemoveFavoriteStationCommand } from '../application/commands/remove-favorite-station.command';
 import { ListFavoriteStationsQuery } from '../application/queries/list-favorite-stations.query';
@@ -11,6 +13,7 @@ import { FavoriteStationResponse } from './dto/fuel-station.response';
  * une simple suite de chiffres, sûre dans un chemin — contrairement aux
  * produits, dont l'identifiant encode une URL et voyage dans un corps POST.
  */
+@ApiBearerAuth()
 @ApiTags('fuel')
 @Controller('fuel-stations/favorites')
 export class FuelFavoriteController {
@@ -21,10 +24,10 @@ export class FuelFavoriteController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Stations favorites, de la plus récente à la plus ancienne' })
+  @ApiOperation({ summary: "Stations favorites de l'utilisateur, de la plus récente à la plus ancienne" })
   @ApiResponse({ status: 200, type: [FavoriteStationResponse] })
-  list(): Promise<FavoriteStationResponse[]> {
-    return this.listFavorites.execute();
+  list(@CurrentUser() user: UserId): Promise<FavoriteStationResponse[]> {
+    return this.listFavorites.execute(user);
   }
 
   @Put(':id')
@@ -34,8 +37,8 @@ export class FuelFavoriteController {
   @ApiResponse({ status: 204, description: 'Station favorite' })
   @ApiResponse({ status: 400, description: 'Identifiant mal formé' })
   @ApiResponse({ status: 404, description: 'Station absente du flux officiel' })
-  async add(@Param('id') id: string): Promise<void> {
-    await this.addFavorite.execute(id);
+  async add(@CurrentUser() user: UserId, @Param('id') id: string): Promise<void> {
+    await this.addFavorite.execute(user, id);
   }
 
   @Delete(':id')
@@ -44,7 +47,7 @@ export class FuelFavoriteController {
   @ApiParam({ name: 'id', description: 'Identifiant officiel du point de vente' })
   @ApiResponse({ status: 204, description: 'Favorite retirée' })
   @ApiResponse({ status: 400, description: 'Identifiant mal formé' })
-  async remove(@Param('id') id: string): Promise<void> {
-    await this.removeFavorite.execute(id);
+  async remove(@CurrentUser() user: UserId, @Param('id') id: string): Promise<void> {
+    await this.removeFavorite.execute(user, id);
   }
 }

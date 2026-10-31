@@ -1,9 +1,12 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserId } from 'src/shared/domain/user-id';
+import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { SearchFuelStationsQuery } from '../application/queries/search-fuel-stations.query';
 import { FuelStationSearchQueryDto } from './dto/fuel-station-search.query';
 import { FuelStationSearchResponse } from './dto/fuel-station.response';
 
+@ApiBearerAuth()
 @ApiTags('fuel')
 @Controller('fuel-stations')
 export class FuelStationController {
@@ -13,7 +16,10 @@ export class FuelStationController {
   @ApiOperation({ summary: 'Stations-service autour d’un point, avec carburants et prix' })
   @ApiResponse({ status: 200, type: FuelStationSearchResponse })
   @ApiResponse({ status: 400, description: 'Position, rayon, carburant ou tri invalide' })
-  search(@Query() query: FuelStationSearchQueryDto): Promise<FuelStationSearchResponse> {
-    return this.searchStations.execute(query);
+  search(
+    @CurrentUser() user: UserId,
+    @Query() query: FuelStationSearchQueryDto,
+  ): Promise<FuelStationSearchResponse> {
+    return this.searchStations.execute(user, query);
   }
 }

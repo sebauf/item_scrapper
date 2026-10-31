@@ -1,5 +1,5 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { ProductId } from '../../catalog/domain/product-id';
 import { TrackProductUrlCommand } from '../application/commands/track-product-url.command';
 import { UntrackProductUrlCommand } from '../application/commands/untrack-product-url.command';
@@ -20,6 +20,10 @@ class FakeTrackedUrlSummaryReadModel extends TrackedUrlSummaryReadModel {
   listTracked(): Promise<TrackedUrlSummary[]> {
     return Promise.resolve(this.summaries);
   }
+
+  listTrackedUrls(): Promise<string[]> {
+    return Promise.resolve(this.summaries.map((summary) => summary.url));
+  }
 }
 
 /**
@@ -33,7 +37,7 @@ describe('Product tracking — API', () => {
   let app: NestFastifyApplication;
   let repository: InMemoryTrackedUrlRepository;
 
-  async function start(initial: Record<string, boolean> = {}, summaries: TrackedUrlSummary[] = []) {
+  async function start(initial: Record<string, string[]> = {}, summaries: TrackedUrlSummary[] = []) {
     repository = new InMemoryTrackedUrlRepository(initial);
     app = await createTestApp({
       controllers: [ProductTrackingController],
@@ -65,7 +69,7 @@ describe('Product tracking — API', () => {
         },
       ]);
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/product-urls' });
+      const response = await app.inject({ method: 'GET', url: '/api/v1/product-urls', headers: authAs() });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<TrackedUrlSummary[]>(response)[0].url).toBe(CANONICAL);
@@ -77,13 +81,14 @@ describe('Product tracking — API', () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/product-urls',
         payload: { url: CANONICAL },
       });
 
       expect(response.statusCode).toBe(201);
-      expect(repository.stateOf(CANONICAL)).toBe(true);
+      expect(repository.subscribersOf(CANONICAL)).toEqual(['alice@example.com']);
     });
 
     it('canonicalise avant de suivre', async () => {
@@ -92,13 +97,14 @@ describe('Product tracking — API', () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/product-urls',
         payload: { url: 'https://www.amazon.fr/Lessive-liquide/dp/b0test0001/ref=sr_1_3?keywords=x' },
       });
 
       expect(response.statusCode).toBe(201);
-      expect(repository.stateOf(CANONICAL)).toBe(true);
+      expect(repository.subscribersOf(CANONICAL)).toEqual(['alice@example.com']);
     });
 
     it.each([
@@ -110,6 +116,7 @@ describe('Product tracking — API', () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/product-urls',
         payload: { url },
@@ -120,9 +127,10 @@ describe('Product tracking — API', () => {
     });
 
     it('refuse une URL déjà suivie', async () => {
-      await start({ [CANONICAL]: true });
+      await start({ [CANONICAL]: ['alice@example.com'] });
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/product-urls',
         payload: { url: CANONICAL },
@@ -133,36 +141,39 @@ describe('Product tracking — API', () => {
     });
 
     it('réactive une URL précédemment retirée', async () => {
-      await start({ [CANONICAL]: false });
+      await start({ [CANONICAL]: [] });
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/product-urls',
         payload: { url: CANONICAL },
       });
 
       expect(response.statusCode).toBe(201);
-      expect(repository.stateOf(CANONICAL)).toBe(true);
+      expect(repository.subscribersOf(CANONICAL)).toEqual(['alice@example.com']);
     });
   });
 
   describe('DELETE /api/v1/product-urls/:id', () => {
     it('retire une URL suivie, désignée par son identifiant encodé', async () => {
-      await start({ [CANONICAL]: true });
+      await start({ [CANONICAL]: ['alice@example.com'] });
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'DELETE',
         url: `/api/v1/product-urls/${ProductId.fromUrl(CANONICAL).value}`,
       });
 
       expect(response.statusCode).toBe(204);
-      expect(repository.stateOf(CANONICAL)).toBe(false);
+      expect(repository.subscribersOf(CANONICAL)).toEqual([]);
     });
 
     it('refuse un identifiant mal formé', async () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'DELETE',
         url: '/api/v1/product-urls/pas-du-base64!!',
       });
@@ -175,12 +186,37 @@ describe('Product tracking — API', () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'DELETE',
         url: `/api/v1/product-urls/${ProductId.fromUrl(CANONICAL).value}`,
       });
 
       expect(response.statusCode).toBe(404);
       expect(jsonOf<{ code: string }>(response).code).toBe('PRODUCT_URL_NOT_FOUND');
+    });
+  });
+
+  describe('isolation entre utilisateurs', () => {
+    it('refuse une requête sans jeton', async () => {
+      await start();
+
+      const response = await app.inject({ method: 'GET', url: '/api/v1/product-urls' });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('laisse Bob suivre une URL qu’Alice suit déjà', async () => {
+      await start({ [CANONICAL]: [ALICE.value] });
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/product-urls',
+        headers: authAs(BOB),
+        payload: { url: CANONICAL },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(repository.subscribersOf(CANONICAL)).toEqual([ALICE.value, BOB.value]);
     });
   });
 });

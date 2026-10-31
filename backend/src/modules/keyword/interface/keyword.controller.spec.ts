@@ -1,5 +1,7 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { UserId } from 'src/shared/domain/user-id';
+import { signInternalToken } from 'src/shared/infrastructure/auth/internal-token';
+import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { TrackKeywordCommand } from '../application/commands/track-keyword.command';
 import { UntrackKeywordCommand } from '../application/commands/untrack-keyword.command';
 import { ListKeywordSummariesQuery } from '../application/queries/list-keyword-summaries.query';
@@ -7,44 +9,38 @@ import {
   KeywordSummary,
   KeywordSummaryReadModel,
 } from '../application/ports/keyword-summary.read-model';
-import { ScrapedKeywords } from '../application/ports/scraped-keywords';
 import { KeywordRepository } from '../domain/keyword.repository';
 import { InMemoryKeywordRepository } from '../testing/in-memory-keyword.repository';
-import { InMemoryScrapedKeywords } from '../testing/in-memory-scraped-keywords';
 import { KeywordController } from './keyword.controller';
 
+/** Read model factice : des résumés par utilisateur, pour vérifier l'isolation. */
 class FakeKeywordSummaryReadModel extends KeywordSummaryReadModel {
-  constructor(private readonly summaries: KeywordSummary[] = []) {
+  constructor(private readonly byUser: Record<string, KeywordSummary[]> = {}) {
     super();
   }
 
-  listTracked(): Promise<KeywordSummary[]> {
-    return Promise.resolve(this.summaries);
+  listTracked(owner: UserId): Promise<KeywordSummary[]> {
+    return Promise.resolve(this.byUser[owner.value] ?? []);
   }
 
-  listTrackedNames(): Promise<string[]> {
-    return Promise.resolve(this.summaries.map((summary) => summary.keyword));
+  listTrackedNames(owner: UserId): Promise<string[]> {
+    return Promise.resolve((this.byUser[owner.value] ?? []).map((summary) => summary.keyword));
   }
 }
 
 /**
- * Le contexte Keyword est le seul à écrire : c'est donc le seul où les codes
- * de statut portent une décision métier (201 / 204 / 400 / 404 / 409). Ces
- * tests montent la vraie chaîne HTTP, avec un dépôt en mémoire à la place de
- * Mongo.
+ * Le contexte Keyword écrit : c'est donc là que les codes de statut portent une
+ * décision métier (201 / 204 / 400 / 404 / 409). Ces tests montent la vraie
+ * chaîne HTTP — garde d'authentification comprise —, avec un dépôt en mémoire à
+ * la place de Mongo.
  */
 describe('Keyword — API', () => {
   let app: NestFastifyApplication;
   let repository: InMemoryKeywordRepository;
 
-  /**
-   * `scraped` : les mots-clés qu'`items_raw` connaîtrait. Ils n'entrent en jeu
-   * qu'au DELETE d'un mot-clé sans document (cf. UntrackKeywordCommand).
-   */
   async function start(
-    initial: Record<string, boolean> = {},
-    summaries: KeywordSummary[] = [],
-    scraped: string[] = [],
+    initial: Record<string, string[]> = {},
+    summaries: Record<string, KeywordSummary[]> = {},
   ) {
     repository = new InMemoryKeywordRepository(initial);
     app = await createTestApp({
@@ -55,78 +51,116 @@ describe('Keyword — API', () => {
         ListKeywordSummariesQuery,
         { provide: KeywordRepository, useValue: repository },
         { provide: KeywordSummaryReadModel, useValue: new FakeKeywordSummaryReadModel(summaries) },
-        { provide: ScrapedKeywords, useValue: new InMemoryScrapedKeywords(scraped) },
       ],
     });
   }
 
   afterEach(() => closeApp(app));
 
-  describe('GET /api/v1/keywords', () => {
-    it('renvoie les mots-clés suivis', async () => {
-      await start({}, [
-        { keyword: 'lessive', productCount: 42, lastScrape: '2026-08-08T06:00:00.000Z' },
-        { keyword: 'café', productCount: 0, lastScrape: null },
-      ]);
+  describe('authentification', () => {
+    it('refuse une requête sans jeton', async () => {
+      await start();
 
       const response = await app.inject({ method: 'GET', url: '/api/v1/keywords' });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('refuse un jeton signé avec un autre secret', async () => {
+      await start();
+      const forged = signInternalToken({ sub: 'alice@example.com', iss: 'pirate' }, 'x'.repeat(48));
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/keywords',
+        headers: { authorization: `Bearer ${forged}` },
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('n’écrit rien pour une requête refusée', async () => {
+      await start();
+
+      await app.inject({ method: 'POST', url: '/api/v1/keywords', payload: { keyword: 'lessive' } });
+
+      expect(repository.subscribersOf('lessive')).toBeUndefined();
+    });
+  });
+
+  describe('GET /api/v1/keywords', () => {
+    it('renvoie les mots-clés de l’utilisateur authentifié, et seulement les siens', async () => {
+      await start(
+        {},
+        {
+          [ALICE.value]: [{ keyword: 'lessive', productCount: 42, lastScrape: '2026-08-08T06:00:00.000Z' }],
+          [BOB.value]: [{ keyword: 'café', productCount: 0, lastScrape: null }],
+        },
+      );
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/keywords',
+        headers: authAs(ALICE),
+      });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<KeywordSummary[]>(response)).toEqual([
         { keyword: 'lessive', productCount: 42, lastScrape: '2026-08-08T06:00:00.000Z' },
-        { keyword: 'café', productCount: 0, lastScrape: null },
       ]);
     });
   });
 
   describe('POST /api/v1/keywords', () => {
-    it('suit un nouveau mot-clé', async () => {
-      await start();
-
-      const response = await app.inject({
+    async function post(payload: unknown, user: UserId = ALICE) {
+      return app.inject({
         method: 'POST',
         url: '/api/v1/keywords',
-        payload: { keyword: 'lessive liquide' },
+        headers: authAs(user),
+        payload: payload as object,
       });
+    }
+
+    it('suit un nouveau mot-clé au nom de l’utilisateur', async () => {
+      await start();
+
+      const response = await post({ keyword: 'lessive liquide' });
 
       expect(response.statusCode).toBe(201);
-      expect(repository.stateOf('lessive liquide')).toBe(true);
+      expect(repository.subscribersOf('lessive liquide')).toEqual([ALICE.value]);
     });
 
     it('réactive un mot-clé précédemment retiré', async () => {
-      await start({ lessive: false });
+      await start({ lessive: [] });
 
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/v1/keywords',
-        payload: { keyword: 'lessive' },
-      });
+      const response = await post({ keyword: 'lessive' });
 
       expect(response.statusCode).toBe(201);
-      expect(repository.stateOf('lessive')).toBe(true);
+      expect(repository.subscribersOf('lessive')).toEqual([ALICE.value]);
     });
 
-    it('refuse un mot-clé déjà suivi', async () => {
-      await start({ lessive: true });
+    it('refuse un mot-clé déjà suivi par l’utilisateur', async () => {
+      await start({ lessive: [ALICE.value] });
 
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/v1/keywords',
-        payload: { keyword: 'lessive' },
-      });
+      const response = await post({ keyword: 'lessive' });
 
       expect(response.statusCode).toBe(409);
       expect(jsonOf<{ code: string }>(response).code).toBe('KEYWORD_ALREADY_TRACKED');
     });
 
+    it('accepte qu’un second utilisateur suive le même mot-clé', async () => {
+      await start({ lessive: [ALICE.value] });
+
+      const response = await post({ keyword: 'lessive' }, BOB);
+
+      expect(response.statusCode).toBe(201);
+      expect(repository.subscribersOf('lessive')).toEqual([ALICE.value, BOB.value]);
+    });
+
     it('refuse un nom vide', async () => {
       await start();
 
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/v1/keywords',
-        payload: { keyword: '   ' },
-      });
+      const response = await post({ keyword: '   ' });
 
       expect(response.statusCode).toBe(400);
       expect(jsonOf<{ code: string }>(response).code).toBe('INVALID_KEYWORD_NAME');
@@ -137,7 +171,7 @@ describe('Keyword — API', () => {
 
       // Validation de *forme* (le DTO), avant toute règle métier : la réponse
       // vient de la ValidationPipe, sans code domaine.
-      const response = await app.inject({ method: 'POST', url: '/api/v1/keywords', payload: {} });
+      const response = await post({});
 
       expect(response.statusCode).toBe(400);
       expect(jsonOf<{ code?: string }>(response).code).toBeUndefined();
@@ -146,81 +180,65 @@ describe('Keyword — API', () => {
     it('convertit un mot-clé numérique en chaîne au lieu de le refuser', async () => {
       await start();
 
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/v1/keywords',
-        payload: { keyword: 42 },
-      });
-
       // Conséquence de `transformOptions.enableImplicitConversion` : le 42 est
-      // converti en « 42 » *avant* que `@IsString()` ne s'exécute, donc la
-      // requête passe. Sans danger (KeywordName valide ensuite le contenu),
-      // mais c'est le comportement réel — à changer sciemment si on le veut
-      // strict, pas à découvrir en production.
+      // converti en « 42 » *avant* que `@IsString()` ne s'exécute.
+      const response = await post({ keyword: 42 });
+
       expect(response.statusCode).toBe(201);
-      expect(repository.stateOf('42')).toBe(true);
+      expect(repository.subscribersOf('42')).toEqual([ALICE.value]);
     });
 
-    it('ignore un champ surnuméraire en refusant la requête', async () => {
+    it('refuse un champ surnuméraire', async () => {
       await start();
 
-      const response = await app.inject({
-        method: 'POST',
-        url: '/api/v1/keywords',
-        payload: { keyword: 'lessive', enabled: false },
-      });
+      const response = await post({ keyword: 'lessive', enabled: false });
 
       expect(response.statusCode).toBe(400);
-      expect(repository.stateOf('lessive')).toBeUndefined();
+      expect(repository.subscribersOf('lessive')).toBeUndefined();
     });
   });
 
   describe('DELETE /api/v1/keywords/:keyword', () => {
-    it('retire un mot-clé suivi', async () => {
-      await start({ lessive: true });
+    async function remove(path: string, user: UserId = ALICE) {
+      return app.inject({ method: 'DELETE', url: `/api/v1/keywords/${path}`, headers: authAs(user) });
+    }
 
-      const response = await app.inject({ method: 'DELETE', url: '/api/v1/keywords/lessive' });
+    it('retire un mot-clé suivi', async () => {
+      await start({ lessive: [ALICE.value] });
+
+      const response = await remove('lessive');
 
       expect(response.statusCode).toBe(204);
-      expect(repository.stateOf('lessive')).toBe(false);
+      expect(repository.subscribersOf('lessive')).toEqual([]);
+    });
+
+    it('ne touche pas à l’abonnement des autres', async () => {
+      await start({ lessive: [ALICE.value, BOB.value] });
+
+      await remove('lessive', BOB);
+
+      expect(repository.subscribersOf('lessive')).toEqual([ALICE.value]);
     });
 
     it('décode un mot-clé contenant un espace', async () => {
-      await start({ 'lessive liquide': true });
+      await start({ 'lessive liquide': [ALICE.value] });
 
-      const response = await app.inject({
-        method: 'DELETE',
-        url: '/api/v1/keywords/lessive%20liquide',
-      });
+      const response = await remove('lessive%20liquide');
 
       expect(response.statusCode).toBe(204);
-      expect(repository.stateOf('lessive liquide')).toBe(false);
+      expect(repository.subscribersOf('lessive liquide')).toEqual([]);
     });
 
     it('retirer deux fois reste un succès', async () => {
-      await start({ lessive: false });
+      await start({ lessive: [] });
 
-      const response = await app.inject({ method: 'DELETE', url: '/api/v1/keywords/lessive' });
-
-      expect(response.statusCode).toBe(204);
+      expect((await remove('lessive')).statusCode).toBe(204);
     });
 
-    it('retire un mot-clé listé depuis ses seuls relevés', async () => {
-      await start({}, [], ['batterie canape electrique']);
-
-      const response = await app.inject({
-        method: 'DELETE',
-        url: '/api/v1/keywords/batterie%20canape%20electrique',
-      });
-
-      expect(response.statusCode).toBe(204);
-      expect(repository.stateOf('batterie canape electrique')).toBe(false);
-    });
-
-    it('signale un mot-clé inconnu', async () => {
+    it('signale un mot-clé que personne n’a jamais suivi', async () => {
       await start();
 
-      const response = await app.inject({ method: 'DELETE', url: '/api/v1/keywords/inexistant' });
+      const response = await remove('inexistant');
 
       expect(response.statusCode).toBe(404);
       expect(jsonOf<{ code: string }>(response).code).toBe('KEYWORD_NOT_FOUND');

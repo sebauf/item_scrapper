@@ -1,5 +1,5 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { AddFavoriteStationCommand } from '../application/commands/add-favorite-station.command';
 import { RemoveFavoriteStationCommand } from '../application/commands/remove-favorite-station.command';
 import { FuelStationReadModel } from '../application/ports/fuel-station.read-model';
@@ -52,7 +52,7 @@ describe('Fuel favorites — API', () => {
       '2': new Date('2026-10-20T10:00:00.000Z'),
     });
 
-    const response = await app.inject({ method: 'GET', url: '/api/v1/fuel-stations/favorites' });
+    const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/fuel-stations/favorites' });
 
     expect(response.statusCode).toBe(200);
     expect(jsonOf<unknown>(response)).toEqual([
@@ -65,27 +65,27 @@ describe('Fuel favorites — API', () => {
     await start();
 
     for (let i = 0; i < 2; i++) {
-      const response = await app.inject({ method: 'PUT', url: '/api/v1/fuel-stations/favorites/69003001' });
+      const response = await app.inject({ headers: authAs(), method: 'PUT', url: '/api/v1/fuel-stations/favorites/69003001' });
       expect(response.statusCode).toBe(204);
     }
 
-    expect((await favorites.list()).map((f) => f.stationId)).toEqual(['69003001']);
+    expect((await favorites.list(ALICE)).map((f) => f.stationId)).toEqual(['69003001']);
   });
 
   it('PUT refuse une station absente du flux (404)', async () => {
     await start();
 
-    const response = await app.inject({ method: 'PUT', url: '/api/v1/fuel-stations/favorites/99999999' });
+    const response = await app.inject({ headers: authAs(), method: 'PUT', url: '/api/v1/fuel-stations/favorites/99999999' });
 
     expect(response.statusCode).toBe(404);
     expect(jsonOf<{ code: string }>(response).code).toBe('FUEL_STATION_NOT_FOUND');
-    expect(await favorites.list()).toEqual([]);
+    expect(await favorites.list(ALICE)).toEqual([]);
   });
 
   it('PUT refuse un identifiant mal formé (400)', async () => {
     await start();
 
-    const response = await app.inject({ method: 'PUT', url: '/api/v1/fuel-stations/favorites/abc' });
+    const response = await app.inject({ headers: authAs(), method: 'PUT', url: '/api/v1/fuel-stations/favorites/abc' });
 
     expect(response.statusCode).toBe(400);
     expect(jsonOf<{ code: string }>(response).code).toBe('INVALID_STATION_ID');
@@ -94,18 +94,48 @@ describe('Fuel favorites — API', () => {
   it('DELETE retire la favorite, même si la station a quitté le flux', async () => {
     await start({ '12345678': new Date() });
 
-    const first = await app.inject({ method: 'DELETE', url: '/api/v1/fuel-stations/favorites/12345678' });
-    const again = await app.inject({ method: 'DELETE', url: '/api/v1/fuel-stations/favorites/12345678' });
+    const first = await app.inject({ headers: authAs(), method: 'DELETE', url: '/api/v1/fuel-stations/favorites/12345678' });
+    const again = await app.inject({ headers: authAs(), method: 'DELETE', url: '/api/v1/fuel-stations/favorites/12345678' });
 
     expect([first.statusCode, again.statusCode]).toEqual([204, 204]);
-    expect(await favorites.list()).toEqual([]);
+    expect(await favorites.list(ALICE)).toEqual([]);
   });
 
   it('la recherche signale les favorites', async () => {
     await start({ '69003001': new Date() });
 
-    const response = await app.inject({ method: 'GET', url: '/api/v1/fuel-stations?lat=45.75&lng=4.83' });
+    const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/fuel-stations?lat=45.75&lng=4.83' });
 
     expect(jsonOf<{ stations: { isFavorite: boolean }[] }>(response).stations[0].isFavorite).toBe(true);
+  });
+
+  it('ne signale que les favorites de l’utilisateur qui cherche', async () => {
+    await start({ '69003001': new Date() });
+
+    const response = await app.inject({
+      headers: authAs(BOB),
+      method: 'GET',
+      url: '/api/v1/fuel-stations?lat=45.75&lng=4.83',
+    });
+
+    expect(jsonOf<{ stations: { isFavorite: boolean }[] }>(response).stations[0].isFavorite).toBe(false);
+  });
+
+  it('range la favorite de Bob dans sa propre liste', async () => {
+    await start();
+
+    await app.inject({ headers: authAs(BOB), method: 'PUT', url: '/api/v1/fuel-stations/favorites/69003001' });
+
+    expect(await favorites.list(ALICE)).toEqual([]);
+    const bobs = await app.inject({ headers: authAs(BOB), method: 'GET', url: '/api/v1/fuel-stations/favorites' });
+    expect(jsonOf<{ id: string }[]>(bobs).map((f) => f.id)).toEqual(['69003001']);
+  });
+
+  it('refuse une requête sans jeton', async () => {
+    await start();
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/fuel-stations/favorites' });
+
+    expect(response.statusCode).toBe(401);
   });
 });

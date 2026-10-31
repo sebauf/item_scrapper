@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { ProductId } from '../../../catalog/domain/product-id';
 import {
   ProductDetail,
@@ -13,8 +14,8 @@ export class ListFavoritesQuery {
     private readonly products: ProductReadModel,
   ) {}
 
-  async execute(): Promise<ProductDetail[]> {
-    const entries = await this.favorites.list();
+  async execute(owner: UserId): Promise<ProductDetail[]> {
+    const entries = await this.favorites.list(owner);
     const details = await Promise.all(
       entries.map((entry) => this.products.findDetail(ProductId.fromUrl(entry.url))),
     );

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { FavoriteStationRepository } from '../../domain/favorite-station.repository';
 import { FuelStationNotFound } from '../../domain/fuel.errors';
 import { StationId } from '../../domain/station-id';
@@ -19,11 +20,11 @@ export class AddFavoriteStationCommand {
     private readonly stations: FuelStationReadModel,
   ) {}
 
-  async execute(rawId: unknown): Promise<void> {
+  async execute(owner: UserId, rawId: unknown): Promise<void> {
     const stationId = StationId.create(rawId);
     if (!(await this.stations.exists(stationId.value))) {
       throw new FuelStationNotFound(`Station ${stationId.value} introuvable dans le flux officiel.`);
     }
-    await this.favorites.add(stationId.value);
+    await this.favorites.add(owner, stationId.value);
   }
 }

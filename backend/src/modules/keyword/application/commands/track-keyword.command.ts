@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { Keyword } from '../../domain/keyword';
 import { KeywordName } from '../../domain/keyword-name';
 import { KeywordRepository } from '../../domain/keyword.repository';
@@ -9,23 +10,21 @@ import { KeywordRepository } from '../../domain/keyword.repository';
  * Elle ne contient aucune règle métier : elle orchestre. Les règles sont dans
  * `KeywordName.create` (validité du nom) et `Keyword.retrack` (transition
  * autorisée ou non). C'est ce qui permet de les tester sans base ni HTTP.
- *
- * Remplace frontend/src/app/actions.ts:addKeyword.
  */
 @Injectable()
 export class TrackKeywordCommand {
   constructor(private readonly keywords: KeywordRepository) {}
 
-  async execute(rawName: unknown): Promise<void> {
+  async execute(owner: UserId, rawName: unknown): Promise<void> {
     const name = KeywordName.create(rawName);
-    const existing = await this.keywords.findByName(name);
+    const existing = await this.keywords.findByName(owner, name);
 
     if (existing === null) {
-      await this.keywords.save(Keyword.track(name));
+      await this.keywords.save(Keyword.track(owner, name));
       return;
     }
 
-    existing.retrack(); // lève KeywordAlreadyTracked s'il est déjà suivi
+    existing.retrack(); // lève KeywordAlreadyTracked si `owner` le suit déjà
     await this.keywords.save(existing);
   }
 }

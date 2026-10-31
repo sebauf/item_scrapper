@@ -13,7 +13,7 @@ import {
   FakeDashboardReadModel,
   FakeProductReadModel,
 } from '../testing/fakes';
-import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { DashboardController, KeywordProductsController, ProductController } from './catalog.controller';
 
 /**
@@ -67,7 +67,7 @@ describe('Catalog — API', () => {
         ],
       });
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/dashboard' });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/dashboard' });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<{ dealCount: number }>(response).dealCount).toBe(7);
@@ -77,7 +77,7 @@ describe('Catalog — API', () => {
     it("n'est pas servi hors du préfixe de version", async () => {
       await start(new FakeProductReadModel());
 
-      expect((await app.inject({ method: 'GET', url: '/dashboard' })).statusCode).toBe(404);
+      expect((await app.inject({ headers: authAs(), method: 'GET', url: '/dashboard' })).statusCode).toBe(404);
     });
   });
 
@@ -93,7 +93,7 @@ describe('Catalog — API', () => {
     it('renvoie la page de produits', async () => {
       await start(new FakeProductReadModel({}, result));
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/keywords/lessive/products' });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/keywords/lessive/products' });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<typeof result>(response)).toEqual(result);
@@ -102,7 +102,7 @@ describe('Catalog — API', () => {
     it('décode un mot-clé contenant un espace', async () => {
       await start(new FakeProductReadModel({}, result));
 
-      await app.inject({ method: 'GET', url: '/api/v1/keywords/lessive%20liquide/products' });
+      await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/keywords/lessive%20liquide/products' });
 
       expect(products.searchCalls[0].keyword).toBe('lessive liquide');
     });
@@ -111,6 +111,7 @@ describe('Catalog — API', () => {
       await start(new FakeProductReadModel({}, result));
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'GET',
         url: '/api/v1/keywords/lessive/products?q=savon&deals=1&min=5&max=50&sort=price_asc&page=2',
       });
@@ -132,6 +133,7 @@ describe('Catalog — API', () => {
       await start(new FakeProductReadModel({}, result));
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'GET',
         url: '/api/v1/keywords/lessive/products?sorted=price_asc',
       });
@@ -144,6 +146,7 @@ describe('Catalog — API', () => {
       await start(new FakeProductReadModel({}, result));
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'GET',
         url: '/api/v1/keywords/lessive/products?sort=le-moins-cher',
       });
@@ -156,6 +159,7 @@ describe('Catalog — API', () => {
       await start(new FakeProductReadModel());
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'GET',
         url: '/api/v1/keywords/inexistant/products',
       });
@@ -181,7 +185,7 @@ describe('Catalog — API', () => {
       });
       await start(new FakeProductReadModel({ [url]: detail }));
 
-      const response = await app.inject({ method: 'GET', url: `/api/v1/products/${encodedId}` });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: `/api/v1/products/${encodedId}` });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<typeof detail>(response)).toEqual(detail);
@@ -190,7 +194,7 @@ describe('Catalog — API', () => {
     it('conserve les champs à null — le frontend les teste avec !== null', async () => {
       await start(new FakeProductReadModel({ [url]: aProductDetail({ url }) }));
 
-      const response = await app.inject({ method: 'GET', url: `/api/v1/products/${encodedId}` });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: `/api/v1/products/${encodedId}` });
       const body = jsonOf<Record<string, unknown>>(response);
 
       expect(body).toHaveProperty('dealScore', null);
@@ -201,7 +205,7 @@ describe('Catalog — API', () => {
     it('renvoie 404 pour un produit inconnu', async () => {
       await start(new FakeProductReadModel());
 
-      const response = await app.inject({ method: 'GET', url: `/api/v1/products/${encodedId}` });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: `/api/v1/products/${encodedId}` });
 
       expect(response.statusCode).toBe(404);
       expect(jsonOf<{ code: string }>(response).code).toBe(new ProductNotFound().code);
@@ -210,7 +214,7 @@ describe('Catalog — API', () => {
     it('renvoie 400 pour un identifiant mal formé', async () => {
       await start(new FakeProductReadModel());
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/products/pas-du-base64!!' });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/products/pas-du-base64!!' });
 
       expect(response.statusCode).toBe(400);
       expect(jsonOf<{ code: string }>(response).code).toBe('INVALID_PRODUCT_ID');

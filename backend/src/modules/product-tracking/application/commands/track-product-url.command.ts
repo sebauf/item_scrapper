@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { ProductUrl } from '../../domain/product-url';
 import { TrackedUrl } from '../../domain/tracked-url';
 import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
@@ -16,16 +17,16 @@ import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
 export class TrackProductUrlCommand {
   constructor(private readonly trackedUrls: TrackedUrlRepository) {}
 
-  async execute(rawUrl: unknown): Promise<void> {
+  async execute(owner: UserId, rawUrl: unknown): Promise<void> {
     const url = ProductUrl.create(rawUrl);
-    const existing = await this.trackedUrls.findByUrl(url);
+    const existing = await this.trackedUrls.findByUrl(owner, url);
 
     if (existing === null) {
-      await this.trackedUrls.save(TrackedUrl.track(url));
+      await this.trackedUrls.save(TrackedUrl.track(owner, url));
       return;
     }
 
-    existing.retrack(); // lève ProductUrlAlreadyTracked s'il est déjà suivi
+    existing.retrack(); // lève ProductUrlAlreadyTracked si `owner` la suit déjà
     await this.trackedUrls.save(existing);
   }
 }

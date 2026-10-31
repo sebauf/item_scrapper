@@ -1,3 +1,4 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { DashboardReadModel, DashboardSnapshot } from '../application/ports/dashboard.read-model';
 import {
   ProductDetail,
@@ -81,13 +82,15 @@ export class FakeProductReadModel extends ProductReadModel {
 
 export class FakeDashboardReadModel extends DashboardReadModel {
   calls = 0;
+  readonly owners: UserId[] = [];
 
   constructor(private readonly snapshot: DashboardSnapshot) {
     super();
   }
 
-  load(): Promise<DashboardSnapshot> {
+  load(owner: UserId): Promise<DashboardSnapshot> {
     this.calls += 1;
+    this.owners.push(owner);
     return Promise.resolve(this.snapshot);
   }
 }

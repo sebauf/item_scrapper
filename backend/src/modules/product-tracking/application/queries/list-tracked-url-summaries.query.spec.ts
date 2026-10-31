@@ -1,3 +1,4 @@
+import { UserId } from 'src/shared/domain/user-id';
 import {
   TrackedUrlSummary,
   TrackedUrlSummaryReadModel,
@@ -15,7 +16,13 @@ class FakeTrackedUrlSummaryReadModel extends TrackedUrlSummaryReadModel {
     this.calls += 1;
     return Promise.resolve(this.summaries);
   }
+
+  listTrackedUrls(): Promise<string[]> {
+    return Promise.resolve(this.summaries.map((summary) => summary.url));
+  }
 }
+
+const alice = UserId.create('alice@example.com');
 
 describe('ListTrackedUrlSummariesQuery', () => {
   it('renvoie les résumés des URLs suivies', async () => {
@@ -31,7 +38,7 @@ describe('ListTrackedUrlSummariesQuery', () => {
     ];
     const readModel = new FakeTrackedUrlSummaryReadModel(summaries);
 
-    await expect(new ListTrackedUrlSummariesQuery(readModel).execute()).resolves.toBe(summaries);
+    await expect(new ListTrackedUrlSummariesQuery(readModel).execute(alice)).resolves.toBe(summaries);
     expect(readModel.calls).toBe(1);
   });
 
@@ -47,7 +54,7 @@ describe('ListTrackedUrlSummariesQuery', () => {
       },
     ]);
 
-    const [summary] = await new ListTrackedUrlSummariesQuery(readModel).execute();
+    const [summary] = await new ListTrackedUrlSummariesQuery(readModel).execute(alice);
 
     expect(summary).toMatchObject({ title: null, price: null, lastScrape: null });
   });

@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserId } from 'src/shared/domain/user-id';
+import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { ProductDetailResponse } from '../../catalog/interface/dto/product.response';
 import { AddFavoriteCommand } from '../application/commands/add-favorite.command';
 import { RemoveFavoriteCommand } from '../application/commands/remove-favorite.command';
@@ -15,6 +17,7 @@ import { FavoriteStatusResponse } from './dto/favorite-status.response';
  * cas) : c'est le comportement d'un bouton étoile, pas d'un formulaire de
  * création — cf. AddFavoriteCommand / RemoveFavoriteCommand.
  */
+@ApiBearerAuth()
 @ApiTags('favorites')
 @Controller('favorites')
 export class FavoriteController {
@@ -26,10 +29,10 @@ export class FavoriteController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Produits favoris, fiche complète avec historique de prix' })
+  @ApiOperation({ summary: "Produits favoris de l'utilisateur, fiche complète avec historique de prix" })
   @ApiResponse({ status: 200, type: [ProductDetailResponse] })
-  list(): Promise<ProductDetailResponse[]> {
-    return this.listFavorites.execute();
+  list(@CurrentUser() user: UserId): Promise<ProductDetailResponse[]> {
+    return this.listFavorites.execute(user);
   }
 
   @Get(':id')
@@ -37,8 +40,11 @@ export class FavoriteController {
   @ApiParam({ name: 'id', description: 'Identifiant encodé du produit' })
   @ApiResponse({ status: 200, type: FavoriteStatusResponse })
   @ApiResponse({ status: 400, description: 'Identifiant mal formé' })
-  async check(@Param('id') id: string): Promise<FavoriteStatusResponse> {
-    return { isFavorite: await this.isFavoriteQuery.execute(id) };
+  async check(
+    @CurrentUser() user: UserId,
+    @Param('id') id: string,
+  ): Promise<FavoriteStatusResponse> {
+    return { isFavorite: await this.isFavoriteQuery.execute(user, id) };
   }
 
   @Post()
@@ -46,8 +52,8 @@ export class FavoriteController {
   @ApiOperation({ summary: 'Mettre un produit en favori (idempotent, suit aussi son prix)' })
   @ApiResponse({ status: 201, description: 'Produit favori' })
   @ApiResponse({ status: 400, description: 'Identifiant mal formé' })
-  async add(@Body() dto: AddFavoriteDto): Promise<void> {
-    await this.addFavorite.execute(dto.id);
+  async add(@CurrentUser() user: UserId, @Body() dto: AddFavoriteDto): Promise<void> {
+    await this.addFavorite.execute(user, dto.id);
   }
 
   @Delete(':id')
@@ -56,7 +62,7 @@ export class FavoriteController {
   @ApiParam({ name: 'id', description: 'Identifiant encodé du produit' })
   @ApiResponse({ status: 204, description: 'Favori retiré' })
   @ApiResponse({ status: 400, description: 'Identifiant mal formé' })
-  async remove(@Param('id') id: string): Promise<void> {
-    await this.removeFavorite.execute(id);
+  async remove(@CurrentUser() user: UserId, @Param('id') id: string): Promise<void> {
+    await this.removeFavorite.execute(user, id);
   }
 }

@@ -1,4 +1,4 @@
-import { Db, IndexSpecification } from 'mongodb';
+import { CreateIndexesOptions, Db, IndexSpecification } from 'mongodb';
 
 /**
  * Index requis par les lectures du backend.
@@ -14,6 +14,7 @@ interface IndexDefinition {
   collection: string;
   keys: IndexSpecification;
   name: string;
+  options?: Omit<CreateIndexesOptions, 'name'>;
   /** Pourquoi cet index existe — à maintenir si une requête change. */
   reason: string;
 }
@@ -62,6 +63,34 @@ export const REQUIRED_INDEXES: readonly IndexDefinition[] = [
     name: 'importedAt_desc',
     reason: 'carte des carburants : date du dernier import du flux officiel',
   },
+  {
+    collection: 'keywords',
+    keys: { subscribers: 1 },
+    name: 'subscribers',
+    reason: "mots-clés d'un utilisateur : `{ subscribers: email }` (index multikey sur le tableau)",
+  },
+  {
+    collection: 'tracked_urls',
+    keys: { subscribers: 1 },
+    name: 'subscribers',
+    reason: "URLs suivies d'un utilisateur : `{ subscribers: email }` (index multikey)",
+  },
+  {
+    collection: 'favorites',
+    keys: { userId: 1, url: 1 },
+    name: 'userId_url',
+    // Partiel : un document historique pas encore rattaché (sans `userId`)
+    // ne doit pas faire échouer la création de l'index.
+    options: { unique: true, partialFilterExpression: { userId: { $exists: true } } },
+    reason: "favoris d'un utilisateur, et unicité d'un favori par (utilisateur, produit)",
+  },
+  {
+    collection: 'favorite_stations',
+    keys: { userId: 1, stationId: 1 },
+    name: 'userId_stationId',
+    options: { unique: true, partialFilterExpression: { userId: { $exists: true } } },
+    reason: "stations favorites d'un utilisateur, unicité par (utilisateur, station)",
+  },
 ];
 
 /** Crée les index manquants. Renvoie les noms de ceux effectivement créés. */
@@ -70,7 +99,9 @@ export async function ensureIndexes(db: Db): Promise<string[]> {
   for (const index of REQUIRED_INDEXES) {
     const existing = await db.collection(index.collection).indexExists(index.name);
     if (existing) continue;
-    await db.collection(index.collection).createIndex(index.keys, { name: index.name });
+    await db
+      .collection(index.collection)
+      .createIndex(index.keys, { ...index.options, name: index.name });
     created.push(`${index.collection}.${index.name}`);
   }
   return created;

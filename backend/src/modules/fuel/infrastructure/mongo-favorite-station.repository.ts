@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Collection, Db } from 'mongodb';
+import { UserId } from 'src/shared/domain/user-id';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
 import {
   FavoriteStationEntry,
@@ -7,12 +8,18 @@ import {
 } from '../domain/favorite-station.repository';
 
 /**
- * `_id` = identifiant officiel de la station, comme dans `fuel_stations` :
- * l'unicité est garantie sans index supplémentaire, et le pipeline lit la
- * collection sans jointure.
+ * Un document par (utilisateur, station), unicité garantie par l'index
+ * `favorite_stations.userId_stationId`. `_id` est laissé à Mongo.
+ *
+ * Avant l'authentification, `_id` était l'identifiant de la station (une seule
+ * liste pour tout le monde). Ces documents historiques gardent leur `_id` —
+ * immuable — et reçoivent `userId` et `stationId` lors de leur rattachement
+ * (cf. shared/infrastructure/mongo/legacy-ownership.ts). Le pipeline lit
+ * `stationId`, avec repli sur `_id` pour un document pas encore rattaché.
  */
 interface FavoriteStationDocument {
-  _id: string;
+  userId: string;
+  stationId: string;
   addedAt: Date;
 }
 
@@ -27,20 +34,23 @@ export class MongoFavoriteStationRepository extends FavoriteStationRepository {
   }
 
   /** `$setOnInsert` : un ajout répété garde la date du premier. */
-  async add(stationId: string): Promise<void> {
+  async add(owner: UserId, stationId: string): Promise<void> {
     await this.collection.updateOne(
-      { _id: stationId },
-      { $setOnInsert: { addedAt: new Date() } },
+      { userId: owner.value, stationId },
+      { $setOnInsert: { userId: owner.value, stationId, addedAt: new Date() } },
       { upsert: true },
     );
   }
 
-  async remove(stationId: string): Promise<void> {
-    await this.collection.deleteOne({ _id: stationId });
+  async remove(owner: UserId, stationId: string): Promise<void> {
+    await this.collection.deleteOne({ userId: owner.value, stationId });
   }
 
-  async list(): Promise<FavoriteStationEntry[]> {
-    const docs = await this.collection.find({}).sort({ addedAt: -1 }).toArray();
-    return docs.map((doc) => ({ stationId: doc._id, addedAt: doc.addedAt }));
+  async list(owner: UserId): Promise<FavoriteStationEntry[]> {
+    const docs = await this.collection
+      .find({ userId: owner.value }, { projection: { stationId: 1, addedAt: 1 } })
+      .sort({ addedAt: -1 })
+      .toArray();
+    return docs.map((doc) => ({ stationId: doc.stationId, addedAt: doc.addedAt }));
   }
 }

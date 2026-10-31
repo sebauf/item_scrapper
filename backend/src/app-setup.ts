@@ -1,4 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { AppConfig } from './config/app-config';
+import { AuthGuard } from './shared/interface/http/auth.guard';
 import { DomainExceptionFilter } from './shared/interface/http/domain-exception.filter';
 
 /**
@@ -24,4 +27,9 @@ export function configureApp(app: INestApplication): void {
     }),
   );
   app.useGlobalFilters(new DomainExceptionFilter());
+
+  // Toute route exige un jeton interne valide, sauf celles marquées @Public()
+  // (les sondes). Posée ici et non dans un module pour que les tests d'API la
+  // traversent : une route oubliée sans protection se verrait en CI.
+  app.useGlobalGuards(new AuthGuard(app.get(Reflector), app.get(AppConfig).authSecret));
 }

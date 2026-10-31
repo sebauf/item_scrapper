@@ -1,5 +1,8 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { aProductSummary, EMPTY_DASHBOARD, FakeDashboardReadModel } from '../../testing/fakes';
 import { GetDashboardQuery } from './get-dashboard.query';
+
+const alice = UserId.create('alice@example.com');
 
 describe('GetDashboardQuery', () => {
   it('renvoie le cliché du read model', async () => {
@@ -20,14 +23,15 @@ describe('GetDashboardQuery', () => {
     };
     const readModel = new FakeDashboardReadModel(snapshot);
 
-    await expect(new GetDashboardQuery(readModel).execute()).resolves.toBe(snapshot);
+    await expect(new GetDashboardQuery(readModel).execute(alice)).resolves.toBe(snapshot);
     expect(readModel.calls).toBe(1);
+    expect(readModel.owners).toEqual([alice]);
   });
 
   it('supporte une base encore vide', async () => {
     const readModel = new FakeDashboardReadModel(EMPTY_DASHBOARD);
 
-    await expect(new GetDashboardQuery(readModel).execute()).resolves.toMatchObject({
+    await expect(new GetDashboardQuery(readModel).execute(alice)).resolves.toMatchObject({
       keywordCount: 0,
       lastUpdate: null,
       dealsByKeyword: [],

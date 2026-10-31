@@ -13,6 +13,8 @@ import { ProductTrackingController } from './interface/product-tracking.controll
  *
  * `TrackProductUrlCommand` est exportée : c'est elle que `FavoriteModule`
  * réutilise pour garantir la continuité du suivi d'un produit mis en favori.
+ * `TrackedUrlSummaryReadModel` l'est aussi : le tableau de bord (Catalog) en
+ * tire le périmètre « URLs suivies par l'utilisateur ».
  */
 @Module({
   controllers: [ProductTrackingController],
@@ -23,6 +25,6 @@ import { ProductTrackingController } from './interface/product-tracking.controll
     { provide: TrackedUrlRepository, useClass: MongoTrackedUrlRepository },
     { provide: TrackedUrlSummaryReadModel, useClass: MongoTrackedUrlSummaryReadModel },
   ],
-  exports: [TrackProductUrlCommand],
+  exports: [TrackProductUrlCommand, TrackedUrlSummaryReadModel],
 })
 export class ProductTrackingModule {}

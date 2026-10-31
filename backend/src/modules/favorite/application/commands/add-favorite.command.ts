@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { ProductId } from '../../../catalog/domain/product-id';
 import { ProductUrlAlreadyTracked } from '../../../product-tracking/domain/product-tracking.errors';
 import { TrackProductUrlCommand } from '../../../product-tracking/application/commands/track-product-url.command';
@@ -12,7 +13,7 @@ import { FavoriteRepository } from '../../domain/favorite.repository';
  * Favoriser garantit aussi la continuité du suivi de prix : on suit
  * désormais explicitement l'URL, indépendamment du mot-clé qui l'a fait
  * découvrir. `ProductUrlAlreadyTracked` est donc un cas normal ici (le
- * produit était déjà suivi, par mot-clé ou individuellement) — seule
+ * produit était déjà suivi individuellement par ce même utilisateur) — seule
  * l'erreur ci-dessous distingue ce cas d'un vrai refus (URL invalide).
  */
 @Injectable()
@@ -22,15 +23,15 @@ export class AddFavoriteCommand {
     private readonly trackProductUrl: TrackProductUrlCommand,
   ) {}
 
-  async execute(encodedId: unknown): Promise<void> {
+  async execute(owner: UserId, encodedId: unknown): Promise<void> {
     const productId = ProductId.fromEncoded(encodedId);
 
     try {
-      await this.trackProductUrl.execute(productId.url);
+      await this.trackProductUrl.execute(owner, productId.url);
     } catch (error) {
       if (!(error instanceof ProductUrlAlreadyTracked)) throw error;
     }
 
-    await this.favorites.add(productId.url);
+    await this.favorites.add(owner, productId.url);
   }
 }

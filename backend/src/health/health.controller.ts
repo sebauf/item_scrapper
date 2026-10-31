@@ -2,7 +2,10 @@ import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/co
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Db } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
+import { Public } from 'src/shared/interface/http/auth.guard';
 
+/** Sondes Kubernetes : publiques, le kubelet n'a pas de jeton. */
+@Public()
 @ApiTags('health')
 @Controller('health')
 export class HealthController {

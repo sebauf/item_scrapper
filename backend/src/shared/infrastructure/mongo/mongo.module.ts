@@ -9,6 +9,7 @@ import {
 import { Db, MongoClient } from 'mongodb';
 import { AppConfig } from 'src/config/app-config';
 import { ensureIndexes } from './indexes';
+import { claimLegacyData, countLegacyData, describe, totalOf } from './legacy-ownership';
 import { MONGO_CLIENT, MONGO_DB } from './mongo.tokens';
 
 /**
@@ -48,15 +49,41 @@ export class MongoModule implements OnApplicationBootstrap, OnApplicationShutdow
   constructor(
     @Inject(MONGO_DB) private readonly db: Db,
     @Inject(MONGO_CLIENT) private readonly client: MongoClient,
+    private readonly config: AppConfig,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
+    // Avant les index : le rattachement renseigne `userId`, sur lequel portent
+    // les nouveaux index uniques (partiels, donc sans risque, mais autant créer
+    // l'index sur des données déjà dans leur forme finale).
+    await this.adoptLegacyData();
+
     const created = await ensureIndexes(this.db);
     this.logger.log(
       created.length > 0
         ? `Index créés : ${created.join(', ')}`
         : 'Index déjà en place, rien à créer.',
     );
+  }
+
+  /** Cf. legacy-ownership.ts. */
+  private async adoptLegacyData(): Promise<void> {
+    const owner = this.config.legacyOwnerEmail;
+    if (owner !== null) {
+      const claimed = await claimLegacyData(this.db, owner);
+      if (totalOf(claimed) > 0) {
+        this.logger.log(`Données historiques rattachées à ${owner.value} : ${describe(claimed)}.`);
+      }
+      return;
+    }
+
+    const orphans = await countLegacyData(this.db);
+    if (totalOf(orphans) > 0) {
+      this.logger.warn(
+        `Données sans propriétaire, invisibles pour tous : ${describe(orphans)}. ` +
+          'Renseigner AUTH_LEGACY_OWNER_EMAIL pour les rattacher à un compte.',
+      );
+    }
   }
 
   async onApplicationShutdown(): Promise<void> {

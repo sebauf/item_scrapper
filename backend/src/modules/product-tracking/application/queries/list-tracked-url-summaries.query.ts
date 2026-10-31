@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import {
   TrackedUrlSummary,
   TrackedUrlSummaryReadModel,
@@ -9,7 +10,7 @@ import {
 export class ListTrackedUrlSummariesQuery {
   constructor(private readonly readModel: TrackedUrlSummaryReadModel) {}
 
-  execute(): Promise<TrackedUrlSummary[]> {
-    return this.readModel.listTracked();
+  execute(owner: UserId): Promise<TrackedUrlSummary[]> {
+    return this.readModel.listTracked(owner);
   }
 }

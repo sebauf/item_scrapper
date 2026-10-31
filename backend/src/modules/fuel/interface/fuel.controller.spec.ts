@@ -1,5 +1,5 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { FuelStationReadModel, NearbyStations } from '../application/ports/fuel-station.read-model';
 import { SearchFuelStationsQuery } from '../application/queries/search-fuel-stations.query';
 import { FavoriteStationRepository } from '../domain/favorite-station.repository';
@@ -35,6 +35,7 @@ describe('Fuel — API', () => {
     });
 
     const response = await app.inject({
+      headers: authAs(),
       method: 'GET',
       url: '/api/v1/fuel-stations?lat=45.7578&lng=4.832&fuel=gazole&sort=price&radiusKm=5&brand=TotalEnergies',
     });
@@ -65,7 +66,7 @@ describe('Fuel — API', () => {
   it('400 sans position', async () => {
     await start();
 
-    const response = await app.inject({ method: 'GET', url: '/api/v1/fuel-stations' });
+    const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/fuel-stations' });
 
     expect(response.statusCode).toBe(400);
     expect(jsonOf<{ code: string }>(response).code).toBe('INVALID_STATION_SEARCH');
@@ -75,6 +76,7 @@ describe('Fuel — API', () => {
     await start();
 
     const response = await app.inject({
+      headers: authAs(),
       method: 'GET',
       url: '/api/v1/fuel-stations?lat=45&lng=4&carburant=e10',
     });

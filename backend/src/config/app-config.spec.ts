@@ -7,7 +7,10 @@ import { AppConfig } from './app-config';
  * première requête.
  */
 describe('AppConfig', () => {
-  const validEnv = { MONGODB_URI: 'mongodb://localhost:27017' } as NodeJS.ProcessEnv;
+  const validEnv = {
+    MONGODB_URI: 'mongodb://localhost:27017',
+    BACKEND_AUTH_SECRET: 's'.repeat(32),
+  } as NodeJS.ProcessEnv;
 
   describe('valeurs par défaut', () => {
     it("n'exige que l'URI Mongo", () => {
@@ -20,13 +23,14 @@ describe('AppConfig', () => {
     });
 
     it('accepte une URI mongodb+srv', () => {
-      expect(AppConfig.fromEnv({ MONGODB_URI: 'mongodb+srv://cluster/db' }).mongodbUri).toBe(
+      expect(AppConfig.fromEnv({ ...validEnv, MONGODB_URI: 'mongodb+srv://cluster/db' }).mongodbUri).toBe(
         'mongodb+srv://cluster/db',
       );
     });
 
     it('trime les valeurs', () => {
       const config = AppConfig.fromEnv({
+        ...validEnv,
         MONGODB_URI: '  mongodb://localhost:27017  ',
         MONGODB_DATABASE: '  autre  ',
         PORT: ' 8080 ',
@@ -65,12 +69,31 @@ describe('AppConfig', () => {
       ['un port décimal', { ...validEnv, PORT: '3001.5' }],
       ['un port nul', { ...validEnv, PORT: '0' }],
       ['un port hors bornes', { ...validEnv, PORT: '70000' }],
+      ['un secret d’authentification absent', { ...validEnv, BACKEND_AUTH_SECRET: '' }],
+      ['un secret d’authentification trop court', { ...validEnv, BACKEND_AUTH_SECRET: 'court' }],
+      ['un propriétaire historique mal formé', { ...validEnv, AUTH_LEGACY_OWNER_EMAIL: 'moi' }],
     ])('refuse %s', (_label, env) => {
       expect(() => AppConfig.fromEnv(env)).toThrow(/Configuration invalide/);
     });
 
     it('rapporte toutes les erreurs en une fois', () => {
       expect(() => AppConfig.fromEnv({ PORT: 'abc' })).toThrow(/MONGODB_URI.*\n.*PORT/s);
+    });
+  });
+
+  describe('authentification', () => {
+    it('lit le secret partagé', () => {
+      expect(AppConfig.fromEnv(validEnv).authSecret).toBe('s'.repeat(32));
+    });
+
+    it('n’attribue les données historiques à personne par défaut', () => {
+      expect(AppConfig.fromEnv(validEnv).legacyOwnerEmail).toBeNull();
+    });
+
+    it('normalise l’adresse du propriétaire historique', () => {
+      const config = AppConfig.fromEnv({ ...validEnv, AUTH_LEGACY_OWNER_EMAIL: ' Moi@Gmail.com ' });
+
+      expect(config.legacyOwnerEmail?.value).toBe('moi@gmail.com');
     });
   });
 });

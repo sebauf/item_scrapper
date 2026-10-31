@@ -1,5 +1,5 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
-import { closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { ProductReadModel } from '../../catalog/application/ports/product.read-model';
 import { ProductId } from '../../catalog/domain/product-id';
 import { aProductDetail, FakeProductReadModel } from '../../catalog/testing/fakes';
@@ -29,7 +29,7 @@ describe('Favorite — API', () => {
 
   async function start(
     initialFavorites: Record<string, Date> = {},
-    initialTracked: Record<string, boolean> = {},
+    initialTracked: Record<string, string[]> = {},
   ) {
     favorites = new InMemoryFavoriteRepository(initialFavorites);
     trackedUrls = new InMemoryTrackedUrlRepository(initialTracked);
@@ -57,7 +57,7 @@ describe('Favorite — API', () => {
     it('renvoie la fiche complète de chaque favori', async () => {
       await start({ [url]: new Date('2026-08-08T10:00:00.000Z') });
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/favorites' });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/favorites' });
 
       expect(response.statusCode).toBe(200);
       const [product] = jsonOf<{ url: string; history: unknown[] }[]>(response);
@@ -70,7 +70,7 @@ describe('Favorite — API', () => {
       // doit disparaître de la liste, pas casser la page.
       await start({ 'https://www.amazon.fr/dp/B0INCONNU1/': new Date() });
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/favorites' });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/favorites' });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<unknown[]>(response)).toEqual([]);
@@ -79,7 +79,7 @@ describe('Favorite — API', () => {
     it('renvoie une liste vide quand il n’y a pas de favori', async () => {
       await start();
 
-      expect(jsonOf<unknown[]>(await app.inject({ method: 'GET', url: '/api/v1/favorites' }))).toEqual([]);
+      expect(jsonOf<unknown[]>(await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/favorites' }))).toEqual([]);
     });
   });
 
@@ -87,7 +87,7 @@ describe('Favorite — API', () => {
     it('indique si un produit est en favori', async () => {
       await start({ [url]: new Date() });
 
-      const response = await app.inject({ method: 'GET', url: `/api/v1/favorites/${encodedId}` });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: `/api/v1/favorites/${encodedId}` });
 
       expect(response.statusCode).toBe(200);
       expect(jsonOf<{ isFavorite: boolean }>(response)).toEqual({ isFavorite: true });
@@ -96,7 +96,7 @@ describe('Favorite — API', () => {
     it('répond false pour un produit qui ne l’est pas', async () => {
       await start();
 
-      const response = await app.inject({ method: 'GET', url: `/api/v1/favorites/${encodedId}` });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: `/api/v1/favorites/${encodedId}` });
 
       expect(jsonOf<{ isFavorite: boolean }>(response)).toEqual({ isFavorite: false });
     });
@@ -104,7 +104,7 @@ describe('Favorite — API', () => {
     it('refuse un identifiant mal formé', async () => {
       await start();
 
-      const response = await app.inject({ method: 'GET', url: '/api/v1/favorites/pas-du-base64!!' });
+      const response = await app.inject({ headers: authAs(), method: 'GET', url: '/api/v1/favorites/pas-du-base64!!' });
 
       expect(response.statusCode).toBe(400);
       expect(jsonOf<{ code: string }>(response).code).toBe('INVALID_PRODUCT_ID');
@@ -116,20 +116,22 @@ describe('Favorite — API', () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/favorites',
         payload: { id: encodedId },
       });
 
       expect(response.statusCode).toBe(201);
-      await expect(favorites.isFavorite(url)).resolves.toBe(true);
-      expect(trackedUrls.stateOf(url)).toBe(true);
+      await expect(favorites.isFavorite(ALICE, url)).resolves.toBe(true);
+      expect(trackedUrls.subscribersOf(url)).toEqual([ALICE.value]);
     });
 
     it('est idempotent : refavoriser n’est pas un conflit', async () => {
-      await start({ [url]: new Date() }, { [url]: true });
+      await start({ [url]: new Date() }, { [url]: [ALICE.value] });
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/favorites',
         payload: { id: encodedId },
@@ -138,13 +140,14 @@ describe('Favorite — API', () => {
       // 409 serait le comportement de POST /product-urls ; pas celui d'un
       // bouton étoile, qu'un double-clic ne doit pas mettre en erreur.
       expect(response.statusCode).toBe(201);
-      await expect(favorites.isFavorite(url)).resolves.toBe(true);
+      await expect(favorites.isFavorite(ALICE, url)).resolves.toBe(true);
     });
 
     it('refuse un identifiant mal formé', async () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'POST',
         url: '/api/v1/favorites',
         payload: { id: 'pas-du-base64!!' },
@@ -160,18 +163,20 @@ describe('Favorite — API', () => {
       await start({ [url]: new Date() });
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'DELETE',
         url: `/api/v1/favorites/${encodedId}`,
       });
 
       expect(response.statusCode).toBe(204);
-      await expect(favorites.isFavorite(url)).resolves.toBe(false);
+      await expect(favorites.isFavorite(ALICE, url)).resolves.toBe(false);
     });
 
     it('est idempotent : retirer un non-favori réussit', async () => {
       await start();
 
       const response = await app.inject({
+        headers: authAs(),
         method: 'DELETE',
         url: `/api/v1/favorites/${encodedId}`,
       });
@@ -180,11 +185,35 @@ describe('Favorite — API', () => {
     });
 
     it('ne retire pas l’URL du suivi — l’historique de prix continue', async () => {
-      await start({ [url]: new Date() }, { [url]: true });
+      await start({ [url]: new Date() }, { [url]: [ALICE.value] });
 
-      await app.inject({ method: 'DELETE', url: `/api/v1/favorites/${encodedId}` });
+      await app.inject({ headers: authAs(), method: 'DELETE', url: `/api/v1/favorites/${encodedId}` });
 
-      expect(trackedUrls.stateOf(url)).toBe(true);
+      expect(trackedUrls.subscribersOf(url)).toEqual([ALICE.value]);
+    });
+  });
+
+  describe('isolation entre utilisateurs', () => {
+    it('refuse une requête sans jeton', async () => {
+      await start();
+
+      const response = await app.inject({ method: 'GET', url: '/api/v1/favorites' });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('ne montre pas à Bob les favoris d’Alice', async () => {
+      await start({ [url]: new Date() });
+
+      const list = await app.inject({ method: 'GET', url: '/api/v1/favorites', headers: authAs(BOB) });
+      const check = await app.inject({
+        method: 'GET',
+        url: `/api/v1/favorites/${encodedId}`,
+        headers: authAs(BOB),
+      });
+
+      expect(jsonOf<unknown[]>(list)).toEqual([]);
+      expect(jsonOf<{ isFavorite: boolean }>(check)).toEqual({ isFavorite: false });
     });
   });
 });

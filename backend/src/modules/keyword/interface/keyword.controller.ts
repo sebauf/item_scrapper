@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserId } from 'src/shared/domain/user-id';
+import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { TrackKeywordCommand } from '../application/commands/track-keyword.command';
 import { UntrackKeywordCommand } from '../application/commands/untrack-keyword.command';
 import { ListKeywordSummariesQuery } from '../application/queries/list-keyword-summaries.query';
@@ -12,7 +14,10 @@ import { TrackKeywordDto } from './dto/track-keyword.dto';
  * Son travail se limite à : traduire la requête en appel de use case, et le
  * résultat en réponse. Aucune règle, aucun accès base. Les erreurs métier
  * remontent telles quelles et sont converties par DomainExceptionFilter.
+ *
+ * Chaque opération porte sur les mots-clés de l'utilisateur authentifié.
  */
+@ApiBearerAuth()
 @ApiTags('keywords')
 @Controller('keywords')
 export class KeywordController {
@@ -23,10 +28,10 @@ export class KeywordController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'Mots-clés suivis, avec nombre de produits et dernier scrape' })
+  @ApiOperation({ summary: "Mots-clés suivis par l'utilisateur, avec nombre de produits et dernier scrape" })
   @ApiResponse({ status: 200, type: [KeywordSummaryResponse] })
-  async list(): Promise<KeywordSummaryResponse[]> {
-    const summaries = await this.listSummaries.execute();
+  async list(@CurrentUser() user: UserId): Promise<KeywordSummaryResponse[]> {
+    const summaries = await this.listSummaries.execute(user);
     return summaries.map(KeywordSummaryResponse.from);
   }
 
@@ -35,18 +40,18 @@ export class KeywordController {
   @ApiOperation({ summary: 'Suivre un nouveau mot-clé (ou réactiver un mot-clé retiré)' })
   @ApiResponse({ status: 201, description: 'Mot-clé suivi' })
   @ApiResponse({ status: 400, description: 'Nom vide ou trop long' })
-  @ApiResponse({ status: 409, description: 'Mot-clé déjà suivi' })
-  async track(@Body() dto: TrackKeywordDto): Promise<void> {
-    await this.trackKeyword.execute(dto.keyword);
+  @ApiResponse({ status: 409, description: "Mot-clé déjà suivi par l'utilisateur" })
+  async track(@CurrentUser() user: UserId, @Body() dto: TrackKeywordDto): Promise<void> {
+    await this.trackKeyword.execute(user, dto.keyword);
   }
 
   @Delete(':keyword')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Retirer un mot-clé du suivi' })
+  @ApiOperation({ summary: "Retirer un mot-clé du suivi de l'utilisateur" })
   @ApiParam({ name: 'keyword', example: 'lessive%20liquide' })
   @ApiResponse({ status: 204, description: 'Mot-clé retiré' })
-  @ApiResponse({ status: 404, description: 'Mot-clé inconnu' })
-  async untrack(@Param('keyword') keyword: string): Promise<void> {
-    await this.untrackKeyword.execute(keyword);
+  @ApiResponse({ status: 404, description: "Mot-clé que personne n'a jamais suivi" })
+  async untrack(@CurrentUser() user: UserId, @Param('keyword') keyword: string): Promise<void> {
+    await this.untrackKeyword.execute(user, keyword);
   }
 }
