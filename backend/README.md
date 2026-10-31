@@ -68,20 +68,51 @@ Deux chemins distincts, une seule base :
   produites par le scrapper et le pipeline, le backend ne les modifie jamais,
   donc il n'y a aucun invariant à protéger.
 
+## Authentification
+
+Toute route exige `Authorization: Bearer <jeton interne>`, sauf les sondes
+(`@Public()`) — sinon **401**. Le backend ne parle jamais à Google : le jeton
+est un JWT HS256 de 60 s, signé par le frontend (au nom de l'utilisateur de la
+session Google) ou par le serveur MCP (au nom de `MCP_USER_EMAIL`), avec le
+secret partagé `BACKEND_AUTH_SECRET`. Il porte l'adresse e-mail vérifiée, qui
+sert d'identifiant utilisateur (`shared/domain/user-id.ts`).
+
+La garde est globale et posée par `configureApp` : les tests d'API la
+traversent (`authAs(user)` dans `src/testing/http.ts`), et une route ajoutée
+sans y penser répond 401 plutôt que d'être ouverte.
+
+Pour appeler l'API à la main : `npm run token -- moi@gmail.com` (jeton de
+15 min), à coller dans le bouton « Authorize » de `/docs` ou dans curl.
+
+**Données personnelles** : mots-clés et URLs suivies sont des abonnements
+(`subscribers[]` sur le document partagé, `enabled` dérivé pour le scrapper) ;
+favoris et stations favorites portent un `userId`. Le catalogue (produits,
+scores, carburants) reste commun. Au démarrage, les données antérieures aux
+comptes sont rattachées à `AUTH_LEGACY_OWNER_EMAIL` si elle est renseignée.
+
 ## API
 
-Préfixe `/api/v1` (sauf les sondes, volontairement hors versionnement).
+Préfixe `/api/v1` (sauf les sondes, volontairement hors versionnement). Toutes
+les routes ci-dessous (sauf `/health/*`) répondent **401** sans jeton valide ;
+celles marquées *(perso)* portent sur les données de l'utilisateur du jeton.
 
 | Méthode | Route | Réponses |
 |---|---|---|
-| `GET` | `/api/v1/dashboard` | 200 — compteurs globaux + meilleures affaires par mot-clé |
-| `GET` | `/api/v1/keywords` | 200 — mots-clés suivis + nb de produits + dernier scrape |
-| `POST` | `/api/v1/keywords` | 201 · 400 nom invalide · 409 déjà suivi |
-| `DELETE` | `/api/v1/keywords/{keyword}` | 204 (idempotent) · 404 inconnu |
+| `GET` | `/api/v1/dashboard` | 200 — *(perso)* compteurs + meilleures affaires, sur ses mots-clés et URLs suivies |
+| `GET` | `/api/v1/keywords` | 200 — *(perso)* mots-clés suivis + nb de produits + dernier scrape |
+| `POST` | `/api/v1/keywords` | 201 · 400 nom invalide · 409 déjà suivi *par cet utilisateur* |
+| `DELETE` | `/api/v1/keywords/{keyword}` | 204 (idempotent, ne retire que son abonnement) · 404 suivi par personne |
 | `GET` | `/api/v1/keywords/{keyword}/products` | 200 · 400 filtre invalide |
 | `GET` | `/api/v1/products/{id}` | 200 · 400 id mal formé · 404 inconnu |
 | `GET` | `/api/v1/fuel-stations` | 200 — stations autour d'un point · 400 position/rayon/carburant/tri invalide |
-| `GET` | `/api/v1/fuel-stations/favorites` | 200 — stations favorites (`id`, `addedAt`) |
+| `GET` | `/api/v1/product-urls` | 200 — *(perso)* URLs suivies à l'unité |
+| `POST` | `/api/v1/product-urls` | 201 · 400 URL invalide · 409 déjà suivie par cet utilisateur |
+| `DELETE` | `/api/v1/product-urls/{id}` | 204 · 400 id mal formé · 404 suivie par personne |
+| `GET` | `/api/v1/favorites` | 200 — *(perso)* favoris, fiche complète |
+| `GET` | `/api/v1/favorites/{id}` | 200 — *(perso)* `{ isFavorite }` |
+| `POST` | `/api/v1/favorites` | 201 (idempotent, suit aussi l'URL) · 400 id mal formé |
+| `DELETE` | `/api/v1/favorites/{id}` | 204 (idempotent) · 400 id mal formé |
+| `GET` | `/api/v1/fuel-stations/favorites` | 200 — *(perso)* stations favorites (`id`, `addedAt`) |
 | `PUT` | `/api/v1/fuel-stations/favorites/{id}` | 204 (idempotent) · 400 id mal formé · 404 station absente du flux |
 | `DELETE` | `/api/v1/fuel-stations/favorites/{id}` | 204 (idempotent) · 400 id mal formé |
 | `GET` | `/health/live` | 200 — le processus répond |
@@ -145,11 +176,13 @@ La base est partagée entre les services ; l'écriture ne l'est pas.
 
 | Collection | Écrite par | Lue par le backend |
 |---|---|---|
-| `keywords` | **backend** (et encore le scrapper, cf. dette ci-dessous) | oui |
+| `keywords` | **backend** — `subscribers[]` + `enabled` dérivé (et seed du scrapper, cf. dette ci-dessous) | oui |
+| `tracked_urls` | **backend** — même modèle que `keywords` ; lue par le scrapper et la purge | oui |
+| `favorites` | **backend** — `{ userId, url }` ; `url` lue par la purge | oui |
 | `items_raw` | scrapper | oui |
 | `price_history`, `deal_scores` | pipeline | oui |
 | `fuel_stations` | pipeline (import du flux carburants) | oui |
-| `favorite_stations` | **backend** (étoile de la carte carburants) — relue par l'alerte de réapprovisionnement du pipeline | oui |
+| `favorite_stations` | **backend** (étoile de la carte carburants) — `{ userId, stationId }`, relue (union de tous les utilisateurs) par l'alerte de réapprovisionnement du pipeline | oui |
 
 **Dette assumée** : le scrapper lit encore `keywords` directement au lieu de
 passer par `GET /api/v1/keywords`, et y seede ses mots-clés par défaut. La

@@ -29,6 +29,40 @@ spec:
             # l'API backend côté serveur, via son Service ClusterIP.
             - name: BACKEND_URL
               value: http://price-tracker-backend
+            # Connexion Google (Auth.js) — cf. frontend/.env.example.
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_SECRET
+            - name: AUTH_GOOGLE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_GOOGLE_ID
+            - name: AUTH_GOOGLE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_GOOGLE_SECRET
+            - name: AUTH_ALLOWED_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_ALLOWED_EMAILS
+                  optional: true
+            - name: AUTH_URL
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_URL
+                  optional: true
+            # Signe le jeton interne qui porte l'identité vers le backend.
+            - name: BACKEND_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: BACKEND_AUTH_SECRET
             - name: NODE_ENV
               value: production
           resources:
@@ -38,16 +72,18 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+          # /api/health est hors du middleware d'authentification : sonder `/`
+          # ne mesurerait plus qu'une redirection vers /login.
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: 3000
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: 3000
             initialDelaySeconds: 15
             periodSeconds: 30

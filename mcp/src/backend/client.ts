@@ -53,14 +53,22 @@ export interface BackendClientOptions {
   timeoutMs: number;
   /** Injectable pour les tests : par défaut le `fetch` global de Node. */
   fetchImpl?: typeof fetch;
+  /**
+   * Valeur de l'en-tête `Authorization`, recalculée à chaque appel (le jeton
+   * interne ne vit que 60 s). Absente : aucun en-tête — le backend répondra
+   * 401, ce que seuls les tests du client peuvent se permettre.
+   */
+  authorization?: () => string;
 }
 
 export class BackendClient {
   private readonly api: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly authorization: (() => string) | undefined;
 
-  constructor({ baseUrl, timeoutMs, fetchImpl }: BackendClientOptions) {
+  constructor({ baseUrl, timeoutMs, fetchImpl, authorization }: BackendClientOptions) {
+    this.authorization = authorization;
     this.api = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
     this.timeoutMs = timeoutMs;
     this.fetchImpl = fetchImpl ?? fetch;
@@ -139,7 +147,9 @@ export class BackendClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await this.fetchWithTimeout(this.api + path, init);
+    const headers = new Headers(init?.headers);
+    if (this.authorization) headers.set('authorization', this.authorization());
+    const response = await this.fetchWithTimeout(this.api + path, { ...init, headers });
     if (!response.ok) throw await toBackendError(response, path);
 
     // POST /keywords répond 201 sans corps et DELETE répond 204 : se fier au

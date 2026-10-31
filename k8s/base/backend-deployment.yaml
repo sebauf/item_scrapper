@@ -33,6 +33,20 @@ spec:
                 secretKeyRef:
                   name: price-tracker-secrets
                   key: MONGODB_URI
+            # Vérifie le jeton qui porte l'identité de l'utilisateur à chaque
+            # appel du frontend ou du MCP. Même valeur dans les trois Deployments.
+            - name: BACKEND_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: BACKEND_AUTH_SECRET
+            # Propriétaire des données antérieures aux comptes (facultatif).
+            - name: AUTH_LEGACY_OWNER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_LEGACY_OWNER_EMAIL
+                  optional: true
             - name: NODE_ENV
               value: production
             - name: PORT

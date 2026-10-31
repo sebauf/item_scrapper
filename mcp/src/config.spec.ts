@@ -3,10 +3,12 @@ import { describe, it } from 'node:test';
 import { McpConfig } from './config.js';
 
 const TOKEN = 'a'.repeat(32);
+/** Variables désormais requises par tous les cas : secret partagé et compte. */
+const BASE = { BACKEND_AUTH_SECRET: 'b'.repeat(32), MCP_USER_EMAIL: 'moi@gmail.com' };
 
 describe('McpConfig', () => {
   it('applique les valeurs par défaut', () => {
-    const config = McpConfig.fromEnv({ MCP_AUTH_TOKEN: TOKEN });
+    const config = McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN });
 
     assert.equal(config.backendUrl, 'http://localhost:3001');
     assert.equal(config.port, 3010);
@@ -16,6 +18,7 @@ describe('McpConfig', () => {
 
   it("retire la barre oblique finale de l'URL du backend", () => {
     const config = McpConfig.fromEnv({
+      ...BASE,
       MCP_AUTH_TOKEN: TOKEN,
       BACKEND_URL: 'http://price-tracker-backend/',
     });
@@ -26,36 +29,64 @@ describe('McpConfig', () => {
   // Le serveur est destiné à être joignable hors du cluster : démarrer sans
   // jeton doit être un choix, jamais un oubli.
   it('refuse de démarrer sans jeton', () => {
-    assert.throws(() => McpConfig.fromEnv({}), /MCP_AUTH_TOKEN est requise/);
+    assert.throws(() => McpConfig.fromEnv({ ...BASE }), /MCP_AUTH_TOKEN est requise/);
   });
 
   it('accepte l\'anonymat quand il est demandé explicitement', () => {
-    const config = McpConfig.fromEnv({ MCP_ALLOW_ANONYMOUS: 'true' });
+    const config = McpConfig.fromEnv({ ...BASE, MCP_ALLOW_ANONYMOUS: 'true' });
 
     assert.equal(config.authToken, null);
   });
 
   it('refuse un jeton trop court', () => {
-    assert.throws(() => McpConfig.fromEnv({ MCP_AUTH_TOKEN: 'court' }), /au moins 16/);
+    assert.throws(() => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: 'court' }), /au moins 16/);
   });
 
   it('refuse un port hors bornes', () => {
-    assert.throws(() => McpConfig.fromEnv({ MCP_AUTH_TOKEN: TOKEN, PORT: '0' }), /PORT/);
+    assert.throws(() => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN, PORT: '0' }), /PORT/);
   });
 
   it('refuse une URL de backend sans schéma', () => {
     assert.throws(
-      () => McpConfig.fromEnv({ MCP_AUTH_TOKEN: TOKEN, BACKEND_URL: 'price-tracker-backend' }),
+      () => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN, BACKEND_URL: 'price-tracker-backend' }),
       /BACKEND_URL/,
     );
   });
 
   it('découpe la liste des hôtes autorisés', () => {
     const config = McpConfig.fromEnv({
+      ...BASE,
       MCP_AUTH_TOKEN: TOKEN,
       MCP_ALLOWED_HOSTS: 'mcp.exemple.fr, mcp.interne ',
     });
 
     assert.deepEqual([...config.allowedHosts], ['mcp.exemple.fr', 'mcp.interne']);
+  });
+
+  describe('identité auprès du backend', () => {
+    it('lit le secret partagé et normalise le compte', () => {
+      const config = McpConfig.fromEnv({
+        MCP_AUTH_TOKEN: TOKEN,
+        BACKEND_AUTH_SECRET: 'b'.repeat(32),
+        MCP_USER_EMAIL: ' Moi@Gmail.com ',
+      });
+
+      assert.equal(config.backendAuthSecret, 'b'.repeat(32));
+      assert.equal(config.userEmail, 'moi@gmail.com');
+    });
+
+    it('refuse de démarrer sans secret partagé', () => {
+      assert.throws(
+        () => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN, BACKEND_AUTH_SECRET: '' }),
+        /BACKEND_AUTH_SECRET/,
+      );
+    });
+
+    it('refuse de démarrer sans compte', () => {
+      assert.throws(
+        () => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN, MCP_USER_EMAIL: 'moi' }),
+        /MCP_USER_EMAIL/,
+      );
+    });
   });
 });

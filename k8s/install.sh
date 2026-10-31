@@ -241,6 +241,15 @@ if [[ "$GENERATE_SECRETS" == "true" ]]; then
   # démarre pas. À recopier ensuite dans la configuration de l'agent.
   ask_secret MCP_AUTH_TOKEN "MCP_AUTH_TOKEN (jeton porteur du serveur MCP)" "$(gen_hex_key)"
 
+  # Connexion Google (cf. frontend/.env.example). Les deux secrets internes
+  # sont générés ; le client OAuth vient de la Google Cloud Console.
+  ask_secret BACKEND_AUTH_SECRET "BACKEND_AUTH_SECRET (secret partagé backend/frontend/MCP)" "$(gen_hex_key)"
+  ask_secret AUTH_SECRET "AUTH_SECRET (cookie de session du frontend)" "$(gen_hex_key)"
+  ask AUTH_GOOGLE_ID "AUTH_GOOGLE_ID (client OAuth Google, …apps.googleusercontent.com)"
+  ask_secret AUTH_GOOGLE_SECRET "AUTH_GOOGLE_SECRET"
+  ask OWNER_EMAIL "Ton adresse Google (propriétaire des données existantes, compte du MCP)"
+  ask AUTH_ALLOWED_EMAILS "AUTH_ALLOWED_EMAILS (adresses autorisées, séparées par des virgules)" "$OWNER_EMAIL"
+
   AIRFLOW_SQL_ALCHEMY_CONN="postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@airflow-postgres/airflow"
 
   umask 077
@@ -260,6 +269,14 @@ AIRFLOW_FERNET_KEY=${AIRFLOW_FERNET_KEY}
 AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 
 MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
+
+BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
+AUTH_SECRET=${AUTH_SECRET}
+AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
+AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
+AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS}
+AUTH_LEGACY_OWNER_EMAIL=${OWNER_EMAIL}
+MCP_USER_EMAIL=${OWNER_EMAIL}
 EOF
   chmod 600 "$SECRETS_FILE"
   info "$SECRETS_FILE écrit (permissions 600, non commité)."
@@ -274,6 +291,32 @@ if ! grep -q '^MCP_AUTH_TOKEN=' "$SECRETS_FILE"; then
   warn "MCP_AUTH_TOKEN était absent de $SECRETS_FILE : un jeton a été généré."
   warn "Récupère-le pour la configuration de l'agent :"
   echo "    grep MCP_AUTH_TOKEN $SECRETS_FILE"
+fi
+
+# Même rattrapage pour une installation antérieure à la connexion Google : sans
+# ces clés, backend, frontend et MCP restent en CreateContainerConfigError.
+# Les secrets internes sont générés ; le client OAuth et les adresses ne
+# peuvent pas l'être, ils sont demandés (impossible en mode -y).
+append_secret() { printf '%s=%s\n' "$1" "$2" >> "$SECRETS_FILE"; }
+for __key in BACKEND_AUTH_SECRET AUTH_SECRET; do
+  if ! grep -q "^${__key}=" "$SECRETS_FILE"; then
+    append_secret "$__key" "$(gen_hex_key)"
+    warn "$__key était absent de $SECRETS_FILE : une valeur a été générée."
+  fi
+done
+if ! grep -q '^AUTH_GOOGLE_ID=' "$SECRETS_FILE"; then
+  warn "Connexion Google à configurer : client OAuth absent de $SECRETS_FILE."
+  ask AUTH_GOOGLE_ID "AUTH_GOOGLE_ID (client OAuth Google, …apps.googleusercontent.com)"
+  ask_secret AUTH_GOOGLE_SECRET "AUTH_GOOGLE_SECRET"
+  append_secret AUTH_GOOGLE_ID "$AUTH_GOOGLE_ID"
+  append_secret AUTH_GOOGLE_SECRET "$AUTH_GOOGLE_SECRET"
+fi
+if ! grep -q '^MCP_USER_EMAIL=' "$SECRETS_FILE"; then
+  ask OWNER_EMAIL "Ton adresse Google (propriétaire des données existantes, compte du MCP)"
+  ask AUTH_ALLOWED_EMAILS "AUTH_ALLOWED_EMAILS (adresses autorisées, séparées par des virgules)" "$OWNER_EMAIL"
+  append_secret AUTH_ALLOWED_EMAILS "$AUTH_ALLOWED_EMAILS"
+  append_secret AUTH_LEGACY_OWNER_EMAIL "$OWNER_EMAIL"
+  append_secret MCP_USER_EMAIL "$OWNER_EMAIL"
 fi
 
 # ---------------------------------------------------------------------------

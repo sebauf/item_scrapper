@@ -19,6 +19,13 @@ export class McpConfig {
      * pas le nom d'hôte de déploiement et qu'on ne veut rien coder en dur.
      */
     readonly allowedHosts: readonly string[],
+    /** Secret partagé avec le backend : signe le jeton interne de chaque appel. */
+    readonly backendAuthSecret: string,
+    /**
+     * Compte au nom duquel agissent les outils : ce sont ses mots-clés, ses
+     * favoris et ses URLs suivies que l'agent lit et modifie.
+     */
+    readonly userEmail: string,
   ) {}
 
   static fromEnv(env: NodeJS.ProcessEnv): McpConfig {
@@ -59,6 +66,22 @@ export class McpConfig {
       .map((host) => host.trim())
       .filter(Boolean);
 
+    // Le backend refuse toute requête sans jeton signé : sans ces deux
+    // variables, chaque outil échouerait en 401. Autant le dire au démarrage.
+    const backendAuthSecret = (env.BACKEND_AUTH_SECRET ?? '').trim();
+    if (backendAuthSecret.length < 32) {
+      errors.push(
+        'BACKEND_AUTH_SECRET est requise (même valeur que le backend, 32 caractères minimum).',
+      );
+    }
+
+    const userEmail = (env.MCP_USER_EMAIL ?? '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail)) {
+      errors.push(
+        "MCP_USER_EMAIL est requise : l'adresse Google du compte au nom duquel l'agent agit.",
+      );
+    }
+
     if (errors.length > 0) {
       throw new Error(`Configuration invalide :\n  - ${errors.join('\n  - ')}`);
     }
@@ -69,6 +92,8 @@ export class McpConfig {
       allowAnonymous && !token ? null : token,
       backendTimeoutMs,
       Object.freeze(allowedHosts),
+      backendAuthSecret,
+      userEmail,
     );
   }
 }

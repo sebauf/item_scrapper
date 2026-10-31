@@ -1,4 +1,5 @@
 import { BackendClient } from './backend/client.js';
+import { signInternalToken } from './backend/internal-token.js';
 import { McpConfig } from './config.js';
 import { createHttpServer, logError } from './http.js';
 import { SERVER_NAME, SERVER_VERSION } from './server.js';
@@ -8,6 +9,7 @@ function bootstrap(): void {
   const backend = new BackendClient({
     baseUrl: config.backendUrl,
     timeoutMs: config.backendTimeoutMs,
+    authorization: () => `Bearer ${signInternalToken(config.userEmail, config.backendAuthSecret)}`,
   });
 
   const server = createHttpServer(config, backend);
@@ -15,7 +17,8 @@ function bootstrap(): void {
   server.listen(config.port, '0.0.0.0', () => {
     console.log(
       `[mcp] ${SERVER_NAME} v${SERVER_VERSION} prêt sur http://0.0.0.0:${config.port}/mcp ` +
-        `(backend: ${config.backendUrl}, auth: ${config.authToken === null ? 'ANONYME' : 'bearer'})`,
+        `(backend: ${config.backendUrl}, auth: ${config.authToken === null ? 'ANONYME' : 'bearer'}, ` +
+        `compte: ${config.userEmail})`,
     );
     if (config.authToken === null) {
       console.warn(

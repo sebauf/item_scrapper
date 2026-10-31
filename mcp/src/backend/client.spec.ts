@@ -143,3 +143,42 @@ describe('BackendClient', () => {
     assert.deepEqual(calls, ['http://backend/health/ready']);
   });
 });
+
+describe('BackendClient — identité', () => {
+  it('signe chaque appel au nom du compte configuré, avec un jeton refait à chaque fois', async () => {
+    const seen: (string | null)[] = [];
+    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get('authorization'));
+      return new Response('[]', { status: 200 });
+    }) as typeof fetch;
+    let n = 0;
+    const backend = new BackendClient({
+      baseUrl: 'http://backend',
+      timeoutMs: 1000,
+      fetchImpl,
+      authorization: () => `Bearer jeton-${++n}`,
+    });
+
+    await backend.listKeywords();
+    await backend.trackKeyword('lessive');
+
+    assert.deepEqual(seen, ['Bearer jeton-1', 'Bearer jeton-2']);
+  });
+
+  it('conserve les autres en-têtes de la requête', async () => {
+    let contentType: string | null = null;
+    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+      contentType = new Headers(init?.headers).get('content-type');
+      return new Response('', { status: 201 });
+    }) as typeof fetch;
+
+    await new BackendClient({
+      baseUrl: 'http://backend',
+      timeoutMs: 1000,
+      fetchImpl,
+      authorization: () => 'Bearer x',
+    }).trackKeyword('lessive');
+
+    assert.equal(contentType, 'application/json');
+  });
+});

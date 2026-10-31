@@ -67,7 +67,11 @@ def run(db, *imports, w=None, favorites=frozenset()):
     part sur le réseau, mais l'état est tenu comme en production."""
     w = replace(w or watch(), webhook_url=None)
     for station_id in favorites:
-        db["favorite_stations"].replace_one({"_id": station_id}, {"addedAt": NOW}, upsert=True)
+        db["favorite_stations"].replace_one(
+            {"userId": "moi@gmail.com", "stationId": station_id},
+            {"userId": "moi@gmail.com", "stationId": station_id, "addedAt": NOW},
+            upsert=True,
+        )
     restocks = []
     for i, records in enumerate(imports):
         now = NOW + i * STEP
@@ -219,7 +223,7 @@ def test_le_retour_n_alerte_qu_une_fois(db):
 def test_oublie_l_etat_d_une_favorite_retiree(db):
     w = watch(**NO_ZONE)
     run(db, [in_shortage(1), in_shortage(2)], w=w, favorites={"1", "2"})
-    db["favorite_stations"].delete_one({"_id": "2"})
+    db["favorite_stations"].delete_one({"stationId": "2"})
 
     run(db, [in_shortage(1), in_shortage(2)], w=w)
 
@@ -416,8 +420,31 @@ def test_un_echec_d_envoi_garde_la_rupture_et_reessaie_au_prochain_import(db, mo
 
 def test_lit_les_favorites_ecrites_par_le_backend(db):
     db["favorite_stations"].insert_many([
+        {"userId": "moi@gmail.com", "stationId": "69003001", "addedAt": NOW},
+        {"userId": "moi@gmail.com", "stationId": "13001001", "addedAt": NOW},
+    ])
+
+    assert favorite_station_ids(db) == {"69003001", "13001001"}
+
+
+def test_surveille_l_union_des_favorites_de_tous_les_utilisateurs(db):
+    # Un seul webhook pour tous : la station favorite de Bob alerte aussi, et
+    # une station mise en favori par deux comptes n'est surveillée qu'une fois.
+    db["favorite_stations"].insert_many([
+        {"userId": "moi@gmail.com", "stationId": "69003001", "addedAt": NOW},
+        {"userId": "bob@gmail.com", "stationId": "69003001", "addedAt": NOW},
+        {"userId": "bob@gmail.com", "stationId": "13001001", "addedAt": NOW},
+    ])
+
+    assert favorite_station_ids(db) == {"69003001", "13001001"}
+
+
+def test_lit_encore_une_favorite_anterieure_aux_comptes(db):
+    # Avant les comptes, `_id` était l'identifiant de la station. Une favorite
+    # que le backend n'a pas encore rattachée doit rester surveillée.
+    db["favorite_stations"].insert_many([
         {"_id": "69003001", "addedAt": NOW},
-        {"_id": "13001001", "addedAt": NOW},
+        {"_id": "13001001", "userId": "moi@gmail.com", "stationId": "13001001", "addedAt": NOW},
     ])
 
     assert favorite_station_ids(db) == {"69003001", "13001001"}

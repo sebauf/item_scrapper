@@ -20,6 +20,10 @@ const INSTRUCTIONS = `Suivi de prix de produits e-commerce (Amazon).
 Un scrapper relève chaque jour les produits correspondant aux mots-clés suivis,
 puis un pipeline reconstruit l'historique de prix et calcule un score d'affaire.
 
+Les mots-clés, favoris et URLs suivies sont personnels : tous les outils lisent
+et modifient ceux d'un seul compte utilisateur, fixé par la configuration du
+serveur. Retirer un mot-clé ne le retire pas aux autres utilisateurs.
+
 Le score compare le prix du jour à la moyenne glissante 30 jours *du même
 produit* : un score positif signifie « moins cher que d'habitude ». Il n'y a
 aucune comparaison entre produits différents. Un produit avec moins de
