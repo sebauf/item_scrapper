@@ -9,7 +9,8 @@ import { defineConfig } from 'vitest/config';
  *
  * Aucun test n'ouvre de connexion réseau : `fetch` est toujours bouchonné, et
  * `BACKEND_URL` est figé ici pour que les assertions d'URL ne dépendent pas de
- * l'environnement de la machine qui exécute les tests.
+ * l'environnement de la machine qui exécute les tests — de même que
+ * `BACKEND_AUTH_SECRET`, qui signe le jeton interne.
  */
 export default defineConfig({
   plugins: [tsconfigPaths(), react()],
@@ -17,7 +18,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
-    env: { BACKEND_URL: 'http://backend.test' },
+    env: {
+      BACKEND_URL: 'http://backend.test',
+      BACKEND_AUTH_SECRET: 'test-backend-secret-'.padEnd(48, 'x'),
+    },
     restoreMocks: true,
   },
 });

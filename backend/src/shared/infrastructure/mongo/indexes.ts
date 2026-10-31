@@ -1,4 +1,4 @@
-import { CreateIndexesOptions, Db, IndexSpecification } from 'mongodb';
+import { CreateIndexesOptions, Db, IndexSpecification, MongoServerError } from 'mongodb';
 
 /**
  * Index requis par les lectures du backend.
@@ -97,7 +97,7 @@ export const REQUIRED_INDEXES: readonly IndexDefinition[] = [
 export async function ensureIndexes(db: Db): Promise<string[]> {
   const created: string[] = [];
   for (const index of REQUIRED_INDEXES) {
-    const existing = await db.collection(index.collection).indexExists(index.name);
+    const existing = await indexExists(db, index.collection, index.name);
     if (existing) continue;
     await db
       .collection(index.collection)
@@ -105,4 +105,23 @@ export async function ensureIndexes(db: Db): Promise<string[]> {
     created.push(`${index.collection}.${index.name}`);
   }
   return created;
+}
+
+/** Code Mongo d'une collection inexistante. */
+const NAMESPACE_NOT_FOUND = 26;
+
+/**
+ * `indexExists` lève `NamespaceNotFound` sur une collection qui n'existe pas
+ * encore — `favorites` tant que personne n'a mis de favori, `price_history`
+ * avant le premier passage du pipeline. Ce n'est pas une erreur ici : l'index
+ * n'existe pas, et `createIndex` créera la collection avec lui. Sans ce cas,
+ * le backend refusait de démarrer sur une base neuve.
+ */
+async function indexExists(db: Db, collection: string, name: string): Promise<boolean> {
+  try {
+    return await db.collection(collection).indexExists(name);
+  } catch (error) {
+    if (error instanceof MongoServerError && error.code === NAMESPACE_NOT_FOUND) return false;
+    throw error;
+  }
 }

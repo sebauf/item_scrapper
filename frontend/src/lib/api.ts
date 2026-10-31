@@ -1,13 +1,20 @@
+import { redirect } from 'next/navigation';
+import { auth } from '@/auth';
 import type { components } from './api-types';
+import { signInternalToken } from './internal-token';
 
 /**
  * Client de l'API backend.
  *
- * C'est désormais le seul chemin d'accès aux données : le frontend n'ouvre plus
- * de connexion MongoDB. Tous les appels partent du serveur Next (Server
+ * C'est le seul chemin d'accès aux données : le frontend n'ouvre pas de
+ * connexion MongoDB. Tous les appels partent du serveur Next (Server
  * Components et Server Actions), jamais du navigateur — le backend est un
  * Service ClusterIP sans Ingress, injoignable depuis l'extérieur du cluster.
- * D'où l'absence de CORS et d'authentification à ce stade.
+ * D'où l'absence de CORS.
+ *
+ * Chaque appel porte l'identité de l'utilisateur connecté, sous la forme d'un
+ * jeton interne signé (cf. `internal-token.ts`) : c'est elle qui détermine
+ * quels mots-clés, favoris et stations le backend renvoie et modifie.
  *
  * Les types viennent de `api-types.ts`, généré depuis le contrat OpenAPI du
  * backend (`npm run gen:api`). Une réponse qui changerait de forme casserait
@@ -75,7 +82,11 @@ async function toApiError(response: Response, path: string): Promise<ApiError> {
  * séparément, pas au milieu d'une migration.
  */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(API + path, { cache: 'no-store', ...init });
+  const response = await fetch(API + path, {
+    cache: 'no-store',
+    ...init,
+    headers: { ...(init?.headers as Record<string, string> | undefined), ...(await authorization()) },
+  });
   if (!response.ok) throw await toApiError(response, path);
 
   // Toutes les réponses de succès ne portent pas un corps : POST /keywords
@@ -83,6 +94,26 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // ferait échouer le parsing JSON sur un 201 pourtant réussi.
   const body = await response.text();
   return (body ? JSON.parse(body) : undefined) as T;
+}
+
+/**
+ * En-tête `Authorization` au nom de l'utilisateur de la session.
+ *
+ * Sans session, on renvoie vers la connexion plutôt que d'appeler le backend
+ * pour un 401 certain. Le middleware empêche normalement d'arriver ici sans
+ * session ; ce garde couvre le cas où il aurait été contourné ou mal
+ * configuré (`redirect` fonctionne dans un Server Component comme dans une
+ * Server Action).
+ */
+async function authorization(): Promise<{ authorization: string }> {
+  const session = await auth();
+  const email = session?.user?.email;
+  if (!email) redirect('/login');
+
+  const secret = process.env.BACKEND_AUTH_SECRET;
+  if (!secret) throw new Error('BACKEND_AUTH_SECRET est requise pour appeler le backend.');
+
+  return { authorization: `Bearer ${signInternalToken(email, secret)}` };
 }
 
 export function getDashboard(): Promise<Dashboard> {
