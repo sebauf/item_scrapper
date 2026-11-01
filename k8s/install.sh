@@ -419,6 +419,19 @@ kubectl -n "$NAMESPACE" delete job airflow-init --ignore-not-found >/dev/null
 
 kubectl apply -k "$OVERLAY_DIR"
 
+# Avant que base/kustomization.yaml ne déclare son namespace, la Secret et la
+# ConfigMap générées partaient dans `default` (les pods lisaient une copie
+# figée dans price-tracker). Ces copies orphelines ne servent à rien et la
+# Secret contient tous les mots de passe : on les retire.
+if kubectl -n default get secret/price-tracker-secrets configmap/price-tracker-config \
+     --ignore-not-found -o name 2>/dev/null | grep -q .; then
+  warn "Copies orphelines de price-tracker-secrets / price-tracker-config trouvées dans 'default'."
+  if confirm "Les supprimer (les pods lisent celles de '$NAMESPACE') ?" y; then
+    kubectl -n default delete secret/price-tracker-secrets configmap/price-tracker-config \
+      --ignore-not-found
+  fi
+fi
+
 # ---------------------------------------------------------------------------
 info "Étape 7 — Vérification du Job airflow-init"
 echo "Attente de la complétion du Job (jusqu'à 2 minutes)..."
