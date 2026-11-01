@@ -418,8 +418,9 @@ with `timezone=UTC`.
   adds it to the favourite stations watched by the restock alert.
   Each station also links to **Google Maps** (`googleMapsUrl` in `lib/fuel.ts`,
   Maps URLs API, no key) — in the list (a sibling of the select button, like the
-  star) and in the map popup next to the OSM itinerary. The link targets the
-  station's coordinates, not its address (free-text addresses can match another place).
+  star) and in the map popup next to the OSM itinerary. The link is a text search
+  « brand, address, postcode city » so Google resolves the station's place card
+  (better navigation); coordinates only when the feed has no address.
 
 ### Key frontend files
 

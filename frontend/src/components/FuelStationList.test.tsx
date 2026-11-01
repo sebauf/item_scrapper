@@ -78,7 +78,7 @@ describe('FuelStationList', () => {
     const { onSelect } = renderList();
 
     const link = screen.getByRole('link', { name: 'Ouvrir TotalEnergies dans Google Maps' });
-    expect(link).toHaveAttribute('href', 'https://www.google.com/maps/search/?api=1&query=45.75938%2C4.85491');
+    expect(link).toHaveAttribute('href', `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent('TotalEnergies, 12 avenue Félix Faure, 69003 Lyon').replace(/%20/g, '+')}`);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link.closest('button')).toBeNull();
 
