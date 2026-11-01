@@ -5,6 +5,7 @@ import {
   formatDistance,
   formatLiterPrice,
   fuelOf,
+  googleMapsUrl,
   stationLabel,
   type PriceTier,
 } from '@/lib/fuel';
@@ -144,13 +145,27 @@ export function FuelStationList({
               </div>
               {freshest && <p className="mt-1.5 text-[11px] text-faint">Dernière déclaration {timeAgo(freshest)}</p>}
             </button>
-            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+            {/* Même raison que l'étoile : un lien dans un bouton est du HTML invalide. */}
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1.5">
               <FavoriteStationButton
                 // `key` : un nouveau résultat serveur doit réinitialiser l'état optimiste.
                 key={String(station.isFavorite)}
                 stationId={station.id}
                 initialFavorite={station.isFavorite}
               />
+              <a
+                href={googleMapsUrl(station)}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Ouvrir ${label.title} dans Google Maps`}
+                title="Ouvrir dans Google Maps"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z" />
+                  <circle cx="12" cy="9.5" r="2.5" strokeWidth={2} />
+                </svg>
+              </a>
             </div>
           </li>
         );

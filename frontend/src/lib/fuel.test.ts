@@ -7,6 +7,7 @@ import {
   DEFAULT_CENTER,
   formatDistance,
   formatLiterPrice,
+  googleMapsUrl,
   parseFuelSearchParams,
   priceTiers,
   stationLabel,
@@ -135,6 +136,16 @@ describe('formats', () => {
   it('affiche la distance en mètres sous le kilomètre', () => {
     expect(formatDistance(0.4)).toBe('400 m');
     expect(formatDistance(12.345)).toBe('12,3 km');
+  });
+});
+
+describe('googleMapsUrl', () => {
+  it('pointe sur les coordonnées de la station', () => {
+    const url = new URL(googleMapsUrl(aFuelStation({ latitude: 45.75938, longitude: 4.85491 })));
+
+    expect(url.origin + url.pathname).toBe('https://www.google.com/maps/search/');
+    expect(url.searchParams.get('api')).toBe('1');
+    expect(url.searchParams.get('query')).toBe('45.75938,4.85491');
   });
 });
 

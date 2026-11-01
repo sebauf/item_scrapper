@@ -192,6 +192,20 @@ export function brandOptions(brands: BrandCount[], selected: string | null): Bra
   );
 }
 
+/**
+ * Lien Google Maps vers une station (API « Maps URLs », sans clé ni quota) :
+ * ouvre l'application sur mobile, le site sinon.
+ *
+ * Recherche par **coordonnées**, pas par adresse : celles du flux officiel
+ * désignent la station elle-même, alors qu'une adresse texte (« RN 7 »,
+ * « Centre commercial ») peut tomber sur un autre lieu. Google y pose une
+ * épingle, d'où l'itinéraire est à un geste.
+ */
+export function googleMapsUrl(station: Pick<FuelStation, 'latitude' | 'longitude'>): string {
+  const sp = new URLSearchParams({ api: '1', query: `${station.latitude},${station.longitude}` });
+  return `https://www.google.com/maps/search/?${sp.toString()}`;
+}
+
 export function fuelOf(station: FuelStation, code: FuelCode): FuelPrice | null {
   return station.fuels.find((fuel) => fuel.code === code) ?? null;
 }
