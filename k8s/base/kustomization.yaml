@@ -1,6 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Les manifests déclarent déjà leur namespace, mais pas les objets produits par
+# configMapGenerator / secretGenerator : sans cette ligne, ils atterrissent dans
+# `default` et les pods continuent de lire une ancienne copie dans price-tracker.
+namespace: price-tracker
+
 resources:
   - namespace.yaml
   - backend-deployment.yaml
