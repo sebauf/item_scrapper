@@ -1,3 +1,7 @@
+// Verrou : ce module lit la session et signe le jeton interne avec
+// BACKEND_AUTH_SECRET. Importé par erreur depuis un composant client, il ferait
+// échouer le build au lieu d'embarquer ce code dans le navigateur.
+import 'server-only';
 import { redirect } from 'next/navigation';
 import { auth } from '@/auth';
 import type { components } from './api-types';

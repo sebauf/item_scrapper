@@ -36,6 +36,11 @@ export class MongoTrackedUrlRepository extends TrackedUrlRepository {
     return TrackedUrl.rehydrate(owner, url, (doc.subscribers ?? []).includes(owner.value));
   }
 
+  /** Servi par l'index multikey `tracked_urls.subscribers`. */
+  countTrackedBy(owner: UserId): Promise<number> {
+    return this.collection.countDocuments({ subscribers: owner.value });
+  }
+
   /** Abonnement et `enabled` écrits ensemble, cf. `subscriptionUpdate`. */
   async save(tracked: TrackedUrl): Promise<void> {
     await this.collection.updateOne(

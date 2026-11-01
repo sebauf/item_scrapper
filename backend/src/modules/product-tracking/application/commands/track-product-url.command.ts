@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { UserId } from 'src/shared/domain/user-id';
 import { ProductUrl } from '../../domain/product-url';
 import { TrackedUrl } from '../../domain/tracked-url';
+import { TrackedUrlQuota } from '../../domain/tracked-url-quota';
 import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
 
 /**
@@ -15,18 +16,21 @@ import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
  */
 @Injectable()
 export class TrackProductUrlCommand {
-  constructor(private readonly trackedUrls: TrackedUrlRepository) {}
+  constructor(
+    private readonly trackedUrls: TrackedUrlRepository,
+    private readonly quota: TrackedUrlQuota,
+  ) {}
 
   async execute(owner: UserId, rawUrl: unknown): Promise<void> {
     const url = ProductUrl.create(rawUrl);
     const existing = await this.trackedUrls.findByUrl(owner, url);
 
-    if (existing === null) {
-      await this.trackedUrls.save(TrackedUrl.track(owner, url));
-      return;
-    }
+    const tracked = existing ?? TrackedUrl.track(owner, url);
+    if (existing !== null) existing.retrack(); // lève ProductUrlAlreadyTracked si `owner` la suit déjà
 
-    existing.retrack(); // lève ProductUrlAlreadyTracked si `owner` la suit déjà
-    await this.trackedUrls.save(existing);
+    // Après « déjà suivie » : AddFavoriteCommand avale ce 409-là, pas celui du
+    // quota, qui doit remonter jusqu'au bouton étoile.
+    this.quota.assertCanTrackOneMore(await this.trackedUrls.countTrackedBy(owner));
+    await this.trackedUrls.save(tracked);
   }
 }

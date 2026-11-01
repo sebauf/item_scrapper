@@ -46,8 +46,8 @@ describe('FavoriteButton', () => {
   it('bascule sans attendre la réponse du serveur', async () => {
     let resolveAction: () => void = () => undefined;
     vi.mocked(actions.addFavoriteAction).mockReturnValue(
-      new Promise<void>((resolve) => {
-        resolveAction = resolve;
+      new Promise<{ error?: string }>((resolve) => {
+        resolveAction = () => resolve({});
       }),
     );
     render(<FavoriteButton productId="aWQ" initialFavorite={false} />);
@@ -66,6 +66,18 @@ describe('FavoriteButton', () => {
 
     await waitFor(() => expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'false'));
     expect(screen.getByRole('button')).toHaveAccessibleName(/Favoris/);
+  });
+
+  it('annonce un refus métier (quota) et revient en arrière', async () => {
+    vi.mocked(actions.addFavoriteAction).mockResolvedValue({
+      error: 'Vous suivez déjà 100 produits (favoris compris), le maximum autorisé.',
+    });
+    render(<FavoriteButton productId="aWQ" initialFavorite={false} />);
+
+    await userEvent.click(screen.getByRole('button'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vous suivez déjà 100 produits');
+    expect(screen.getByRole('button')).toHaveAttribute('aria-pressed', 'false');
   });
 
   it.each([

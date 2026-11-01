@@ -19,7 +19,11 @@ export class McpConfig {
      * pas le nom d'hôte de déploiement et qu'on ne veut rien coder en dur.
      */
     readonly allowedHosts: readonly string[],
-    /** Secret partagé avec le backend : signe le jeton interne de chaque appel. */
+    /**
+     * Secret propre au MCP, connu du backend (`MCP_BACKEND_AUTH_SECRET`) :
+     * signe le jeton interne de chaque appel. Distinct de celui du frontend —
+     * le backend n'accepte ce secret que pour `userEmail`.
+     */
     readonly backendAuthSecret: string,
     /**
      * Compte au nom duquel agissent les outils : ce sont ses mots-clés, ses
@@ -68,10 +72,10 @@ export class McpConfig {
 
     // Le backend refuse toute requête sans jeton signé : sans ces deux
     // variables, chaque outil échouerait en 401. Autant le dire au démarrage.
-    const backendAuthSecret = (env.BACKEND_AUTH_SECRET ?? '').trim();
+    const backendAuthSecret = (env.MCP_BACKEND_AUTH_SECRET ?? '').trim();
     if (backendAuthSecret.length < 32) {
       errors.push(
-        'BACKEND_AUTH_SECRET est requise (même valeur que le backend, 32 caractères minimum).',
+        'MCP_BACKEND_AUTH_SECRET est requise (même valeur que côté backend, 32 caractères minimum).',
       );
     }
 

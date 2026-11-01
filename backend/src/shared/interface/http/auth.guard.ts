@@ -10,6 +10,7 @@ import { Reflector } from '@nestjs/core';
 import { UserId } from 'src/shared/domain/user-id';
 import {
   InvalidInternalToken,
+  TokenIssuer,
   verifyInternalToken,
 } from 'src/shared/infrastructure/auth/internal-token';
 
@@ -41,7 +42,7 @@ export class AuthGuard implements CanActivate {
 
   constructor(
     private readonly reflector: Reflector,
-    private readonly secret: string,
+    private readonly issuers: readonly TokenIssuer[],
   ) {}
 
   canActivate(context: ExecutionContext): boolean {
@@ -59,7 +60,7 @@ export class AuthGuard implements CanActivate {
     if (!token) throw new UnauthorizedException('Authentification requise.');
 
     try {
-      request.user = verifyInternalToken(token, this.secret).userId;
+      request.user = verifyInternalToken(token, this.issuers).userId;
       return true;
     } catch (error) {
       if (!(error instanceof InvalidInternalToken)) throw error;

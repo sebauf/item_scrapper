@@ -243,7 +243,9 @@ if [[ "$GENERATE_SECRETS" == "true" ]]; then
 
   # Connexion Google (cf. frontend/.env.example). Les deux secrets internes
   # sont générés ; le client OAuth vient de la Google Cloud Console.
-  ask_secret BACKEND_AUTH_SECRET "BACKEND_AUTH_SECRET (secret partagé backend/frontend/MCP)" "$(gen_hex_key)"
+  ask_secret BACKEND_AUTH_SECRET "BACKEND_AUTH_SECRET (secret frontend → backend)" "$(gen_hex_key)"
+  ask_secret MCP_BACKEND_AUTH_SECRET "MCP_BACKEND_AUTH_SECRET (secret MCP → backend, différent)" "$(gen_hex_key)"
+  ask AUTH_URL "AUTH_URL (URL publique HTTPS du frontend, ex. https://prix.example.fr)"
   ask_secret AUTH_SECRET "AUTH_SECRET (cookie de session du frontend)" "$(gen_hex_key)"
   ask AUTH_GOOGLE_ID "AUTH_GOOGLE_ID (client OAuth Google, …apps.googleusercontent.com)"
   ask_secret AUTH_GOOGLE_SECRET "AUTH_GOOGLE_SECRET"
@@ -271,7 +273,9 @@ AIRFLOW_SECRET_KEY=${AIRFLOW_SECRET_KEY}
 MCP_AUTH_TOKEN=${MCP_AUTH_TOKEN}
 
 BACKEND_AUTH_SECRET=${BACKEND_AUTH_SECRET}
+MCP_BACKEND_AUTH_SECRET=${MCP_BACKEND_AUTH_SECRET}
 AUTH_SECRET=${AUTH_SECRET}
+AUTH_URL=${AUTH_URL}
 AUTH_GOOGLE_ID=${AUTH_GOOGLE_ID}
 AUTH_GOOGLE_SECRET=${AUTH_GOOGLE_SECRET}
 AUTH_ALLOWED_EMAILS=${AUTH_ALLOWED_EMAILS}
@@ -298,7 +302,7 @@ fi
 # Les secrets internes sont générés ; le client OAuth et les adresses ne
 # peuvent pas l'être, ils sont demandés (impossible en mode -y).
 append_secret() { printf '%s=%s\n' "$1" "$2" >> "$SECRETS_FILE"; }
-for __key in BACKEND_AUTH_SECRET AUTH_SECRET; do
+for __key in BACKEND_AUTH_SECRET MCP_BACKEND_AUTH_SECRET AUTH_SECRET; do
   if ! grep -q "^${__key}=" "$SECRETS_FILE"; then
     append_secret "$__key" "$(gen_hex_key)"
     warn "$__key était absent de $SECRETS_FILE : une valeur a été générée."
@@ -310,6 +314,10 @@ if ! grep -q '^AUTH_GOOGLE_ID=' "$SECRETS_FILE"; then
   ask_secret AUTH_GOOGLE_SECRET "AUTH_GOOGLE_SECRET"
   append_secret AUTH_GOOGLE_ID "$AUTH_GOOGLE_ID"
   append_secret AUTH_GOOGLE_SECRET "$AUTH_GOOGLE_SECRET"
+fi
+if ! grep -q '^AUTH_URL=' "$SECRETS_FILE"; then
+  ask AUTH_URL "AUTH_URL (URL publique HTTPS du frontend, ex. https://prix.example.fr)"
+  append_secret AUTH_URL "$AUTH_URL"
 fi
 if ! grep -q '^MCP_USER_EMAIL=' "$SECRETS_FILE"; then
   ask OWNER_EMAIL "Ton adresse Google (propriétaire des données existantes, compte du MCP)"

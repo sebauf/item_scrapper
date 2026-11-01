@@ -39,6 +39,11 @@ export class MongoKeywordRepository extends KeywordRepository {
     return Keyword.rehydrate(owner, name, (doc.subscribers ?? []).includes(owner.value));
   }
 
+  /** Servi par l'index multikey `keywords.subscribers`. */
+  countTrackedBy(owner: UserId): Promise<number> {
+    return this.collection.countDocuments({ subscribers: owner.value });
+  }
+
   /**
    * Upsert : le premier abonné crée le document, que le scrapper relèvera dès
    * son prochain passage. Le dernier désabonnement le passe à `enabled: false`

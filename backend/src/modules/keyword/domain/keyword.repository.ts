@@ -22,6 +22,9 @@ export abstract class KeywordRepository {
    */
   abstract findByName(owner: UserId, name: KeywordName): Promise<Keyword | null>;
 
+  /** Nombre de mots-clés que suit `owner` — pour le quota. */
+  abstract countTrackedBy(owner: UserId): Promise<number>;
+
   /** Persiste l'abonnement de `keyword.owner`, sans toucher à ceux des autres. */
   abstract save(keyword: Keyword): Promise<void>;
 }

@@ -31,5 +31,5 @@ export function configureApp(app: INestApplication): void {
   // Toute route exige un jeton interne valide, sauf celles marquées @Public()
   // (les sondes). Posée ici et non dans un module pour que les tests d'API la
   // traversent : une route oubliée sans protection se verrait en CI.
-  app.useGlobalGuards(new AuthGuard(app.get(Reflector), app.get(AppConfig).authSecret));
+  app.useGlobalGuards(new AuthGuard(app.get(Reflector), app.get(AppConfig).tokenIssuers));
 }

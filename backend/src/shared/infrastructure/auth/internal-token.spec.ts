@@ -1,12 +1,21 @@
 import { createHmac } from 'node:crypto';
+import { UserId } from 'src/shared/domain/user-id';
 import {
+  FRONTEND_ISSUER,
   INTERNAL_TOKEN_AUDIENCE,
   InvalidInternalToken,
+  MCP_ISSUER,
   signInternalToken,
+  TokenIssuer,
   verifyInternalToken,
 } from './internal-token';
 
 const SECRET = 'a'.repeat(48);
+const MCP_SECRET = 'm'.repeat(48);
+const ISSUERS: TokenIssuer[] = [
+  { issuer: FRONTEND_ISSUER, secret: SECRET },
+  { issuer: MCP_ISSUER, secret: MCP_SECRET, onlySubject: UserId.create('agent@example.com') },
+];
 const NOW = new Date('2026-10-31T12:00:00.000Z');
 const nowSeconds = NOW.getTime() / 1000;
 
@@ -20,7 +29,7 @@ function craft(header: object, payload: object, secret = SECRET): string {
 
 const validPayload = {
   sub: 'alice@example.com',
-  iss: 'price-tracker-frontend',
+  iss: FRONTEND_ISSUER,
   aud: INTERNAL_TOKEN_AUDIENCE,
   iat: nowSeconds,
   exp: nowSeconds + 60,
@@ -28,25 +37,34 @@ const validPayload = {
 
 describe('jeton interne', () => {
   it('fait l’aller-retour signature → vérification', () => {
-    const token = signInternalToken({ sub: 'Alice@Example.com', iss: 'test' }, SECRET, NOW);
+    const token = signInternalToken({ sub: 'Alice@Example.com', iss: FRONTEND_ISSUER }, SECRET, NOW);
 
-    const identity = verifyInternalToken(token, SECRET, NOW);
+    const identity = verifyInternalToken(token, ISSUERS, NOW);
 
     expect(identity.userId.value).toBe('alice@example.com');
-    expect(identity.issuer).toBe('test');
+    expect(identity.issuer).toBe(FRONTEND_ISSUER);
   });
 
   it('accepte un jeton fabriqué à la main selon le même contrat (frontend, MCP)', () => {
     const token = craft({ alg: 'HS256', typ: 'JWT' }, validPayload);
 
-    expect(verifyInternalToken(token, SECRET, NOW).userId.value).toBe('alice@example.com');
+    expect(verifyInternalToken(token, ISSUERS, NOW).userId.value).toBe('alice@example.com');
   });
 
   describe('refus', () => {
     function expectRejected(token: string, reason: RegExp, now = NOW): void {
-      expect(() => verifyInternalToken(token, SECRET, now)).toThrow(InvalidInternalToken);
-      expect(() => verifyInternalToken(token, SECRET, now)).toThrow(reason);
+      expect(() => verifyInternalToken(token, ISSUERS, now)).toThrow(InvalidInternalToken);
+      expect(() => verifyInternalToken(token, ISSUERS, now)).toThrow(reason);
     }
+
+    it('un émetteur inconnu', () => {
+      expectRejected(craft({ alg: 'HS256' }, { ...validPayload, iss: 'pirate' }), /émetteur inconnu/);
+    });
+
+    it('un jeton sans émetteur', () => {
+      const { iss: _iss, ...withoutIss } = validPayload;
+      expectRejected(craft({ alg: 'HS256' }, withoutIss), /émetteur inconnu/);
+    });
 
     it('un jeton mal formé', () => {
       expectRejected('abc.def', /format/);
@@ -113,6 +131,41 @@ describe('jeton interne', () => {
       { ...validPayload, iat: nowSeconds - 80, exp: nowSeconds - 20 },
     );
 
-    expect(() => verifyInternalToken(token, SECRET, NOW)).not.toThrow();
+    expect(() => verifyInternalToken(token, ISSUERS, NOW)).not.toThrow();
+  });
+
+  /**
+   * Le cloisonnement qui justifie deux secrets : celui du MCP ne doit ouvrir
+   * que le compte du MCP, et ne doit pas pouvoir se faire passer pour le
+   * frontend.
+   */
+  describe('émetteur restreint (MCP)', () => {
+    const mcpPayload = { ...validPayload, iss: MCP_ISSUER, sub: 'agent@example.com' };
+
+    it('accepte le MCP pour son propre compte', () => {
+      const token = craft({ alg: 'HS256', typ: 'JWT' }, mcpPayload, MCP_SECRET);
+
+      expect(verifyInternalToken(token, ISSUERS, NOW)).toMatchObject({ issuer: MCP_ISSUER });
+    });
+
+    it('refuse le MCP au nom d’un autre compte, même bien signé', () => {
+      const token = craft({ alg: 'HS256' }, { ...mcpPayload, sub: 'alice@example.com' }, MCP_SECRET);
+
+      expect(() => verifyInternalToken(token, ISSUERS, NOW)).toThrow(/non autorisé/);
+    });
+
+    it('refuse le secret du MCP présenté comme jeton du frontend', () => {
+      const token = craft({ alg: 'HS256' }, { ...validPayload, iss: FRONTEND_ISSUER }, MCP_SECRET);
+
+      expect(() => verifyInternalToken(token, ISSUERS, NOW)).toThrow(/signature/);
+    });
+
+    it('refuse tout jeton du MCP quand le MCP n’est pas configuré', () => {
+      const token = craft({ alg: 'HS256' }, mcpPayload, MCP_SECRET);
+
+      expect(() =>
+        verifyInternalToken(token, [{ issuer: FRONTEND_ISSUER, secret: SECRET }], NOW),
+      ).toThrow(/émetteur inconnu/);
+    });
   });
 });

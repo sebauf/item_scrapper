@@ -41,12 +41,12 @@ spec:
                   name: price-tracker-secrets
                   key: MCP_AUTH_TOKEN
             # Le MCP agit au nom d'un compte : il signe pour lui le jeton interne
-            # que le backend exige.
-            - name: BACKEND_AUTH_SECRET
+            # avec son propre secret, que le backend n'accepte que pour ce compte.
+            - name: MCP_BACKEND_AUTH_SECRET
               valueFrom:
                 secretKeyRef:
                   name: price-tracker-secrets
-                  key: BACKEND_AUTH_SECRET
+                  key: MCP_BACKEND_AUTH_SECRET
             - name: MCP_USER_EMAIL
               valueFrom:
                 secretKeyRef:

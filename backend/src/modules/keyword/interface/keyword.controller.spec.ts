@@ -1,7 +1,7 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { UserId } from 'src/shared/domain/user-id';
 import { signInternalToken } from 'src/shared/infrastructure/auth/internal-token';
-import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
+import { AGENT_EMAIL, ALICE, BOB, asMcp, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { TrackKeywordCommand } from '../application/commands/track-keyword.command';
 import { UntrackKeywordCommand } from '../application/commands/untrack-keyword.command';
 import { ListKeywordSummariesQuery } from '../application/queries/list-keyword-summaries.query';
@@ -9,6 +9,7 @@ import {
   KeywordSummary,
   KeywordSummaryReadModel,
 } from '../application/ports/keyword-summary.read-model';
+import { KeywordQuota } from '../domain/keyword-quota';
 import { KeywordRepository } from '../domain/keyword.repository';
 import { InMemoryKeywordRepository } from '../testing/in-memory-keyword.repository';
 import { KeywordController } from './keyword.controller';
@@ -41,6 +42,7 @@ describe('Keyword — API', () => {
   async function start(
     initial: Record<string, string[]> = {},
     summaries: Record<string, KeywordSummary[]> = {},
+    quota = 0,
   ) {
     repository = new InMemoryKeywordRepository(initial);
     app = await createTestApp({
@@ -50,6 +52,7 @@ describe('Keyword — API', () => {
         UntrackKeywordCommand,
         ListKeywordSummariesQuery,
         { provide: KeywordRepository, useValue: repository },
+        { provide: KeywordQuota, useValue: new KeywordQuota(quota) },
         { provide: KeywordSummaryReadModel, useValue: new FakeKeywordSummaryReadModel(summaries) },
       ],
     });
@@ -77,6 +80,33 @@ describe('Keyword — API', () => {
       });
 
       expect(response.statusCode).toBe(401);
+    });
+
+    it('accepte le MCP pour son propre compte', async () => {
+      await start();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/keywords',
+        headers: asMcp(),
+        payload: { keyword: 'lessive' },
+      });
+
+      expect(response.statusCode).toBe(201);
+      expect(repository.subscribersOf('lessive')).toEqual([AGENT_EMAIL]);
+    });
+
+    it('refuse le MCP au nom d’un autre compte', async () => {
+      await start({ lessive: [ALICE.value] });
+
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/v1/keywords/lessive',
+        headers: asMcp(ALICE.value),
+      });
+
+      expect(response.statusCode).toBe(401);
+      expect(repository.subscribersOf('lessive')).toEqual([ALICE.value]);
     });
 
     it('n’écrit rien pour une requête refusée', async () => {
@@ -155,6 +185,19 @@ describe('Keyword — API', () => {
 
       expect(response.statusCode).toBe(201);
       expect(repository.subscribersOf('lessive')).toEqual([ALICE.value, BOB.value]);
+    });
+
+    it('refuse au-delà du quota, avec un message affichable', async () => {
+      await start({ a: [ALICE.value] }, {}, 1);
+
+      const response = await post({ keyword: 'b' });
+
+      expect(response.statusCode).toBe(409);
+      expect(jsonOf<{ code: string; message: string }>(response)).toMatchObject({
+        code: 'KEYWORD_QUOTA_EXCEEDED',
+        message: expect.stringContaining('1 mots-clés'),
+      });
+      expect(repository.subscribersOf('b')).toBeUndefined();
     });
 
     it('refuse un nom vide', async () => {

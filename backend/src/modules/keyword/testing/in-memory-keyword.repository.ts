@@ -31,6 +31,12 @@ export class InMemoryKeywordRepository extends KeywordRepository {
     );
   }
 
+  countTrackedBy(owner: UserId): Promise<number> {
+    return Promise.resolve(
+      [...this.store.values()].filter((subscribers) => subscribers.has(owner.value)).length,
+    );
+  }
+
   save(keyword: Keyword): Promise<void> {
     const subscribers = this.store.get(keyword.name.value) ?? new Set<string>();
     if (keyword.isTracked) subscribers.add(keyword.owner.value);

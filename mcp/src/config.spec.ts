@@ -4,7 +4,7 @@ import { McpConfig } from './config.js';
 
 const TOKEN = 'a'.repeat(32);
 /** Variables désormais requises par tous les cas : secret partagé et compte. */
-const BASE = { BACKEND_AUTH_SECRET: 'b'.repeat(32), MCP_USER_EMAIL: 'moi@gmail.com' };
+const BASE = { MCP_BACKEND_AUTH_SECRET: 'b'.repeat(32), MCP_USER_EMAIL: 'moi@gmail.com' };
 
 describe('McpConfig', () => {
   it('applique les valeurs par défaut', () => {
@@ -67,7 +67,7 @@ describe('McpConfig', () => {
     it('lit le secret partagé et normalise le compte', () => {
       const config = McpConfig.fromEnv({
         MCP_AUTH_TOKEN: TOKEN,
-        BACKEND_AUTH_SECRET: 'b'.repeat(32),
+        MCP_BACKEND_AUTH_SECRET: 'b'.repeat(32),
         MCP_USER_EMAIL: ' Moi@Gmail.com ',
       });
 
@@ -77,8 +77,8 @@ describe('McpConfig', () => {
 
     it('refuse de démarrer sans secret partagé', () => {
       assert.throws(
-        () => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN, BACKEND_AUTH_SECRET: '' }),
-        /BACKEND_AUTH_SECRET/,
+        () => McpConfig.fromEnv({ ...BASE, MCP_AUTH_TOKEN: TOKEN, MCP_BACKEND_AUTH_SECRET: '' }),
+        /MCP_BACKEND_AUTH_SECRET/,
       );
     });
 

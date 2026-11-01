@@ -1,3 +1,4 @@
+import 'server-only';
 import { createHmac } from 'node:crypto';
 
 /**
@@ -11,7 +12,8 @@ import { createHmac } from 'node:crypto';
  * fenêtre d'une minute.
  *
  * `node:crypto` : ce module n'est importé que côté serveur Node (Server
- * Components, Server Actions), jamais par le middleware Edge ni le navigateur.
+ * Components, Server Actions), jamais par le middleware Edge ni le navigateur
+ * — ce que garantit `import 'server-only'` (échec du build sinon).
  */
 export const INTERNAL_TOKEN_ISSUER = 'price-tracker-frontend';
 const AUDIENCE = 'price-tracker-backend';

@@ -20,6 +20,12 @@ export class InMemoryTrackedUrlRepository extends TrackedUrlRepository {
     );
   }
 
+  countTrackedBy(owner: UserId): Promise<number> {
+    return Promise.resolve(
+      [...this.store.values()].filter((subscribers) => subscribers.has(owner.value)).length,
+    );
+  }
+
   save(tracked: TrackedUrl): Promise<void> {
     const subscribers = this.store.get(tracked.url.value) ?? new Set<string>();
     if (tracked.isTracked) subscribers.add(tracked.owner.value);

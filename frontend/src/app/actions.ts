@@ -87,12 +87,24 @@ export async function deleteTrackedUrl(id: string): Promise<void> {
   revalidatePath('/products');
 }
 
-export async function addFavoriteAction(id: string): Promise<void> {
-  if (!id) return;
-  await addFavorite(id);
+/**
+ * Un refus métier (quota d'URLs suivies atteint, identifiant invalide) est
+ * **renvoyé** avec son message plutôt que levé : en production, Next masque le
+ * message d'une erreur levée par une Server Action, et le bouton étoile ne
+ * pourrait qu'annuler en silence. Une panne (5xx, réseau) est toujours levée.
+ */
+export async function addFavoriteAction(id: string): Promise<{ error?: string }> {
+  if (!id) return {};
+  try {
+    await addFavorite(id);
+  } catch (error) {
+    if (error instanceof ApiError && error.status < 500) return { error: error.message };
+    throw error;
+  }
   revalidatePath('/favorites');
   revalidatePath(`/product/${id}`);
   revalidatePath('/products');
+  return {};
 }
 
 export async function removeFavoriteAction(id: string): Promise<void> {

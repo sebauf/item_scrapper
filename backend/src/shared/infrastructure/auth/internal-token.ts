@@ -20,6 +20,15 @@ import { UserId } from 'src/shared/domain/user-id';
  * vérifie qu'un seul algorithme, connu d'avance, et c'est précisément
  * l'acceptation d'algorithmes multiples (`alg: none`, confusion RS/HS) qui fait
  * les failles classiques de JWT. L'en-tête est donc comparé à une valeur fixe.
+ *
+ * **Un secret par émetteur** (`TokenIssuer`). Un secret HMAC permet de signer
+ * au nom de n'importe qui : partagé entre le frontend et le MCP, il aurait fait
+ * d'un Pod MCP compromis — le seul composant applicatif exposé hors du
+ * cluster — une clé d'accès aux données de tous les comptes. Chaque émetteur a
+ * donc son secret, et le MCP est en plus restreint à un seul sujet
+ * (`onlySubject`) : son secret ne permet d'agir qu'au nom de `MCP_USER_EMAIL`.
+ * Le frontend, lui, détient les sessions de tout le monde ; le restreindre
+ * n'aurait pas de sens.
  */
 
 /** Audience attendue : un jeton signé pour un autre service est refusé. */
@@ -31,9 +40,21 @@ const CLOCK_SKEW_SECONDS = 30;
 /** Durée de vie maximale acceptée — refuse un jeton forgé « pour toujours ». */
 const MAX_LIFETIME_SECONDS = 15 * 60;
 
+/** Émetteurs connus. Le nom voyage dans la revendication `iss`. */
+export const FRONTEND_ISSUER = 'price-tracker-frontend';
+export const MCP_ISSUER = 'price-tracker-mcp';
+
+/** Ce que le backend accepte d'un émetteur donné. */
+export interface TokenIssuer {
+  issuer: string;
+  secret: string;
+  /** Si présent, le seul utilisateur au nom duquel cet émetteur peut agir. */
+  onlySubject?: UserId;
+}
+
 export interface InternalIdentity {
   userId: UserId;
-  /** Émetteur déclaré (`price-tracker-frontend`, `price-tracker-mcp`) — pour les journaux. */
+  /** Émetteur dont la signature a été vérifiée — pour les journaux. */
   issuer: string;
 }
 
@@ -75,16 +96,22 @@ export function signInternalToken(
 
 export function verifyInternalToken(
   token: string,
-  secret: string,
+  issuers: readonly TokenIssuer[],
   now: Date = new Date(),
 ): InternalIdentity {
   const parts = token.split('.');
   if (parts.length !== 3) throw new InvalidInternalToken('format');
   const [encodedHeader, encodedPayload, encodedSignature] = parts;
 
-  // Signature d'abord : rien de ce que contient un jeton non authentifié ne
-  // mérite d'être interprété.
-  const expected = sign(`${encodedHeader}.${encodedPayload}`, secret);
+  // L'émetteur annoncé ne sert qu'à **choisir** la clé, comme un `kid` : rien
+  // d'autre n'est interprété avant que la signature ne soit vérifiée avec la
+  // clé de cet émetteur. Annoncer un autre émetteur que le sien ne mène qu'à
+  // une signature fausse.
+  const claimedIssuer = parseJson(encodedPayload).iss;
+  const issuer = issuers.find((candidate) => candidate.issuer === claimedIssuer);
+  if (!issuer) throw new InvalidInternalToken('émetteur inconnu');
+
+  const expected = sign(`${encodedHeader}.${encodedPayload}`, issuer.secret);
   const actual = Buffer.from(encodedSignature, 'base64url');
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     throw new InvalidInternalToken('signature');
@@ -114,7 +141,11 @@ export function verifyInternalToken(
     throw new InvalidInternalToken('sujet');
   }
 
-  return { userId, issuer: typeof payload.iss === 'string' ? payload.iss : 'inconnu' };
+  if (issuer.onlySubject && !issuer.onlySubject.equals(userId)) {
+    throw new InvalidInternalToken(`sujet non autorisé pour ${issuer.issuer}`);
+  }
+
+  return { userId, issuer: issuer.issuer };
 }
 
 function parseJson(segment: string): Record<string, unknown> {

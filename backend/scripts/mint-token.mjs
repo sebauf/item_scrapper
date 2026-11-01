@@ -8,7 +8,8 @@
  *
  * Lit BACKEND_AUTH_SECRET dans l'environnement ou dans .env. Jeton valable
  * 15 minutes (le maximum que le backend accepte). Même contrat que
- * src/shared/infrastructure/auth/internal-token.ts.
+ * src/shared/infrastructure/auth/internal-token.ts ; signé comme le frontend
+ * (même émetteur, même secret), seul émetteur autorisé pour tout compte.
  */
 import { createHmac } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
@@ -31,6 +32,6 @@ if (!email || !secret) {
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
 const iat = Math.floor(Date.now() / 1000);
 const header = b64({ alg: 'HS256', typ: 'JWT' });
-const payload = b64({ sub: email, iss: 'dev-cli', aud: 'price-tracker-backend', iat, exp: iat + 900 });
+const payload = b64({ sub: email, iss: 'price-tracker-frontend', aud: 'price-tracker-backend', iat, exp: iat + 900 });
 const signature = createHmac('sha256', secret).update(`${header}.${payload}`).digest('base64url');
 process.stdout.write(`${header}.${payload}.${signature}\n`);

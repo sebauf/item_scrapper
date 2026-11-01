@@ -10,6 +10,9 @@ export abstract class TrackedUrlRepository {
    */
   abstract findByUrl(owner: UserId, url: ProductUrl): Promise<TrackedUrl | null>;
 
+  /** Nombre d'URLs que suit `owner` — pour le quota. */
+  abstract countTrackedBy(owner: UserId): Promise<number>;
+
   /** Persiste l'abonnement de `tracked.owner`, sans toucher à ceux des autres. */
   abstract save(tracked: TrackedUrl): Promise<void>;
 }

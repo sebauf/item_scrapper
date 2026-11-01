@@ -51,12 +51,14 @@ spec:
                   name: price-tracker-secrets
                   key: AUTH_ALLOWED_EMAILS
                   optional: true
+            # URL publique HTTPS, obligatoire : elle fixe l'URL de rappel OAuth
+            # et fait poser des cookies `Secure` (préfixes __Secure- / __Host-),
+            # que le navigateur n'envoie jamais en HTTP clair.
             - name: AUTH_URL
               valueFrom:
                 secretKeyRef:
                   name: price-tracker-secrets
                   key: AUTH_URL
-                  optional: true
             # Signe le jeton interne qui porte l'identité vers le backend.
             - name: BACKEND_AUTH_SECRET
               valueFrom:

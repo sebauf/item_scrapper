@@ -8,6 +8,7 @@ import {
   TrackedUrlSummary,
   TrackedUrlSummaryReadModel,
 } from '../application/ports/tracked-url-summary.read-model';
+import { TrackedUrlQuota } from '../domain/tracked-url-quota';
 import { TrackedUrlRepository } from '../domain/tracked-url.repository';
 import { InMemoryTrackedUrlRepository } from '../testing/in-memory-tracked-url.repository';
 import { ProductTrackingController } from './product-tracking.controller';
@@ -46,6 +47,7 @@ describe('Product tracking — API', () => {
         UntrackProductUrlCommand,
         ListTrackedUrlSummariesQuery,
         { provide: TrackedUrlRepository, useValue: repository },
+        { provide: TrackedUrlQuota, useValue: new TrackedUrlQuota(0) },
         {
           provide: TrackedUrlSummaryReadModel,
           useValue: new FakeTrackedUrlSummaryReadModel(summaries),

@@ -96,4 +96,51 @@ describe('AppConfig', () => {
       expect(config.legacyOwnerEmail?.value).toBe('moi@gmail.com');
     });
   });
+
+  describe('secret du MCP', () => {
+    const mcp = { MCP_BACKEND_AUTH_SECRET: 'm'.repeat(32), MCP_USER_EMAIL: 'Agent@Gmail.com' };
+
+    it('n’accepte que le frontend quand le MCP n’est pas configuré', () => {
+      expect(AppConfig.fromEnv(validEnv).tokenIssuers.map((i) => i.issuer)).toEqual([
+        'price-tracker-frontend',
+      ]);
+    });
+
+    it('restreint le MCP à son compte', () => {
+      const [, mcpIssuer] = AppConfig.fromEnv({ ...validEnv, ...mcp }).tokenIssuers;
+
+      expect(mcpIssuer.issuer).toBe('price-tracker-mcp');
+      expect(mcpIssuer.onlySubject?.value).toBe('agent@gmail.com');
+    });
+
+    it('refuse un secret MCP identique à celui du frontend', () => {
+      expect(() =>
+        AppConfig.fromEnv({ ...validEnv, ...mcp, MCP_BACKEND_AUTH_SECRET: 's'.repeat(32) }),
+      ).toThrow(/doit différer/);
+    });
+
+    it('refuse un secret MCP sans compte', () => {
+      expect(() =>
+        AppConfig.fromEnv({ ...validEnv, MCP_BACKEND_AUTH_SECRET: 'm'.repeat(32) }),
+      ).toThrow(/MCP_USER_EMAIL/);
+    });
+  });
+
+  describe('quotas', () => {
+    it('applique 10 mots-clés et 100 URLs par défaut', () => {
+      const config = AppConfig.fromEnv(validEnv);
+
+      expect([config.maxKeywordsPerUser, config.maxTrackedUrlsPerUser]).toEqual([10, 100]);
+    });
+
+    it('accepte 0 pour désactiver un quota', () => {
+      expect(AppConfig.fromEnv({ ...validEnv, MAX_KEYWORDS_PER_USER: '0' }).maxKeywordsPerUser).toBe(0);
+    });
+
+    it.each([['-1'], ['2.5'], ['beaucoup']])('refuse %p', (value) => {
+      expect(() => AppConfig.fromEnv({ ...validEnv, MAX_TRACKED_URLS_PER_USER: value })).toThrow(
+        /MAX_TRACKED_URLS_PER_USER/,
+      );
+    });
+  });
 });

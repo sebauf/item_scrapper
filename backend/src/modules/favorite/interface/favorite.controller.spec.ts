@@ -4,6 +4,7 @@ import { ProductReadModel } from '../../catalog/application/ports/product.read-m
 import { ProductId } from '../../catalog/domain/product-id';
 import { aProductDetail, FakeProductReadModel } from '../../catalog/testing/fakes';
 import { TrackProductUrlCommand } from '../../product-tracking/application/commands/track-product-url.command';
+import { TrackedUrlQuota } from '../../product-tracking/domain/tracked-url-quota';
 import { TrackedUrlRepository } from '../../product-tracking/domain/tracked-url.repository';
 import { InMemoryTrackedUrlRepository } from '../../product-tracking/testing/in-memory-tracked-url.repository';
 import { AddFavoriteCommand } from '../application/commands/add-favorite.command';
@@ -43,6 +44,7 @@ describe('Favorite — API', () => {
         TrackProductUrlCommand,
         { provide: FavoriteRepository, useValue: favorites },
         { provide: TrackedUrlRepository, useValue: trackedUrls },
+        { provide: TrackedUrlQuota, useValue: new TrackedUrlQuota(0) },
         {
           provide: ProductReadModel,
           useValue: new FakeProductReadModel({ [url]: aProductDetail({ url }) }),

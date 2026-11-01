@@ -16,6 +16,17 @@ export class ProductUrlAlreadyTracked extends ConflictError {
   }
 }
 
+/** 409, cf. KeywordQuotaExceeded. Concerne aussi l'ajout d'un favori. */
+export class ProductUrlQuotaExceeded extends ConflictError {
+  readonly code = 'PRODUCT_URL_QUOTA_EXCEEDED';
+
+  constructor(max: number) {
+    super(
+      `Vous suivez déjà ${max} produits (favoris compris), le maximum autorisé. Retirez-en un pour en ajouter un autre.`,
+    );
+  }
+}
+
 export class ProductUrlNotFound extends ResourceNotFoundError {
   readonly code = 'PRODUCT_URL_NOT_FOUND';
 

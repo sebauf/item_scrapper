@@ -8,8 +8,10 @@ import { createHmac } from 'node:crypto';
  * utilisateur fixé par configuration, et ses outils (mots-clés, favoris, URLs
  * suivies) lisent et modifient les données de ce seul compte. Même contrat que
  * le frontend (backend/src/shared/infrastructure/auth/internal-token.ts) :
- * HS256, secret partagé `BACKEND_AUTH_SECRET`, 60 s de validité, refait à
- * chaque appel.
+ * HS256, 60 s de validité, refait à chaque appel — mais avec son **propre**
+ * secret, `MCP_BACKEND_AUTH_SECRET`, que le backend n'accepte que pour
+ * `MCP_USER_EMAIL`. Un serveur MCP compromis n'ouvre donc pas les autres
+ * comptes.
  */
 export const INTERNAL_TOKEN_ISSUER = 'price-tracker-mcp';
 

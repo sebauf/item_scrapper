@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
+import { AppConfig } from 'src/config/app-config';
 import { TrackKeywordCommand } from './application/commands/track-keyword.command';
 import { UntrackKeywordCommand } from './application/commands/untrack-keyword.command';
 import { KeywordSummaryReadModel } from './application/ports/keyword-summary.read-model';
 import { ListKeywordSummariesQuery } from './application/queries/list-keyword-summaries.query';
+import { KeywordQuota } from './domain/keyword-quota';
 import { KeywordRepository } from './domain/keyword.repository';
 import { MongoKeywordSummaryReadModel } from './infrastructure/mongo-keyword-summary.read-model';
 import { MongoKeywordRepository } from './infrastructure/mongo-keyword.repository';
@@ -20,6 +22,11 @@ import { KeywordController } from './interface/keyword.controller';
     UntrackKeywordCommand,
     ListKeywordSummariesQuery,
     { provide: KeywordRepository, useClass: MongoKeywordRepository },
+    {
+      provide: KeywordQuota,
+      inject: [AppConfig],
+      useFactory: (config: AppConfig) => new KeywordQuota(config.maxKeywordsPerUser),
+    },
     { provide: KeywordSummaryReadModel, useClass: MongoKeywordSummaryReadModel },
   ],
   // KeywordSummaryReadModel : le tableau de bord (CatalogModule) s'en sert pour

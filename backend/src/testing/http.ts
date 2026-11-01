@@ -4,10 +4,17 @@ import { Test } from '@nestjs/testing';
 import { configureApp } from '../app-setup';
 import { AppConfig } from '../config/app-config';
 import { UserId } from '../shared/domain/user-id';
-import { signInternalToken } from '../shared/infrastructure/auth/internal-token';
+import {
+  FRONTEND_ISSUER,
+  MCP_ISSUER,
+  signInternalToken,
+} from '../shared/infrastructure/auth/internal-token';
 
 /** Secret des tests d'API — jamais utilisé ailleurs. */
 export const TEST_AUTH_SECRET = 'test-secret-'.padEnd(48, 'x');
+export const TEST_MCP_SECRET = 'test-mcp-secret-'.padEnd(48, 'y');
+/** Compte du MCP dans les tests d'API. */
+export const AGENT_EMAIL = 'agent@example.com';
 
 /** Utilisateur par défaut des tests d'API. */
 export const ALICE = UserId.create('alice@example.com');
@@ -19,7 +26,14 @@ export const BOB = UserId.create('bob@example.com');
  */
 export function authAs(user: UserId = ALICE): { authorization: string } {
   return {
-    authorization: `Bearer ${signInternalToken({ sub: user.value, iss: 'test' }, TEST_AUTH_SECRET)}`,
+    authorization: `Bearer ${signInternalToken({ sub: user.value, iss: FRONTEND_ISSUER }, TEST_AUTH_SECRET)}`,
+  };
+}
+
+/** En-têtes d'une requête signée par le MCP (son propre secret), au nom de `email`. */
+export function asMcp(email: string = AGENT_EMAIL): { authorization: string } {
+  return {
+    authorization: `Bearer ${signInternalToken({ sub: email, iss: MCP_ISSUER }, TEST_MCP_SECRET)}`,
   };
 }
 
@@ -44,6 +58,8 @@ export async function createTestApp(metadata: ModuleMetadata): Promise<NestFasti
         useValue: AppConfig.fromEnv({
           MONGODB_URI: 'mongodb://test',
           BACKEND_AUTH_SECRET: TEST_AUTH_SECRET,
+          MCP_BACKEND_AUTH_SECRET: TEST_MCP_SECRET,
+          MCP_USER_EMAIL: AGENT_EMAIL,
         }),
       },
     ],
