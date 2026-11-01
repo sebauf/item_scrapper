@@ -416,6 +416,11 @@ with `timezone=UTC`.
   in the URL shows every brand, as `fuel=all` does for fuels. Each listed station
   has a star (`FavoriteStationButton`, optimistic, rolled back on failure) that
   adds it to the favourite stations watched by the restock alert.
+  Each station also links to **Google Maps** (`googleMapsUrl` in `lib/fuel.ts`,
+  Maps URLs API, no key) — in the list (a sibling of the select button, like the
+  star) and in the map popup next to the OSM itinerary. The link is a text search
+  « brand, address, postcode city » so Google resolves the station's place card
+  (better navigation); coordinates only when the feed has no address.
 
 ### Key frontend files
 

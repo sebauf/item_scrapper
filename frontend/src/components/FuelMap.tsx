@@ -4,7 +4,7 @@ import L from 'leaflet';
 import { useEffect, useMemo, useRef } from 'react';
 import { Circle, MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import type { FuelCode, FuelStation } from '@/lib/api';
-import { formatDistance, fuelOf, stationLabel, type PriceTier } from '@/lib/fuel';
+import { formatDistance, fuelOf, googleMapsUrl, stationLabel, type PriceTier } from '@/lib/fuel';
 import { FuelBadge } from './FuelStationList';
 
 /**
@@ -170,14 +170,18 @@ export default function FuelMap({
                     />
                   ))}
                 </div>
-                <a
-                  href={`https://www.openstreetmap.org/directions?to=${station.latitude},${station.longitude}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-block text-xs"
-                >
-                  Itinéraire ↗
-                </a>
+                <div className="flex gap-3 text-xs">
+                  <a
+                    href={`https://www.openstreetmap.org/directions?to=${station.latitude},${station.longitude}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Itinéraire ↗
+                  </a>
+                  <a href={googleMapsUrl(station)} target="_blank" rel="noreferrer">
+                    Google Maps ↗
+                  </a>
+                </div>
               </div>
             </Popup>
           </Marker>

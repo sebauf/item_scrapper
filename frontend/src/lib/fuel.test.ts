@@ -7,6 +7,7 @@ import {
   DEFAULT_CENTER,
   formatDistance,
   formatLiterPrice,
+  googleMapsUrl,
   parseFuelSearchParams,
   priceTiers,
   stationLabel,
@@ -135,6 +136,33 @@ describe('formats', () => {
   it('affiche la distance en mètres sous le kilomètre', () => {
     expect(formatDistance(0.4)).toBe('400 m');
     expect(formatDistance(12.345)).toBe('12,3 km');
+  });
+});
+
+describe('googleMapsUrl', () => {
+  const queryOf = (url: string) => new URL(url).searchParams.get('query');
+
+  it('cherche la station par enseigne et adresse complète', () => {
+    const url = new URL(googleMapsUrl(aFuelStation()));
+
+    expect(url.origin + url.pathname).toBe('https://www.google.com/maps/search/');
+    expect(url.searchParams.get('api')).toBe('1');
+    expect(url.searchParams.get('query')).toBe('TotalEnergies, 12 avenue Félix Faure, 69003 Lyon');
+  });
+
+  it('prend le nom OSM sans enseigne, et rien sans l’un ni l’autre', () => {
+    expect(queryOf(googleMapsUrl(aFuelStation({ brand: null, name: 'Garage du Centre' })))).toBe(
+      'Garage du Centre, 12 avenue Félix Faure, 69003 Lyon',
+    );
+    expect(queryOf(googleMapsUrl(aFuelStation({ brand: null, name: null })))).toBe(
+      '12 avenue Félix Faure, 69003 Lyon',
+    );
+  });
+
+  it('se rabat sur les coordonnées sans adresse', () => {
+    expect(queryOf(googleMapsUrl(aFuelStation({ address: '  ', latitude: 45.75938, longitude: 4.85491 })))).toBe(
+      '45.75938,4.85491',
+    );
   });
 });
 

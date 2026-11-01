@@ -192,6 +192,32 @@ export function brandOptions(brands: BrandCount[], selected: string | null): Bra
   );
 }
 
+/**
+ * Lien Google Maps vers une station (API « Maps URLs », sans clé ni quota) :
+ * ouvre l'application sur mobile, le site sinon.
+ *
+ * Recherche **textuelle** « enseigne, adresse, code postal ville » : Google la
+ * résout en fiche de lieu (la station elle-même, avec son nom et ses horaires),
+ * d'où l'itinéraire mène à l'entrée de la station plutôt qu'à un point GPS.
+ * L'enseigne aide à tomber sur la station plutôt que sur le simple numéro de
+ * rue — utile pour les adresses vagues (« RN 7 », « Centre commercial »).
+ *
+ * Sans adresse dans le flux officiel, on se rabat sur les coordonnées : une
+ * épingle exacte vaut mieux qu'une recherche sur la seule ville.
+ */
+export function googleMapsUrl(
+  station: Pick<FuelStation, 'brand' | 'name' | 'address' | 'postcode' | 'city' | 'latitude' | 'longitude'>,
+): string {
+  const address = station.address.trim();
+  const query = address
+    ? [station.brand ?? station.name, address, `${station.postcode} ${station.city}`.trim()]
+        .filter((part): part is string => Boolean(part))
+        .join(', ')
+    : `${station.latitude},${station.longitude}`;
+  const sp = new URLSearchParams({ api: '1', query });
+  return `https://www.google.com/maps/search/?${sp.toString()}`;
+}
+
 export function fuelOf(station: FuelStation, code: FuelCode): FuelPrice | null {
   return station.fuels.find((fuel) => fuel.code === code) ?? null;
 }
