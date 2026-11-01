@@ -1,0 +1,64 @@
+name: E2E — tests d'attaque
+
+# La pile réelle (MongoDB en mémoire, backend et frontend de production) sous
+# les attaques d'un client qui contrôle tout son navigateur : cookies forgés,
+# jetons falsifiés, Server Actions appelées en HTTP brut. Cf. e2e/README.md.
+#
+# Distinct des workflows de composant : il a besoin des deux builds à la fois.
+# Pour qu'il bloque un merge, le déclarer « required » dans la protection de
+# branche de main (Settings → Branches).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'e2e/**'
+      - '.github/workflows/e2e.yml'
+
+jobs:
+  attacks:
+    name: E2E — tests d'attaque
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+            e2e/package-lock.json
+
+      # Le binaire mongod (~80 Mo) téléchargé par mongodb-memory-server.
+      - name: Cache MongoDB binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-7.0.14
+
+      - name: Build backend
+        working-directory: ./backend
+        run: npm ci && npm run build
+
+      - name: Build frontend
+        working-directory: ./frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: npm ci && npm run build
+
+      - name: Attack tests
+        working-directory: ./e2e
+        run: npm ci && npm test

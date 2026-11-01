@@ -109,7 +109,9 @@ cp k8s/base/secrets.env.example k8s/base/secrets.env
 #   - AIRFLOW_FERNET_KEY  → python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 #   - AIRFLOW_SECRET_KEY  → python -c "import secrets; print(secrets.token_hex(32))"
 #   - Connexion Google (cf. « Connexion Google » ci-dessous) :
-#     BACKEND_AUTH_SECRET, AUTH_SECRET → openssl rand -hex 32
+#     BACKEND_AUTH_SECRET, MCP_BACKEND_AUTH_SECRET (différent), AUTH_SECRET
+#       → openssl rand -hex 32 chacun
+#     AUTH_URL = URL publique HTTPS (obligatoire)
 #     AUTH_GOOGLE_ID / AUTH_GOOGLE_SECRET (client OAuth), AUTH_ALLOWED_EMAILS,
 #     AUTH_LEGACY_OWNER_EMAIL (reçoit les données existantes), MCP_USER_EMAIL
 
@@ -165,8 +167,16 @@ L'application exige une connexion Google. À faire une fois :
    `AUTH_ALLOWED_EMAILS` (fortement conseillée : chaque mot-clé coûte du budget
    de crawl), ton adresse dans `AUTH_LEGACY_OWNER_EMAIL` (les mots-clés,
    favoris et stations existants te sont rattachés au démarrage du backend) et
-   `MCP_USER_EMAIL` (compte au nom duquel agit l'agent). Si l'URL publique ne
-   se déduit pas des en-têtes de Traefik, ajouter `AUTH_URL=https://<domaine>`.
+   `MCP_USER_EMAIL` (compte au nom duquel agit l'agent), et **`AUTH_URL=https://<domaine>`**
+   (obligatoire : sans elle le Pod frontend ne démarre pas). C'est elle qui
+   fait poser des cookies `Secure` (`__Secure-` / `__Host-`), que le navigateur
+   n'envoie jamais en HTTP clair : une session volée sur le réseau local est
+   impossible à rejouer en HTTP.
+4. **Secrets internes** : `BACKEND_AUTH_SECRET` (frontend → backend) et
+   `MCP_BACKEND_AUTH_SECRET` (MCP → backend, accepté uniquement pour
+   `MCP_USER_EMAIL`) doivent être **différents** — le backend refuse de démarrer
+   sinon. Quotas par utilisateur : `MAX_KEYWORDS_PER_USER` /
+   `MAX_TRACKED_URLS_PER_USER` dans `base/backend-deployment.yaml`.
 
 `install.sh` demande ces valeurs, y compris sur un `secrets.env` existant
 (mise à jour d'une installation antérieure à la connexion Google).

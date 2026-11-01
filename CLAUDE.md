@@ -80,7 +80,7 @@ See `backend/README.md` for the layering rules and the API contract.
 ```bash
 cd mcp
 npm install
-cp .env.example .env               # MCP_AUTH_TOKEN, BACKEND_AUTH_SECRET, MCP_USER_EMAIL are required
+cp .env.example .env               # MCP_AUTH_TOKEN, MCP_BACKEND_AUTH_SECRET, MCP_USER_EMAIL are required
 npm run start:dev                  # :3010, MCP endpoint on /mcp — needs the backend running
 npm test                           # unit tests (node:test) — no backend, no DB
 npm run build && npm run start:prod
@@ -107,6 +107,16 @@ backend running) whenever a DTO changes, otherwise the frontend types drift
 from the contract.
 
 The frontend has a Dockerfile for containerised deployment.
+
+### E2E attack tests
+
+```bash
+cd backend && npm run build; cd ../frontend && npm run build   # both builds required
+cd ../e2e && npm ci && npm test    # real stack: in-memory mongod 7, backend dist, 2× next start (~1 min)
+```
+
+See `e2e/README.md`. Tests judge the **database state**, every refusal has a
+positive control, and the suite was validated by mutation.
 
 ### Kubernetes
 
@@ -274,11 +284,31 @@ agent ──Bearer MCP_AUTH_TOKEN──▶ MCP ──Bearer HS256 60 s (MCP_USER
   `safeCallbackPath`: only the path of `callbackUrl` is kept — no open redirect).
 - **Internal token** (`backend/src/shared/infrastructure/auth/internal-token.ts`,
   copies in `frontend/src/lib/internal-token.ts` and `mcp/src/backend/internal-token.ts`):
-  JWT HS256 with `BACKEND_AUTH_SECRET` (≥ 32 chars, same value in the three
-  services), `aud = price-tracker-backend`, 60 s, re-signed on every call.
-  Implemented with `node:crypto`; the header is compared to a fixed value (no
-  `alg: none`, no algorithm confusion). Not the Google ID token: it expires
-  after 1 h and Auth.js does not refresh it.
+  JWT HS256, `aud = price-tracker-backend`, 60 s, re-signed on every call.
+  **One secret per issuer** (`iss` picks the key, like a `kid`, then the
+  signature is checked with it): `price-tracker-frontend` signs with
+  `BACKEND_AUTH_SECRET` (any user — it holds everyone's sessions);
+  `price-tracker-mcp` signs with `MCP_BACKEND_AUTH_SECRET`, accepted **only for
+  `MCP_USER_EMAIL`** (`onlySubject`) and required to differ from the frontend
+  secret — a compromised MCP Pod cannot reach other accounts. Implemented with
+  `node:crypto`; the header is compared to a fixed value (no `alg: none`, no
+  algorithm confusion). Not the Google ID token: it expires after 1 h and
+  Auth.js does not refresh it.
+- **Server-only guard**: `frontend/src/lib/api.ts` and `lib/internal-token.ts`
+  `import 'server-only'` — imported from a client component, the build fails
+  (verified). Vitest aliases it to `src/testing/server-only-stub.ts`.
+- **Transport**: in k8s `AUTH_URL` (public HTTPS URL) is mandatory: it makes
+  Auth.js set `Secure` cookies with `__Host-` / `__Secure-` prefixes, which
+  browsers never send over plain HTTP (checked by the e2e suite).
+- **Quotas** (`MAX_KEYWORDS_PER_USER` = 10, `MAX_TRACKED_URLS_PER_USER` = 100,
+  0 = unlimited; domain classes `KeywordQuota` / `TrackedUrlQuota`): the crawl
+  budget is shared (~155 requests per keyword at worst, 1 per tracked URL, on
+  `MAX_REQUESTS_PER_CRAWL` = 1000), so one account must not be able to starve
+  the others. Counts the user's subscriptions; favourites count as tracked
+  URLs. Refusal = 409 `KEYWORD_QUOTA_EXCEEDED` / `PRODUCT_URL_QUOTA_EXCEEDED`,
+  checked after « already tracked »; `addFavoriteAction` **returns** the
+  message (Next hides thrown action errors in prod) and the star displays it.
+  Count-then-write is not atomic: concurrent adds can exceed by one.
 - **Backend**: `AuthGuard` (global, set in `configureApp`, so API tests go
   through it) → `request.user`; controllers read it with `@CurrentUser()` and
   pass a `UserId` explicitly to commands/queries (no request-scoped providers).
@@ -431,8 +461,9 @@ the response. Auth is a bearer token (`MCP_AUTH_TOKEN`), compared in constant
 time; the server refuses to start without it unless `MCP_ALLOW_ANONYMOUS=true`.
 This is the only applicative component deliberately exposed outside the cluster.
 Towards the backend, it acts for **one** account (`MCP_USER_EMAIL`), signing
-the internal token with `BACKEND_AUTH_SECRET`: the tools read and modify that
-account's keywords, favourites and tracked URLs.
+the internal token with its own `MCP_BACKEND_AUTH_SECRET`, which the backend
+accepts for that account only: the tools read and modify that account's
+keywords, favourites and tracked URLs, and nothing else.
 
 ### MongoDB
 
@@ -463,17 +494,18 @@ Key resources in `k8s/base/`:
 - `airflow-init-job.yaml` — initialises Airflow DB schema on first deploy
 - `airflow-rbac.yaml` — ServiceAccount + RBAC so Airflow can launch Pods (KubernetesPodOperator)
 - `airflow-ingress.yaml` — Traefik ingress for the Airflow webserver
-- `configmap.env` / `secrets.env` (from `secrets.env.example`) — non-secret / secret env vars; auth keys: `BACKEND_AUTH_SECRET`, `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_ALLOWED_EMAILS`, `AUTH_LEGACY_OWNER_EMAIL`, `MCP_USER_EMAIL` (`install.sh` asks for / generates them, including on an existing `secrets.env`)
+- `configmap.env` / `secrets.env` (from `secrets.env.example`) — non-secret / secret env vars; auth keys: `BACKEND_AUTH_SECRET`, `MCP_BACKEND_AUTH_SECRET`, `AUTH_SECRET`, `AUTH_URL` (HTTPS, required), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_ALLOWED_EMAILS`, `AUTH_LEGACY_OWNER_EMAIL`, `MCP_USER_EMAIL`; quotas are plain env values in `backend-deployment.yaml` (`install.sh` asks for / generates them, including on an existing `secrets.env`)
 
 ### CI/CD (`.github/workflows/`)
 
-Six workflows, each triggered on changes to their respective directory:
+Seven workflows, each triggered on changes to their respective directory:
 - `backend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-backend:<tag>`
 - `mcp.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-mcp:<tag>`
 - `frontend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-frontend:<tag>`
 - `pipeline.yml` — tests, then builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
 - `scrapper.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-scrapper:<tag>`
 - `airflow.yml` — builds and pushes the custom Airflow image
+- `e2e.yml` — builds backend + frontend, then runs the attack suite (`e2e/`) on backend/frontend/e2e changes; independent of the image workflows, make it a required check to block merges
 
 Every workflow that has tests runs them in a `test` job that the
 `build-and-push` job declares as `needs:` — a red suite stops the publication.

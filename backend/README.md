@@ -72,10 +72,20 @@ Deux chemins distincts, une seule base :
 
 Toute route exige `Authorization: Bearer <jeton interne>`, sauf les sondes
 (`@Public()`) — sinon **401**. Le backend ne parle jamais à Google : le jeton
-est un JWT HS256 de 60 s, signé par le frontend (au nom de l'utilisateur de la
-session Google) ou par le serveur MCP (au nom de `MCP_USER_EMAIL`), avec le
-secret partagé `BACKEND_AUTH_SECRET`. Il porte l'adresse e-mail vérifiée, qui
-sert d'identifiant utilisateur (`shared/domain/user-id.ts`).
+est un JWT HS256 de 60 s qui porte l'adresse e-mail vérifiée, identifiant de
+l'utilisateur (`shared/domain/user-id.ts`). Chaque émetteur a son secret :
+
+| Émetteur (`iss`) | Secret | Peut agir au nom de |
+|---|---|---|
+| `price-tracker-frontend` | `BACKEND_AUTH_SECRET` | tout utilisateur (il détient les sessions) |
+| `price-tracker-mcp` | `MCP_BACKEND_AUTH_SECRET` (≠ le précédent) | `MCP_USER_EMAIL` seulement |
+
+Un Pod MCP compromis ne donne donc accès qu'au compte du MCP.
+
+**Quotas** par utilisateur : `MAX_KEYWORDS_PER_USER` (10) et
+`MAX_TRACKED_URLS_PER_USER` (100, favoris compris), 0 = illimité. Le budget de
+crawl est commun à tous les comptes (~155 requêtes par mot-clé au pire, 1 par
+URL suivie, sur 1000) : un compte ne doit pas pouvoir affamer les autres.
 
 La garde est globale et posée par `configureApp` : les tests d'API la
 traversent (`authAs(user)` dans `src/testing/http.ts`), et une route ajoutée
@@ -100,17 +110,17 @@ celles marquées *(perso)* portent sur les données de l'utilisateur du jeton.
 |---|---|---|
 | `GET` | `/api/v1/dashboard` | 200 — *(perso)* compteurs + meilleures affaires, sur ses mots-clés et URLs suivies |
 | `GET` | `/api/v1/keywords` | 200 — *(perso)* mots-clés suivis + nb de produits + dernier scrape |
-| `POST` | `/api/v1/keywords` | 201 · 400 nom invalide · 409 déjà suivi *par cet utilisateur* |
+| `POST` | `/api/v1/keywords` | 201 · 400 nom invalide · 409 déjà suivi *par cet utilisateur* · 409 `KEYWORD_QUOTA_EXCEEDED` |
 | `DELETE` | `/api/v1/keywords/{keyword}` | 204 (idempotent, ne retire que son abonnement) · 404 suivi par personne |
 | `GET` | `/api/v1/keywords/{keyword}/products` | 200 · 400 filtre invalide |
 | `GET` | `/api/v1/products/{id}` | 200 · 400 id mal formé · 404 inconnu |
 | `GET` | `/api/v1/fuel-stations` | 200 — stations autour d'un point · 400 position/rayon/carburant/tri invalide |
 | `GET` | `/api/v1/product-urls` | 200 — *(perso)* URLs suivies à l'unité |
-| `POST` | `/api/v1/product-urls` | 201 · 400 URL invalide · 409 déjà suivie par cet utilisateur |
+| `POST` | `/api/v1/product-urls` | 201 · 400 URL invalide · 409 déjà suivie par cet utilisateur · 409 `PRODUCT_URL_QUOTA_EXCEEDED` |
 | `DELETE` | `/api/v1/product-urls/{id}` | 204 · 400 id mal formé · 404 suivie par personne |
 | `GET` | `/api/v1/favorites` | 200 — *(perso)* favoris, fiche complète |
 | `GET` | `/api/v1/favorites/{id}` | 200 — *(perso)* `{ isFavorite }` |
-| `POST` | `/api/v1/favorites` | 201 (idempotent, suit aussi l'URL) · 400 id mal formé |
+| `POST` | `/api/v1/favorites` | 201 (idempotent, suit aussi l'URL) · 400 id mal formé · 409 `PRODUCT_URL_QUOTA_EXCEEDED` |
 | `DELETE` | `/api/v1/favorites/{id}` | 204 (idempotent) · 400 id mal formé |
 | `GET` | `/api/v1/fuel-stations/favorites` | 200 — *(perso)* stations favorites (`id`, `addedAt`) |
 | `PUT` | `/api/v1/fuel-stations/favorites/{id}` | 204 (idempotent) · 400 id mal formé · 404 station absente du flux |
