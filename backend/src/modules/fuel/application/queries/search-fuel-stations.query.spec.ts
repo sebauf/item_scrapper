@@ -1,8 +1,11 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { InvalidStationSearch } from '../../domain/fuel.errors';
 import { STALE_AFTER_HOURS } from '../../domain/freshness-policy';
 import { aFuelPrice, aFuelStation, FakeFuelStationReadModel } from '../../testing/fakes';
 import { InMemoryFavoriteStationRepository } from '../../testing/in-memory-favorite-station.repository';
 import { SearchFuelStationsQuery } from './search-fuel-stations.query';
+
+const alice = UserId.create('alice@example.com');
 
 describe('SearchFuelStationsQuery', () => {
   const now = new Date('2026-10-26T12:00:00.000Z');
@@ -11,7 +14,7 @@ describe('SearchFuelStationsQuery', () => {
   it('transmet une recherche validée au read model', async () => {
     const readModel = new FakeFuelStationReadModel();
 
-    await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute({ ...lyon, fuel: 'e10' }, now);
+    await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(alice, { ...lyon, fuel: 'e10' }, now);
 
     expect(readModel.calls[0]).toMatchObject({ latitude: 45.7578, fuel: 'e10', sort: 'distance' });
   });
@@ -19,7 +22,7 @@ describe('SearchFuelStationsQuery', () => {
   it('refuse une recherche invalide sans appeler le read model', async () => {
     const readModel = new FakeFuelStationReadModel();
 
-    await expect(new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute({ lat: '45' }, now)).rejects.toThrow(
+    await expect(new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(alice, { lat: '45' }, now)).rejects.toThrow(
       InvalidStationSearch,
     );
     expect(readModel.calls).toHaveLength(0);
@@ -47,7 +50,7 @@ describe('SearchFuelStationsQuery', () => {
       lastImportAt: new Date('2026-10-26T10:00:00.000Z'),
     });
 
-    const result = await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(lyon, now);
+    const result = await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(alice, lyon, now);
 
     expect(result.truncated).toBe(true);
     expect(result.lastImportAt).toBe('2026-10-26T10:00:00.000Z');
@@ -74,8 +77,7 @@ describe('SearchFuelStationsQuery', () => {
   });
 
   it('une base vide donne une liste vide, pas une erreur', async () => {
-    const result = await new SearchFuelStationsQuery(new FakeFuelStationReadModel(), new InMemoryFavoriteStationRepository()).execute(
-      lyon,
+    const result = await new SearchFuelStationsQuery(new FakeFuelStationReadModel(), new InMemoryFavoriteStationRepository()).execute(alice, lyon,
       now,
     );
 
@@ -94,8 +96,7 @@ describe('SearchFuelStationsQuery', () => {
       lastImportAt: null,
     });
 
-    const result = await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(
-      { ...lyon, brand: 'TotalEnergies' },
+    const result = await new SearchFuelStationsQuery(readModel, new InMemoryFavoriteStationRepository()).execute(alice, { ...lyon, brand: 'TotalEnergies' },
       now,
     );
 
@@ -112,7 +113,7 @@ describe('SearchFuelStationsQuery', () => {
     });
     const favorites = new InMemoryFavoriteStationRepository({ '2': new Date() });
 
-    const result = await new SearchFuelStationsQuery(readModel, favorites).execute(lyon, now);
+    const result = await new SearchFuelStationsQuery(readModel, favorites).execute(alice, lyon, now);
 
     expect(result.stations.map((s) => [s.id, s.isFavorite])).toEqual([
       ['1', false],

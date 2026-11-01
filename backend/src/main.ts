@@ -33,6 +33,8 @@ async function bootstrap(): Promise<void> {
         .setTitle('Price tracker API')
         .setDescription('Accès aux mots-clés suivis, aux produits et aux bonnes affaires')
         .setVersion('1.0')
+        // Bouton « Authorize » de /docs : coller un jeton de `npm run token`.
+        .addBearerAuth()
         .build(),
     ),
     { jsonDocumentUrl: 'openapi.json' },

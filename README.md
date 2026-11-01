@@ -33,16 +33,23 @@ npm run start
 
 Default keywords: `lessive liquide`, `adoucissant`, `liquide de rincage finish`.
 
-### 3. Start the frontend
+### 3. Start the backend and the frontend
 
 ```bash
-cd frontend
-npm install
-cp .env.example .env
-npm run dev
+cd backend && npm install && cp .env.example .env && npm run start:dev   # :3001
+cd frontend && npm install && cp .env.example .env && npm run dev        # :3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+The frontend requires a **Google login**. In `frontend/.env`, set `AUTH_SECRET`
+(`openssl rand -hex 32`) and the OAuth client `AUTH_GOOGLE_ID` /
+`AUTH_GOOGLE_SECRET` (Google Cloud Console → Credentials → OAuth client ID →
+Web application, redirect URI `http://localhost:3000/api/auth/callback/google`).
+`BACKEND_AUTH_SECRET` must be identical in `backend/.env` and `frontend/.env`
+(the `.env.example` files share a dev value).
+
+Open [http://localhost:3000](http://localhost:3000). Keywords, favourites,
+tracked URLs and favourite fuel stations belong to the signed-in account; see
+the *Authentication & per-user data* section of `CLAUDE.md`.
 
 ## Stack
 
@@ -50,7 +57,7 @@ Open [http://localhost:3000](http://localhost:3000).
 |---|---|
 | Scraper | Node.js, TypeScript, Crawlee, Playwright |
 | Storage | MongoDB 7 |
-| Frontend | Next.js 15, React 19, Tailwind CSS v4 |
+| Frontend | Next.js 15, React 19, Tailwind CSS v4, Auth.js (Google) |
 | Infrastructure | Docker Compose |
 
 ## Configuration

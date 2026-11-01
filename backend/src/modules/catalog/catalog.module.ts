@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { KeywordModule } from '../keyword/keyword.module';
+import { ProductTrackingModule } from '../product-tracking/product-tracking.module';
 import { DashboardReadModel } from './application/ports/dashboard.read-model';
 import { ProductReadModel } from './application/ports/product.read-model';
 import { GetDashboardQuery } from './application/queries/get-dashboard.query';
@@ -22,9 +23,10 @@ import {
  * projections à servir vite.
  */
 @Module({
-  // KeywordModule : pour `KeywordSummaryReadModel`, seule source de la règle
-  // « quels mots-clés sont suivis » (cf. le compteur du tableau de bord).
-  imports: [KeywordModule],
+  // KeywordModule et ProductTrackingModule : seules sources des règles « quels
+  // mots-clés / quelles URLs suit cet utilisateur », qui délimitent le
+  // périmètre du tableau de bord.
+  imports: [KeywordModule, ProductTrackingModule],
   controllers: [DashboardController, KeywordProductsController, ProductController],
   providers: [
     GetDashboardQuery,

@@ -8,8 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`
 - **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (every 30 min)
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
-- **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4 — **no DB driver**; calls the backend API server-side (`BACKEND_URL`)
-- **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend
+- **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4, Auth.js v5 (Google login, mandatory) — **no DB driver**; calls the backend API server-side (`BACKEND_URL`), signing each call with the user's identity
+- **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend, on behalf of one configured account (`MCP_USER_EMAIL`)
 - **Infrastructure** (`infra/`): MongoDB 7 in Docker with a named volume for persistence (local dev)
 - **Kubernetes** (`k8s/`): Kustomize manifests deploying the full stack (frontend, Airflow, MongoDB, Postgres) in a `price-tracker` namespace
 
@@ -68,6 +68,7 @@ cd backend
 npm install
 cp .env.example .env               # set MONGODB_URI
 npm run start:dev                  # :3001, Swagger UI on /docs, contract on /openapi.json
+npm run token -- moi@gmail.com     # internal token for curl / Swagger « Authorize » (15 min)
 npm test                           # unit tests (Jest) — domain + use cases, no DB needed
 npm run build && npm run start:prod
 ```
@@ -79,7 +80,7 @@ See `backend/README.md` for the layering rules and the API contract.
 ```bash
 cd mcp
 npm install
-cp .env.example .env               # MCP_AUTH_TOKEN is required (openssl rand -hex 32)
+cp .env.example .env               # MCP_AUTH_TOKEN, MCP_BACKEND_AUTH_SECRET, MCP_USER_EMAIL are required
 npm run start:dev                  # :3010, MCP endpoint on /mcp — needs the backend running
 npm test                           # unit tests (node:test) — no backend, no DB
 npm run build && npm run start:prod
@@ -93,7 +94,7 @@ See `mcp/README.md` for the tool catalogue and the security model.
 ```bash
 cd frontend
 npm install
-cp .env.example .env               # set BACKEND_URL (defaults to http://localhost:3001)
+cp .env.example .env               # BACKEND_URL, AUTH_SECRET, AUTH_GOOGLE_ID/SECRET, BACKEND_AUTH_SECRET
 npm run dev                        # dev server on :3000 — needs the backend running
 npm test                           # unit tests (Vitest + Testing Library, jsdom) — no backend, no DB
 npm run typecheck                  # tsc --noEmit
@@ -106,6 +107,16 @@ backend running) whenever a DTO changes, otherwise the frontend types drift
 from the contract.
 
 The frontend has a Dockerfile for containerised deployment.
+
+### E2E attack tests
+
+```bash
+cd backend && npm run build; cd ../frontend && npm run build   # both builds required
+cd ../e2e && npm ci && npm test    # real stack: in-memory mongod 7, backend dist, 2× next start (~1 min)
+```
+
+See `e2e/README.md`. Tests judge the **database state**, every refusal has a
+positive control, and the suite was validated by mutation.
 
 ### Kubernetes
 
@@ -236,6 +247,8 @@ straight to Mongo aggregations and returns flat DTOs — `items_raw`,
 backend never mutates them, so there is no invariant to defend.
 
 Routes are prefixed `/api/v1` except the probes (`/health/live`, `/health/ready`).
+Every route requires an internal token except the probes (`@Public()`), see
+**Authentication** below.
 `DEAL_SCORE_THRESHOLD` lives in `catalog/domain/deal-policy.ts` — it is the single
 owner of the "good deal" policy.
 
@@ -251,6 +264,83 @@ global budget, and the filter starts hiding live products that simply weren't
 revisited. The three settings travel together. Product *detail*
 is deliberately exempt — favourites and tracked URLs are explicit user choices and
 stay reachable by direct link.
+
+### Authentication & per-user data
+
+Google login is **mandatory**: nothing is reachable without a session.
+
+```
+browser ──cookie (Auth.js JWE)──▶ frontend ──Bearer HS256 60 s──▶ backend
+agent ──Bearer MCP_AUTH_TOKEN──▶ MCP ──Bearer HS256 60 s (MCP_USER_EMAIL)──▶ backend
+```
+
+- **Frontend** (`src/auth.ts`, `src/middleware.ts`): Auth.js v5, Google provider,
+  JWT session (no session DB — the frontend has no DB driver). The middleware
+  guards every path except `/login`, `/api/auth/*`, `/api/health` and static
+  files. Sign-in requires `email_verified` and, if set, membership of
+  `AUTH_ALLOWED_EMAILS`; the allowlist is **re-checked on every request**
+  (`authorized`), so removing an address cuts access without waiting for the
+  30-day cookie. Pure rules live in `src/lib/auth-policy.ts` (incl.
+  `safeCallbackPath`: only the path of `callbackUrl` is kept — no open redirect).
+- **Internal token** (`backend/src/shared/infrastructure/auth/internal-token.ts`,
+  copies in `frontend/src/lib/internal-token.ts` and `mcp/src/backend/internal-token.ts`):
+  JWT HS256, `aud = price-tracker-backend`, 60 s, re-signed on every call.
+  **One secret per issuer** (`iss` picks the key, like a `kid`, then the
+  signature is checked with it): `price-tracker-frontend` signs with
+  `BACKEND_AUTH_SECRET` (any user — it holds everyone's sessions);
+  `price-tracker-mcp` signs with `MCP_BACKEND_AUTH_SECRET`, accepted **only for
+  `MCP_USER_EMAIL`** (`onlySubject`) and required to differ from the frontend
+  secret — a compromised MCP Pod cannot reach other accounts. Implemented with
+  `node:crypto`; the header is compared to a fixed value (no `alg: none`, no
+  algorithm confusion). Not the Google ID token: it expires after 1 h and
+  Auth.js does not refresh it.
+- **Server-only guard**: `frontend/src/lib/api.ts` and `lib/internal-token.ts`
+  `import 'server-only'` — imported from a client component, the build fails
+  (verified). Vitest aliases it to `src/testing/server-only-stub.ts`.
+- **Transport**: in k8s `AUTH_URL` (public HTTPS URL) is mandatory: it makes
+  Auth.js set `Secure` cookies with `__Host-` / `__Secure-` prefixes, which
+  browsers never send over plain HTTP (checked by the e2e suite).
+- **Quotas** (`MAX_KEYWORDS_PER_USER` = 10, `MAX_TRACKED_URLS_PER_USER` = 100,
+  0 = unlimited; domain classes `KeywordQuota` / `TrackedUrlQuota`): the crawl
+  budget is shared (~155 requests per keyword at worst, 1 per tracked URL, on
+  `MAX_REQUESTS_PER_CRAWL` = 1000), so one account must not be able to starve
+  the others. Counts the user's subscriptions; favourites count as tracked
+  URLs. Refusal = 409 `KEYWORD_QUOTA_EXCEEDED` / `PRODUCT_URL_QUOTA_EXCEEDED`,
+  checked after « already tracked »; `addFavoriteAction` **returns** the
+  message (Next hides thrown action errors in prod) and the star displays it.
+  Count-then-write is not atomic: concurrent adds can exceed by one.
+- **Backend**: `AuthGuard` (global, set in `configureApp`, so API tests go
+  through it) → `request.user`; controllers read it with `@CurrentUser()` and
+  pass a `UserId` explicitly to commands/queries (no request-scoped providers).
+- **User id = verified Google email, lower-cased** (`shared/domain/user-id.ts`),
+  not Google's `sub`: allowlist, legacy owner and MCP account are configured
+  by email, and docs stay readable. Trade-off: a reassigned Workspace address
+  would inherit the previous owner's data.
+
+What is personal vs shared:
+
+| Data | Model | Shared part |
+|---|---|---|
+| keywords | `keywords.subscribers[]` (emails) | the term and its scrape — two users on « lessive » trigger one search |
+| tracked URLs | `tracked_urls.subscribers[]` | the URL and its price history |
+| favourites | `favorites { userId, url, addedAt }` | — |
+| favourite stations | `favorite_stations { userId, stationId, addedAt }` | restock alert watches the **union** (one webhook) |
+| catalogue, scores, fuel prices | — | entirely shared; product grids are not filtered per user |
+
+`enabled` on `keywords` / `tracked_urls` is **derived** from `subscribers`
+(true while at least one remains), written in the same `updateOne` with an
+aggregation-pipeline update (`shared/infrastructure/mongo/subscriptions.ts`) —
+atomic per document, and the scrapper keeps reading `enabled: true` unchanged.
+Untracking only removes the caller; the last one out stops the scrape. The
+dashboard counts only the user's perimeter (their keywords + tracked URLs).
+
+**Legacy data** (created before accounts: no `subscribers` / no `userId`) is
+attached at backend start-up to `AUTH_LEGACY_OWNER_EMAIL`
+(`shared/infrastructure/mongo/legacy-ownership.ts`, idempotent: only ownerless
+docs). Unset → a warning lists the orphans, which nobody sees (orphan keywords
+with `enabled: true` are still scraped). The scrapper's default-keyword seed on
+an empty collection produces such orphans; they are attached on the next
+backend start.
 
 ### Fuel prices — official open data, not scraping
 
@@ -278,8 +368,9 @@ with `timezone=UTC`.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
 - `pipeline/src/fuel/restock_alerts.py` — **restock alert**, opt-in (off unless
-  `FUEL_RESTOCK_WEBHOOK_URL` or a zone is set). Watched stations = the user's
-  **favourite stations** (`favorite_stations`, starred on the fuel map) ∪ the
+  `FUEL_RESTOCK_WEBHOOK_URL` or a zone is set). Watched stations = **all users'**
+  **favourite stations** (`favorite_stations.stationId`, starred on the fuel map,
+  falling back to `_id` for a legacy doc not yet attached to an account) ∪ the
   optional zone (`FUEL_WATCH_LAT` / `FUEL_WATCH_LNG`, `FUEL_WATCH_RADIUS_KM`
   default 5); without a zone, only favourites alert. `FUEL_WATCH_FUELS`
   defaults to `gazole`. The import keeps no history, and a station closing its
@@ -307,8 +398,9 @@ with `timezone=UTC`.
   the radius with their station count, fuel filter applied but **not** the brand
   filter (otherwise the selector would only offer the chosen brand). `$geoNear` on the `location_2dsphere` index (created by
   the backend's `ensureIndexes`), capped at 200 stations (`truncated` flag).
-  Each station carries `isFavorite`. Also owns **favourite stations**
-  (`favorite_stations`, the only fuel collection the backend writes):
+  Each station carries `isFavorite` (for the requesting user). Also owns
+  **favourite stations** (`favorite_stations`, per user, the only fuel
+  collection the backend writes):
   `GET /api/v1/fuel-stations/favorites`, `PUT` / `DELETE
   /api/v1/fuel-stations/favorites/:id` (idempotent, 204; `PUT` → 404 if the
   station is not in the feed, 400 if the id is not digits).
@@ -327,12 +419,15 @@ with `timezone=UTC`.
 
 ### Key frontend files
 
-- `src/app/page.tsx` — dashboard: global counters + best deals per keyword
+- `src/auth.ts` — Auth.js config (Google, JWT session, allowlist); `src/middleware.ts` — session required everywhere but `/login`, `/api/auth`, `/api/health`
+- `src/app/login/page.tsx` — sign-in page (also handles a session whose address left the allowlist, without redirect loop); `src/components/UserMenu.tsx` — name + sign-out
+- `src/app/api/health/route.ts` — k8s probe, outside the auth middleware
+- `src/app/page.tsx` — dashboard: counters + best deals per keyword, on the user's perimeter
 - `src/app/keywords/page.tsx` — tracked keywords, add/remove via Server Actions
 - `src/app/keyword/[slug]/page.tsx` — product grid, server-side filter/sort/paginate
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
 - `src/app/fuel/page.tsx` + `src/components/FuelExplorer.tsx` / `FuelMap.tsx` — fuel-price map; `src/lib/fuel.ts` holds its URL parsing and display rules
-- `src/lib/api.ts` — the single data access point: typed client over the backend API
+- `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
 
@@ -365,6 +460,10 @@ Transport is stateless: a fresh `McpServer` + transport per request, closed with
 the response. Auth is a bearer token (`MCP_AUTH_TOKEN`), compared in constant
 time; the server refuses to start without it unless `MCP_ALLOW_ANONYMOUS=true`.
 This is the only applicative component deliberately exposed outside the cluster.
+Towards the backend, it acts for **one** account (`MCP_USER_EMAIL`), signing
+the internal token with its own `MCP_BACKEND_AUTH_SECRET`, which the backend
+accepts for that account only: the tools read and modify that account's
+keywords, favourites and tracked URLs, and nothing else.
 
 ### MongoDB
 
@@ -373,7 +472,10 @@ This is the only applicative component deliberately exposed outside the cluster.
 - `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `brand` (unified OSM brand or null), `name` (OSM station name or null), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
-- `favorite_stations` — the user's favourite fuel stations, keyed by `_id` = official station id; field `addedAt`. Written only by the backend (star on the fuel map), read by the pipeline's restock alert. Not purged when a station leaves the feed (it becomes useful again if the station comes back)
+- `keywords` — one doc per scraped term; `keyword` (unique), `enabled` (read by the scrapper, derived from `subscribers`), `subscribers[]` (emails of the users tracking it). Written by the backend (and seeded by the scrapper on an empty collection)
+- `tracked_urls` — one doc per individually tracked product URL; `url` (unique), `enabled`, `subscribers[]` — same model as `keywords`. Never deleted, so the purge keeps sparing it
+- `favorites` — one doc per (user, product); `userId`, `url`, `addedAt`; unique index `userId_url` (partial on `userId` existing). Written by the backend; `url` read by the purge
+- `favorite_stations` — one doc per (user, station); `userId`, `stationId` (official id), `addedAt`; unique index `userId_stationId`. Legacy docs keep `_id` = station id. Written only by the backend (star on the fuel map), read by the pipeline's restock alert (union of all users). Not purged when a station leaves the feed (it becomes useful again if the station comes back)
 - `fuel_watch_state` — last known state of each (watched station × watched fuel), keyed by `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `available`, `shortageSince`, `seenAt`. Written only by the restock alert (`restock_alerts.py`), after each import
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
@@ -383,26 +485,27 @@ This is the only applicative component deliberately exposed outside the cluster.
 Managed with Kustomize. Namespace: `price-tracker`.
 
 Key resources in `k8s/base/`:
-- `backend-deployment.yaml` + `backend-service.yaml` — NestJS API, **ClusterIP only, no ingress**: reachable in-cluster at `http://price-tracker-backend`
+- `backend-deployment.yaml` + `backend-service.yaml` — NestJS API, **ClusterIP only, no ingress**: reachable in-cluster at `http://price-tracker-backend`; still requires a signed internal token on every route but the probes
 - `mcp-deployment.yaml` + `mcp-service.yaml` + `mcp-ingress.yaml` — MCP server, **exposed on purpose** (the agent is off-cluster) on the `/mcp` path prefix; hostless ingress, Traefik prefers it over the frontend's `/`. Protected by `MCP_AUTH_TOKEN` from the secret, nothing else
-- `frontend-deployment.yaml` + `frontend-service.yaml` + `ingress.yaml` — Next.js frontend behind Traefik ingress
+- `frontend-deployment.yaml` + `frontend-service.yaml` + `ingress.yaml` — Next.js frontend behind Traefik ingress; probes on `/api/health`. Google only accepts **HTTPS on a public domain** (or localhost) as OAuth redirect URI (`<domain>/api/auth/callback/google`): login works only through that domain
 - `mongodb.yaml` — MongoDB StatefulSet (in-cluster), ClusterIP service + `mongodb-external` NodePort for LAN access
 - `postgres.yaml` — Postgres for Airflow metadata
 - `airflow-webserver.yaml` + `airflow-scheduler.yaml` — Airflow components
 - `airflow-init-job.yaml` — initialises Airflow DB schema on first deploy
 - `airflow-rbac.yaml` — ServiceAccount + RBAC so Airflow can launch Pods (KubernetesPodOperator)
 - `airflow-ingress.yaml` — Traefik ingress for the Airflow webserver
-- `configmap.env` / `secrets.env` (from `secrets.env.example`) — non-secret / secret env vars
+- `configmap.env` / `secrets.env` (from `secrets.env.example`) — non-secret / secret env vars; auth keys: `BACKEND_AUTH_SECRET`, `MCP_BACKEND_AUTH_SECRET`, `AUTH_SECRET`, `AUTH_URL` (HTTPS, required), `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_ALLOWED_EMAILS`, `AUTH_LEGACY_OWNER_EMAIL`, `MCP_USER_EMAIL`; quotas are plain env values in `backend-deployment.yaml` (`install.sh` asks for / generates them, including on an existing `secrets.env`)
 
 ### CI/CD (`.github/workflows/`)
 
-Six workflows, each triggered on changes to their respective directory:
+Seven workflows, each triggered on changes to their respective directory:
 - `backend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-backend:<tag>`
 - `mcp.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-mcp:<tag>`
 - `frontend.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-frontend:<tag>`
 - `pipeline.yml` — tests, then builds and pushes `ghcr.io/<repo>-pipeline:<tag>`
 - `scrapper.yml` — typechecks + tests, then builds and pushes `ghcr.io/<repo>-scrapper:<tag>`
 - `airflow.yml` — builds and pushes the custom Airflow image
+- `e2e.yml` — builds backend + frontend, then runs the attack suite (`e2e/`) on backend/frontend/e2e changes; independent of the image workflows, make it a required check to block merges
 
 Every workflow that has tests runs them in a `test` job that the
 `build-and-push` job declares as `needs:` — a red suite stops the publication.

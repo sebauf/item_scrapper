@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { FavoriteStationRepository } from '../../domain/favorite-station.repository';
 import { FuelType } from '../../domain/fuel-type';
 import { isStale, STALE_AFTER_HOURS } from '../../domain/freshness-policy';
@@ -22,7 +23,10 @@ export interface FuelPriceView {
 
 export interface FuelStationView extends Omit<FuelStationRow, 'fuels'> {
   fuels: FuelPriceView[];
-  /** Station favorite — c'est aussi elle que surveille l'alerte de réapprovisionnement. */
+  /**
+   * Station favorite **de l'utilisateur qui cherche** — c'est aussi elle que
+   * surveille l'alerte de réapprovisionnement.
+   */
   isFavorite: boolean;
 }
 
@@ -38,7 +42,7 @@ export interface FuelStationSearchResult {
 
 /**
  * Stations autour d'un point, avec la fraîcheur de chaque prix déjà jugée et
- * l'état favori de chacune.
+ * l'état favori de chacune pour `owner`.
  *
  * Le favori est marqué ici plutôt que joint dans l'agrégation `$geoNear` : la
  * liste des favorites tient en quelques entrées, et le read model reste une
@@ -54,11 +58,15 @@ export class SearchFuelStationsQuery {
     private readonly favorites: FavoriteStationRepository,
   ) {}
 
-  async execute(raw: RawStationSearch, now: Date = new Date()): Promise<FuelStationSearchResult> {
+  async execute(
+    owner: UserId,
+    raw: RawStationSearch,
+    now: Date = new Date(),
+  ): Promise<FuelStationSearchResult> {
     const search = StationSearch.create(raw);
     const [{ stations, truncated, brands, lastImportAt }, favorites] = await Promise.all([
       this.readModel.findNear(search),
-      this.favorites.list(),
+      this.favorites.list(owner),
     ]);
     const favoriteIds = new Set(favorites.map((entry) => entry.stationId));
 

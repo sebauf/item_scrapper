@@ -1,4 +1,7 @@
+import { createHmac } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { authMock } from '@/testing/auth-mock';
+import { RedirectSignal } from '@/testing/navigation-mock';
 import {
   addFavorite,
   ApiError,
@@ -65,7 +68,10 @@ describe('lectures', () => {
     const fetchMock = jsonResponse({ keywordCount: 2 });
 
     await expect(getDashboard()).resolves.toEqual({ keywordCount: 2 });
-    expect(fetchMock).toHaveBeenCalledWith(`${API}/dashboard`, { cache: 'no-store' });
+    expect(fetchMock).toHaveBeenCalledWith(`${API}/dashboard`, {
+      cache: 'no-store',
+      headers: { authorization: expect.stringMatching(/^Bearer /) },
+    });
   });
 
   it('ne met jamais les réponses en cache', async () => {
@@ -124,7 +130,10 @@ describe('écritures', () => {
     expect(fetchMock).toHaveBeenCalledWith(`${API}/keywords`, {
       cache: 'no-store',
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        authorization: expect.stringMatching(/^Bearer /),
+      },
       body: JSON.stringify({ keyword: 'lessive' }),
     });
   });
@@ -254,5 +263,63 @@ describe('searchFuelStations', () => {
       expect.objectContaining({ cache: 'no-store' }),
     );
     expect(result.staleAfterHours).toBe(72);
+  });
+});
+
+/**
+ * Le backend ne connaît l'utilisateur que par le jeton de l'en-tête
+ * `Authorization`. Ce qui se joue ici : que ce soit bien l'adresse de la
+ * session qui part, signée avec le secret partagé, et qu'aucun appel ne parte
+ * sans session.
+ */
+describe('identité transmise au backend', () => {
+  function decode(authorization: string) {
+    const [header, payload, signature] = authorization.replace('Bearer ', '').split('.');
+    return {
+      header: JSON.parse(Buffer.from(header, 'base64url').toString()),
+      payload: JSON.parse(Buffer.from(payload, 'base64url').toString()),
+      signature,
+      signingInput: `${header}.${payload}`,
+    };
+  }
+
+  function sentAuthorization(fetchMock: ReturnType<typeof vi.fn>): string {
+    return (fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers.authorization;
+  }
+
+  it('signe un jeton au nom de l’utilisateur connecté', async () => {
+    const fetchMock = jsonResponse([]);
+
+    await getKeywords();
+
+    const token = decode(sentAuthorization(fetchMock));
+    expect(token.header).toEqual({ alg: 'HS256', typ: 'JWT' });
+    expect(token.payload).toMatchObject({
+      sub: 'alice@example.com',
+      iss: 'price-tracker-frontend',
+      aud: 'price-tracker-backend',
+    });
+    expect(token.payload.exp - token.payload.iat).toBe(60);
+    const expected = createHmac('sha256', process.env.BACKEND_AUTH_SECRET as string)
+      .update(token.signingInput)
+      .digest('base64url');
+    expect(token.signature).toBe(expected);
+  });
+
+  it('change de sujet quand un autre utilisateur est connecté', async () => {
+    authMock.auth.mockResolvedValueOnce({ user: { email: 'bob@example.com' }, expires: '2099-01-01' });
+    const fetchMock = jsonResponse([]);
+
+    await getFavorites();
+
+    expect(decode(sentAuthorization(fetchMock)).payload.sub).toBe('bob@example.com');
+  });
+
+  it('renvoie vers la connexion sans appeler le backend quand il n’y a pas de session', async () => {
+    authMock.auth.mockResolvedValueOnce(null);
+    const fetchMock = jsonResponse([]);
+
+    await expect(getKeywords()).rejects.toBeInstanceOf(RedirectSignal);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -1,3 +1,4 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { ProductId } from '../../../catalog/domain/product-id';
 import {
   ProductDetail,
@@ -7,6 +8,7 @@ import {
 import { InMemoryFavoriteRepository } from '../../testing/in-memory-favorite.repository';
 import { ListFavoritesQuery } from './list-favorites.query';
 
+const alice = UserId.create('alice@example.com');
 const SCRAPED_URL = 'https://www.amazon.fr/dp/B0ABCDEFGH/';
 const NOT_YET_SCRAPED_URL = 'https://www.amazon.fr/dp/B0ZZZZZZZZ/';
 
@@ -54,7 +56,7 @@ describe('ListFavoritesQuery', () => {
       new Map([[SCRAPED_URL, detailFor(SCRAPED_URL)]]),
     );
 
-    const result = await new ListFavoritesQuery(favorites, products).execute();
+    const result = await new ListFavoritesQuery(favorites, products).execute(alice);
 
     expect(result).toHaveLength(1);
     expect(result[0].url).toBe(SCRAPED_URL);
@@ -64,7 +66,7 @@ describe('ListFavoritesQuery', () => {
     const favorites = new InMemoryFavoriteRepository({ [NOT_YET_SCRAPED_URL]: new Date() });
     const products = new StubProductReadModel(new Map());
 
-    const result = await new ListFavoritesQuery(favorites, products).execute();
+    const result = await new ListFavoritesQuery(favorites, products).execute(alice);
 
     expect(result).toEqual([]);
   });

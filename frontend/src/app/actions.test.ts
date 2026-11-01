@@ -186,6 +186,17 @@ describe('favoris', () => {
     expect(api.removeFavorite).not.toHaveBeenCalled();
   });
 
+  it('renvoie le message d’un refus métier (quota) au lieu de le lever', async () => {
+    vi.mocked(api.addFavorite).mockRejectedValue(
+      new ApiError(409, 'PRODUCT_URL_QUOTA_EXCEEDED', 'Vous suivez déjà 100 produits'),
+    );
+
+    await expect(actions.addFavoriteAction('aWQ')).resolves.toEqual({
+      error: 'Vous suivez déjà 100 produits',
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
   it('laisse remonter l’échec — le bouton étoile doit pouvoir revenir en arrière', async () => {
     // FavoriteButton est optimiste : il compte sur le rejet pour annuler
     // l'affichage. Avaler l'erreur ici laisserait une étoile mensongère.

@@ -45,7 +45,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Mots-clés suivis, avec nombre de produits et dernier scrape */
+        /** Mots-clés suivis par l'utilisateur, avec nombre de produits et dernier scrape */
         get: operations["KeywordController_list"];
         put?: never;
         /** Suivre un nouveau mot-clé (ou réactiver un mot-clé retiré) */
@@ -66,7 +66,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Retirer un mot-clé du suivi */
+        /** Retirer un mot-clé du suivi de l'utilisateur */
         delete: operations["KeywordController_untrack"];
         options?: never;
         head?: never;
@@ -80,7 +80,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Compteurs globaux et meilleures affaires par mot-clé */
+        /** Compteurs et meilleures affaires par mot-clé, sur le périmètre de l'utilisateur */
         get: operations["DashboardController_get"];
         put?: never;
         post?: never;
@@ -131,7 +131,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** URLs suivies individuellement, avec dernier prix connu */
+        /** URLs suivies individuellement par l'utilisateur, avec dernier prix connu */
         get: operations["ProductTrackingController_list"];
         put?: never;
         /** Suivre une URL produit (ou réactiver une URL retirée) */
@@ -166,7 +166,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Produits favoris, fiche complète avec historique de prix */
+        /** Produits favoris de l'utilisateur, fiche complète avec historique de prix */
         get: operations["FavoriteController_list"];
         put?: never;
         /** Mettre un produit en favori (idempotent, suit aussi son prix) */
@@ -202,7 +202,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stations favorites, de la plus récente à la plus ancienne */
+        /** Stations favorites de l'utilisateur, de la plus récente à la plus ancienne */
         get: operations["FuelFavoriteController_list"];
         put?: never;
         post?: never;
@@ -580,7 +580,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Mot-clé déjà suivi */
+            /** @description Mot-clé déjà suivi par l'utilisateur */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -607,7 +607,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Mot-clé inconnu */
+            /** @description Mot-clé que personne n'a jamais suivi */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -757,7 +757,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description URL déjà suivie */
+            /** @description URL déjà suivie par l'utilisateur */
             409: {
                 headers: {
                     [name: string]: unknown;

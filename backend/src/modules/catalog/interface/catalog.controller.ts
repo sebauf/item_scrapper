@@ -1,5 +1,7 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserId } from 'src/shared/domain/user-id';
+import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { GetDashboardQuery } from '../application/queries/get-dashboard.query';
 import { GetProductDetailQuery } from '../application/queries/get-product-detail.query';
 import { SearchProductsQuery } from '../application/queries/search-products.query';
@@ -10,16 +12,19 @@ import {
   ProductSearchResponse,
 } from './dto/product.response';
 
+@ApiBearerAuth()
 @ApiTags('dashboard')
 @Controller('dashboard')
 export class DashboardController {
   constructor(private readonly getDashboard: GetDashboardQuery) {}
 
   @Get()
-  @ApiOperation({ summary: 'Compteurs globaux et meilleures affaires par mot-clé' })
+  @ApiOperation({
+    summary: "Compteurs et meilleures affaires par mot-clé, sur le périmètre de l'utilisateur",
+  })
   @ApiResponse({ status: 200, type: DashboardResponse })
-  get(): Promise<DashboardResponse> {
-    return this.getDashboard.execute();
+  get(@CurrentUser() user: UserId): Promise<DashboardResponse> {
+    return this.getDashboard.execute(user);
   }
 }
 
@@ -28,7 +33,12 @@ export class DashboardController {
  * une sous-ressource : il n'existe pas de liste de produits « en général ».
  * Le contrôleur vit dans le contexte Catalog malgré son chemin — c'est lui qui
  * possède la donnée produit, pas le contexte Keyword.
+ *
+ * Authentifiée (garde globale) mais pas filtrée par utilisateur : les produits
+ * relevés sont un catalogue commun, et rien n'est personnel dans la grille
+ * d'un mot-clé. C'est la *liste* des mots-clés qui est personnelle.
  */
+@ApiBearerAuth()
 @ApiTags('products')
 @Controller('keywords/:keyword/products')
 export class KeywordProductsController {
@@ -47,6 +57,7 @@ export class KeywordProductsController {
   }
 }
 
+@ApiBearerAuth()
 @ApiTags('products')
 @Controller('products')
 export class ProductController {

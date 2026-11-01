@@ -1,3 +1,5 @@
+import { UserId } from 'src/shared/domain/user-id';
+
 /**
  * Côté lecture du CQRS.
  *
@@ -16,21 +18,21 @@ export interface KeywordSummary {
 }
 
 export abstract class KeywordSummaryReadModel {
-  abstract listTracked(): Promise<KeywordSummary[]>;
+  /** Les mots-clés que suit `owner` — et seulement eux. */
+  abstract listTracked(owner: UserId): Promise<KeywordSummary[]>;
 
   /**
    * Les mots-clés que `listTracked` renverrait, réduits à leurs noms.
    *
    * Existe pour que le tableau de bord (contexte Catalog) ne réinvente pas la
-   * règle. Il lui en faut deux usages, et c'est pour ça que ce port renvoie les
-   * noms plutôt qu'un nombre : son compteur (qui comptait les documents
-   * `enabled: true`, ignorant les mots-clés hérités sans document) et le choix
-   * des blocs « bonnes affaires par mot-clé » (qui partait d'`items_raw`, donc
-   * affichait encore les mots-clés retirés). Deux requêtes distinctes seraient
-   * deux occasions de divergence.
+   * règle. Il lui en faut trois usages, et c'est pour ça que ce port renvoie
+   * les noms plutôt qu'un nombre : son compteur de mots-clés, le choix des blocs
+   * « bonnes affaires par mot-clé », et le périmètre de ses compteurs de
+   * produits et d'affaires. Deux requêtes distinctes seraient deux occasions de
+   * divergence.
    *
    * Moins cher que `listTracked` : ni comptage de produits, ni `$max` sur
    * `scrapedAt`, dont le tableau de bord n'a que faire.
    */
-  abstract listTrackedNames(): Promise<string[]>;
+  abstract listTrackedNames(owner: UserId): Promise<string[]>;
 }

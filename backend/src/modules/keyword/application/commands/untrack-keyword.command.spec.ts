@@ -1,56 +1,49 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { KeywordNotFound } from '../../domain/keyword.errors';
 import { InMemoryKeywordRepository } from '../../testing/in-memory-keyword.repository';
-import { InMemoryScrapedKeywords } from '../../testing/in-memory-scraped-keywords';
 import { UntrackKeywordCommand } from './untrack-keyword.command';
 
-function command(
-  repository: InMemoryKeywordRepository,
-  scraped: string[] = [],
-): UntrackKeywordCommand {
-  return new UntrackKeywordCommand(repository, new InMemoryScrapedKeywords(scraped));
-}
+const alice = UserId.create('alice@example.com');
 
 describe('UntrackKeywordCommand', () => {
   it('retire un mot-clé suivi', async () => {
-    const repository = new InMemoryKeywordRepository({ adoucissant: true });
+    const repository = new InMemoryKeywordRepository({ adoucissant: ['alice@example.com'] });
 
-    await command(repository).execute('adoucissant');
+    await new UntrackKeywordCommand(repository).execute(alice, 'adoucissant');
 
-    expect(repository.stateOf('adoucissant')).toBe(false);
-  });
-
-  it('reste un succès si le mot-clé est déjà retiré', async () => {
-    const repository = new InMemoryKeywordRepository({ adoucissant: false });
-
-    await expect(command(repository).execute('adoucissant')).resolves.toBeUndefined();
-    expect(repository.stateOf('adoucissant')).toBe(false);
-  });
-
-  it('échoue si le mot-clé est inconnu', async () => {
-    const repository = new InMemoryKeywordRepository();
-
-    await expect(command(repository).execute('inconnu')).rejects.toThrow(KeywordNotFound);
+    expect(repository.subscribersOf('adoucissant')).toEqual([]);
   });
 
   /**
-   * Le cas qui manquait : la page liste ce mot-clé parce qu'`items_raw` en a des
-   * relevés, mais aucun document ne le décrit. Sans écriture, le retrait était
-   * un 404 que le frontend traitait en succès, et la ligne revenait.
+   * Le cœur du multi-utilisateur : le mot-clé est partagé, l'abonnement ne
+   * l'est pas. Alice qui retire « adoucissant » ne doit pas l'enlever à Bob —
+   * ni arrêter son scrape.
    */
-  it('retire un mot-clé connu de ses seuls relevés en écrivant son document', async () => {
-    const repository = new InMemoryKeywordRepository();
+  it('ne retire que l’abonnement de celui qui le demande', async () => {
+    const repository = new InMemoryKeywordRepository({
+      adoucissant: ['alice@example.com', 'bob@example.com'],
+    });
 
-    await command(repository, ['batterie canape electrique']).execute('batterie canape electrique');
+    await new UntrackKeywordCommand(repository).execute(alice, 'adoucissant');
 
-    expect(repository.stateOf('batterie canape electrique')).toBe(false);
+    expect(repository.subscribersOf('adoucissant')).toEqual(['bob@example.com']);
   });
 
-  it("n'écrit rien pour un mot-clé que même les relevés ne connaissent pas", async () => {
+  it('reste un succès si l’utilisateur ne le suit pas', async () => {
+    const repository = new InMemoryKeywordRepository({ adoucissant: ['bob@example.com'] });
+
+    await expect(
+      new UntrackKeywordCommand(repository).execute(alice, 'adoucissant'),
+    ).resolves.toBeUndefined();
+    expect(repository.subscribersOf('adoucissant')).toEqual(['bob@example.com']);
+  });
+
+  it('échoue si personne n’a jamais suivi ce mot-clé', async () => {
     const repository = new InMemoryKeywordRepository();
 
-    await expect(command(repository, ['adoucissant']).execute('inconnu')).rejects.toThrow(
+    await expect(new UntrackKeywordCommand(repository).execute(alice, 'inconnu')).rejects.toThrow(
       KeywordNotFound,
     );
-    expect(repository.stateOf('inconnu')).toBeUndefined();
+    expect(repository.subscribersOf('inconnu')).toBeUndefined();
   });
 });

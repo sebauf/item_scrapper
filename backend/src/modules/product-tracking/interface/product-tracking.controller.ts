@@ -1,5 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { UserId } from 'src/shared/domain/user-id';
+import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { ProductId } from '../../catalog/domain/product-id';
 import { TrackProductUrlCommand } from '../application/commands/track-product-url.command';
 import { UntrackProductUrlCommand } from '../application/commands/untrack-product-url.command';
@@ -14,6 +16,7 @@ import { TrackedUrlSummaryResponse } from './dto/tracked-url-summary.response';
  * une URL porte des `/` qui voyagent mal dans un chemin HTTP, cf. le
  * commentaire de `ProductId`.
  */
+@ApiBearerAuth()
 @ApiTags('product-urls')
 @Controller('product-urls')
 export class ProductTrackingController {
@@ -24,10 +27,10 @@ export class ProductTrackingController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'URLs suivies individuellement, avec dernier prix connu' })
+  @ApiOperation({ summary: "URLs suivies individuellement par l'utilisateur, avec dernier prix connu" })
   @ApiResponse({ status: 200, type: [TrackedUrlSummaryResponse] })
-  async list(): Promise<TrackedUrlSummaryResponse[]> {
-    const summaries = await this.listSummaries.execute();
+  async list(@CurrentUser() user: UserId): Promise<TrackedUrlSummaryResponse[]> {
+    const summaries = await this.listSummaries.execute(user);
     return summaries.map(TrackedUrlSummaryResponse.from);
   }
 
@@ -36,9 +39,9 @@ export class ProductTrackingController {
   @ApiOperation({ summary: 'Suivre une URL produit (ou réactiver une URL retirée)' })
   @ApiResponse({ status: 201, description: 'URL suivie' })
   @ApiResponse({ status: 400, description: 'URL absente ou non reconnue comme fiche produit amazon.fr' })
-  @ApiResponse({ status: 409, description: 'URL déjà suivie' })
-  async track(@Body() dto: TrackProductUrlDto): Promise<void> {
-    await this.trackProductUrl.execute(dto.url);
+  @ApiResponse({ status: 409, description: "URL déjà suivie par l'utilisateur" })
+  async track(@CurrentUser() user: UserId, @Body() dto: TrackProductUrlDto): Promise<void> {
+    await this.trackProductUrl.execute(user, dto.url);
   }
 
   @Delete(':id')
@@ -48,8 +51,8 @@ export class ProductTrackingController {
   @ApiResponse({ status: 204, description: 'URL retirée' })
   @ApiResponse({ status: 400, description: 'Identifiant mal formé' })
   @ApiResponse({ status: 404, description: 'URL inconnue' })
-  async untrack(@Param('id') id: string): Promise<void> {
+  async untrack(@CurrentUser() user: UserId, @Param('id') id: string): Promise<void> {
     const url = ProductId.fromEncoded(id).url;
-    await this.untrackProductUrl.execute(url);
+    await this.untrackProductUrl.execute(user, url);
   }
 }

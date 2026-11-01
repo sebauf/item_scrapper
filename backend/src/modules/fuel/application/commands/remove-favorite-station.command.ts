@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { FavoriteStationRepository } from '../../domain/favorite-station.repository';
 import { StationId } from '../../domain/station-id';
 
@@ -11,8 +12,8 @@ import { StationId } from '../../domain/station-id';
 export class RemoveFavoriteStationCommand {
   constructor(private readonly favorites: FavoriteStationRepository) {}
 
-  async execute(rawId: unknown): Promise<void> {
+  async execute(owner: UserId, rawId: unknown): Promise<void> {
     const stationId = StationId.create(rawId);
-    await this.favorites.remove(stationId.value);
+    await this.favorites.remove(owner, stationId.value);
   }
 }

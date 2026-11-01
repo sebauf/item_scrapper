@@ -7,6 +7,12 @@
 # est plus spécifique et gagne sur celle-ci.
 # Pour TLS avec cert-manager, décommenter la section tls et l'annotation
 # (le TLS, lui, exige un host explicite).
+#
+# Connexion Google : Google n'accepte comme URL de redirection OAuth que
+# http://localhost ou une URL **HTTPS** sur un domaine public déclaré dans la
+# console (<domaine>/api/auth/callback/google) — ni IP, ni .home/.local. La
+# connexion n'est donc possible que via ce domaine en HTTPS ; les autres noms
+# servent toujours les pages, mais la connexion y échoue côté Google.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

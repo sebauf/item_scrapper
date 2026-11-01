@@ -33,6 +33,37 @@ spec:
                 secretKeyRef:
                   name: price-tracker-secrets
                   key: MONGODB_URI
+            # Vérifient le jeton qui porte l'identité de l'utilisateur : un
+            # secret pour le frontend (tout compte), un pour le MCP (son seul
+            # compte, MCP_USER_EMAIL). Cf. shared/infrastructure/auth.
+            - name: BACKEND_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: BACKEND_AUTH_SECRET
+            # Propriétaire des données antérieures aux comptes (facultatif).
+            - name: AUTH_LEGACY_OWNER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: AUTH_LEGACY_OWNER_EMAIL
+                  optional: true
+            - name: MCP_BACKEND_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: MCP_BACKEND_AUTH_SECRET
+            - name: MCP_USER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: price-tracker-secrets
+                  key: MCP_USER_EMAIL
+            # Quotas par utilisateur (0 = illimité) : le budget de crawl est
+            # commun, ~155 requêtes par mot-clé, 1 par URL suivie, sur 1000.
+            - name: MAX_KEYWORDS_PER_USER
+              value: "10"
+            - name: MAX_TRACKED_URLS_PER_USER
+              value: "100"
             - name: NODE_ENV
               value: production
             - name: PORT

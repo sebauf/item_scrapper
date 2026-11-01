@@ -23,7 +23,9 @@ vider le catalogue au premier redémarrage du pipeline. C'est le même point
 d'ancrage que le filtre de fraîcheur du backend.
 
 Ce qui échappe à la purge : les URLs suivies à l'unité (`tracked_urls`) et les
-favoris (`favorites`). Ce sont des demandes explicites de l'utilisateur —
+favoris (`favorites`), quel que soit l'utilisateur qui les a demandés (les
+documents `tracked_urls` restent même quand plus personne ne les suit, ce qui
+les protège aussi). Ce sont des demandes explicites d'un utilisateur —
 effacer l'historique de prix qu'il a demandé à constituer, parce que la boutique
 a retiré la fiche quinze jours, serait une perte sèche et irréversible.
 """

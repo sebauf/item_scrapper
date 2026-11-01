@@ -115,6 +115,14 @@ cluster, et il porte des outils d'écriture. Sa protection est le jeton :
 Le jeton est **le seul** rempart : ne pas déployer l'Ingress sans avoir
 renseigné `MCP_AUTH_TOKEN` dans `k8s/base/secrets.env`.
 
+Vers le backend, le serveur agit au nom d'**un** compte, `MCP_USER_EMAIL` :
+chaque appel porte un jeton interne HS256 de 60 s signé avec
+`MCP_BACKEND_AUTH_SECRET`, un secret **propre au MCP** (le frontend a le
+sien). Le backend n'accepte ce secret que pour `MCP_USER_EMAIL` : les outils
+lisent et modifient les mots-clés, favoris et URLs suivies de ce seul compte,
+et un serveur MCP compromis n'ouvre pas les autres. Quiconque détient
+`MCP_AUTH_TOKEN` agit avec les droits de ce compte, et seulement de lui.
+
 ## Configuration
 
 | Variable | Défaut | Rôle |
@@ -122,6 +130,8 @@ renseigné `MCP_AUTH_TOKEN` dans `k8s/base/secrets.env`.
 | `BACKEND_URL` | `http://localhost:3001` | racine de l'API, sans `/api/v1` |
 | `PORT` | `3010` | port d'écoute |
 | `MCP_AUTH_TOKEN` | — | jeton porteur, 16 caractères minimum |
+| `MCP_BACKEND_AUTH_SECRET` | — | secret propre au MCP, connu du backend, 32 caractères minimum (requis) |
+| `MCP_USER_EMAIL` | — | compte Google au nom duquel agissent les outils (requis) |
 | `MCP_ALLOW_ANONYMOUS` | `false` | ouvre le serveur sans jeton (dev local) |
 | `BACKEND_TIMEOUT_MS` | `10000` | abandon d'un appel backend |
 | `MCP_ALLOWED_HOSTS` | vide | hôtes acceptés (`Host`), séparés par des virgules |

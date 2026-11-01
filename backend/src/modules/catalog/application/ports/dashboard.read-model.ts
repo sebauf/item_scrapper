@@ -1,3 +1,4 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { ProductSummary } from './product.read-model';
 
 /** Bloc « bonnes affaires » d'un mot-clé sur le tableau de bord. */
@@ -19,5 +20,10 @@ export interface DashboardSnapshot {
 }
 
 export abstract class DashboardReadModel {
-  abstract load(): Promise<DashboardSnapshot>;
+  /**
+   * Tableau de bord de `owner` : compteurs et blocs portent sur **son**
+   * périmètre — ses mots-clés et ses URLs suivies à l'unité —, pas sur tout ce
+   * que le scrapper relève pour l'ensemble des utilisateurs.
+   */
+  abstract load(owner: UserId): Promise<DashboardSnapshot>;
 }

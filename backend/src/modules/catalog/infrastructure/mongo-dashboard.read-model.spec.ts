@@ -3,7 +3,25 @@ import {
   KeywordSummary,
   KeywordSummaryReadModel,
 } from 'src/modules/keyword/application/ports/keyword-summary.read-model';
+import { TrackedUrlSummaryReadModel } from 'src/modules/product-tracking/application/ports/tracked-url-summary.read-model';
+import { UserId } from 'src/shared/domain/user-id';
 import { MongoDashboardReadModel } from './mongo-dashboard.read-model';
+
+const alice = UserId.create('alice@example.com');
+
+class FakeTrackedUrls extends TrackedUrlSummaryReadModel {
+  constructor(private readonly urls: string[] = []) {
+    super();
+  }
+
+  listTracked(): never {
+    throw new Error('non utilisé par le tableau de bord');
+  }
+
+  listTrackedUrls(): Promise<string[]> {
+    return Promise.resolve(this.urls);
+  }
+}
 
 class FakeKeywordSummaryReadModel extends KeywordSummaryReadModel {
   constructor(private readonly names: string[]) {
@@ -25,7 +43,10 @@ class FakeKeywordSummaryReadModel extends KeywordSummaryReadModel {
  * cesse de le rafraîchir. Ces tests figent la source de cette liste.
  */
 describe('MongoDashboardReadModel', () => {
-  function stubDb(productCounts: { keyword: string; productCount: number }[]): Db {
+  function stubDb(
+    productCounts: { keyword: string; productCount: number }[],
+    capture: { countFilter?: unknown; dealsMatch?: unknown } = {},
+  ): Db {
     return {
       collection: (name: string) => {
         if (name === 'price_history') {
@@ -34,15 +55,19 @@ describe('MongoDashboardReadModel', () => {
         return {
           // findLastScrapeDay
           findOne: () => Promise.resolve({ day: new Date('2026-08-08T00:00:00.000Z') }),
-          countDocuments: () => Promise.resolve(42),
+          countDocuments: (filter: unknown) => {
+            capture.countFilter = filter;
+            return Promise.resolve(42);
+          },
           // Deux agrégations sur items_raw : les produits par mot-clé, et les
           // bonnes affaires du jour. Le `$lookup` sur `deal_scores` n'appartient
           // qu'à la seconde — s'en servir pour les distinguer vaut mieux que de
           // compter sur l'ordre des appels.
-          aggregate: (pipeline: Document[]) => ({
-            toArray: () =>
-              Promise.resolve(pipeline.some((stage) => '$lookup' in stage) ? [] : productCounts),
-          }),
+          aggregate: (pipeline: Document[]) => {
+            const isDeals = pipeline.some((stage) => '$lookup' in stage);
+            if (isDeals) capture.dealsMatch = pipeline[0].$match;
+            return { toArray: () => Promise.resolve(isDeals ? [] : productCounts) };
+          },
         };
       },
     } as unknown as Db;
@@ -55,9 +80,10 @@ describe('MongoDashboardReadModel', () => {
         { keyword: 'retire', productCount: 9 },
       ]),
       new FakeKeywordSummaryReadModel(['lessive']),
+      new FakeTrackedUrls(),
     );
 
-    const snapshot = await readModel.load();
+    const snapshot = await readModel.load(alice);
 
     expect(snapshot.dealsByKeyword.map((block) => block.keyword)).toEqual(['lessive']);
   });
@@ -66,12 +92,37 @@ describe('MongoDashboardReadModel', () => {
     const readModel = new MongoDashboardReadModel(
       stubDb([{ keyword: 'lessive', productCount: 4 }]),
       new FakeKeywordSummaryReadModel(['lessive', 'café']),
+      new FakeTrackedUrls(),
     );
 
-    const snapshot = await readModel.load();
+    const snapshot = await readModel.load(alice);
 
     // « café » n'a encore aucun produit : il compte, sans bloc à afficher.
     expect(snapshot.keywordCount).toBe(2);
     expect(snapshot.dealsByKeyword.map((block) => block.keyword)).toEqual(['lessive']);
+  });
+
+  /**
+   * Le catalogue est commun, les compteurs ne le sont pas : ils ne portent que
+   * sur les mots-clés et les URLs suivies de l'utilisateur.
+   */
+  it('restreint compteurs et affaires au périmètre de l’utilisateur', async () => {
+    const capture: { countFilter?: unknown; dealsMatch?: unknown } = {};
+    const readModel = new MongoDashboardReadModel(
+      stubDb([], capture),
+      new FakeKeywordSummaryReadModel(['lessive']),
+      new FakeTrackedUrls(['https://www.amazon.fr/dp/B0TEST0001/']),
+    );
+
+    await readModel.load(alice);
+
+    const scope = {
+      $or: [
+        { keyword: { $in: ['lessive'] } },
+        { url: { $in: ['https://www.amazon.fr/dp/B0TEST0001/'] } },
+      ],
+    };
+    expect(capture.countFilter).toMatchObject(scope);
+    expect(capture.dealsMatch).toMatchObject(scope);
   });
 });

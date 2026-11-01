@@ -1,3 +1,4 @@
+import { UserId } from 'src/shared/domain/user-id';
 import { Keyword } from './keyword';
 import { KeywordName } from './keyword-name';
 
@@ -15,7 +16,15 @@ import { KeywordName } from './keyword-name';
  * Aucune notion de MongoDB ne remonte ici.
  */
 export abstract class KeywordRepository {
-  abstract findByName(name: KeywordName): Promise<Keyword | null>;
+  /**
+   * Le mot-clé vu par `owner` : suivi s'il en est abonné, non suivi sinon.
+   * `null` seulement si **personne** n'a jamais suivi ce terme.
+   */
+  abstract findByName(owner: UserId, name: KeywordName): Promise<Keyword | null>;
 
+  /** Nombre de mots-clés que suit `owner` — pour le quota. */
+  abstract countTrackedBy(owner: UserId): Promise<number>;
+
+  /** Persiste l'abonnement de `keyword.owner`, sans toucher à ceux des autres. */
   abstract save(keyword: Keyword): Promise<void>;
 }

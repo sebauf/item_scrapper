@@ -1,3 +1,5 @@
+import { UserId } from 'src/shared/domain/user-id';
+
 /**
  * Côté lecture du CQRS — miroir de KeywordSummaryReadModel.
  *
@@ -17,5 +19,13 @@ export interface TrackedUrlSummary {
 }
 
 export abstract class TrackedUrlSummaryReadModel {
-  abstract listTracked(): Promise<TrackedUrlSummary[]>;
+  /** Les URLs que suit `owner` — et seulement elles. */
+  abstract listTracked(owner: UserId): Promise<TrackedUrlSummary[]>;
+
+  /**
+   * Les mêmes URLs, réduites à leur valeur canonique. Sert le tableau de bord
+   * (contexte Catalog), dont les compteurs portent sur le périmètre de
+   * l'utilisateur : ses mots-clés **et** ses URLs suivies à l'unité.
+   */
+  abstract listTrackedUrls(owner: UserId): Promise<string[]>;
 }

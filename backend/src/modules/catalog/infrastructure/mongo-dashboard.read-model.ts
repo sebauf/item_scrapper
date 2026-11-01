@@ -1,7 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Db, Document } from 'mongodb';
+import { UserId } from 'src/shared/domain/user-id';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
 import { KeywordSummaryReadModel } from 'src/modules/keyword/application/ports/keyword-summary.read-model';
+import { TrackedUrlSummaryReadModel } from 'src/modules/product-tracking/application/ports/tracked-url-summary.read-model';
 import { findLastScrapeDay, onlyLastScrape } from 'src/shared/infrastructure/mongo/last-scrape';
 import { DEAL_SCORE_THRESHOLD } from '../domain/deal-policy';
 import {
@@ -21,6 +23,7 @@ export class MongoDashboardReadModel extends DashboardReadModel {
   constructor(
     @Inject(MONGO_DB) private readonly db: Db,
     private readonly keywords: KeywordSummaryReadModel,
+    private readonly trackedUrls: TrackedUrlSummaryReadModel,
   ) {
     super();
   }
@@ -34,27 +37,38 @@ export class MongoDashboardReadModel extends DashboardReadModel {
    * pour qui lit l'écran. `lastUpdate` reste la seule date de l'historique —
    * c'est justement la fraîcheur du pipeline qu'elle annonce.
    *
-   * Cinq requêtes lancées en parallèle, après la lecture du jour de référence.
-   * Le filtre sur `day` les rend nettement moins coûteuses qu'avant : elles ne
-   * balaient plus tout `items_raw` mais la seule tranche du jour, servie par
-   * l'index `items_raw.day_desc`.
+   * Tout est restreint au **périmètre de l'utilisateur** : les produits
+   * relevés pour ses mots-clés, plus ses URLs suivies à l'unité (`keyword:
+   * null` dans `items_raw`, ou relevées sous le mot-clé d'un autre). Le
+   * catalogue est commun, mais un compteur qui inclurait les mots-clés des
+   * autres annoncerait des produits que cet utilisateur ne voit nulle part.
+   *
+   * Les deux listes viennent des contextes qui les possèdent (Keyword,
+   * ProductTracking) et non d'une requête recopiée ici : cet écran doit parler
+   * des mêmes mots-clés et URLs que les pages qui les listent.
+   *
+   * Quatre requêtes lancées en parallèle, après la lecture du périmètre et du
+   * jour de référence. Le filtre sur `day` les cantonne à la tranche du jour,
+   * servie par l'index `items_raw.day_desc`.
    */
-  async load(): Promise<DashboardSnapshot> {
-    const lastScrapeDay = await findLastScrapeDay(this.db);
+  async load(owner: UserId): Promise<DashboardSnapshot> {
+    const [trackedKeywords, trackedUrls, lastScrapeDay] = await Promise.all([
+      this.keywords.listTrackedNames(owner),
+      this.trackedUrls.listTrackedUrls(owner),
+      findLastScrapeDay(this.db),
+    ]);
+    const scope = {
+      $or: [{ keyword: { $in: trackedKeywords } }, { url: { $in: trackedUrls } }],
+    };
 
-    const [trackedKeywords, productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
+    const [productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
       await Promise.all([
-        // Délégué au contexte Keyword, et non recalculé ici : cet écran doit
-        // parler des mêmes mots-clés que la page « mots-clés ». Le
-        // `countDocuments({ enabled: true })` d'avant ignorait les mots-clés
-        // hérités sans document, que cette page liste pourtant.
-        this.keywords.listTrackedNames(),
         // `items_raw` est unique par (url, jour) : sur une seule journée, un
         // document = un produit, et countDocuments suffit.
         this.db
           .collection('items_raw')
           .countDocuments(
-            onlyLastScrape({ title: { $ne: '' }, price: { $ne: null } }, lastScrapeDay),
+            onlyLastScrape({ title: { $ne: '' }, price: { $ne: null }, ...scope }, lastScrapeDay),
           ),
         this.db
           .collection('price_history')
@@ -65,7 +79,7 @@ export class MongoDashboardReadModel extends DashboardReadModel {
             {
               $match: onlyLastScrape(
                 {
-                  keyword: { $ne: null },
+                  keyword: { $in: trackedKeywords },
                   title: { $ne: '' },
                   price: { $ne: null },
                 },
@@ -76,14 +90,13 @@ export class MongoDashboardReadModel extends DashboardReadModel {
             { $project: { keyword: '$_id', productCount: 1 } },
           ])
           .toArray(),
-        // Sans restriction de mot-clé : ce sont toutes les bonnes affaires du
-        // jour, y compris celles des URLs suivies à l'unité (`keyword: null`),
-        // qui comptent dans le compteur global. Le regroupement par mot-clé,
-        // lui, les écarte plus bas — elles n'appartiennent à aucun bloc.
+        // Toutes les bonnes affaires du périmètre, y compris celles des URLs
+        // suivies à l'unité, qui comptent dans le compteur. Le regroupement
+        // par mot-clé, lui, ne garde plus bas que les mots-clés suivis.
         this.db
           .collection('items_raw')
           .aggregate([
-            ...latestPerUrlStages({}, lastScrapeDay),
+            ...latestPerUrlStages(scope, lastScrapeDay),
             {
               $lookup: {
                 from: 'deal_scores',
@@ -125,10 +138,9 @@ export class MongoDashboardReadModel extends DashboardReadModel {
     // On part des mots-clés ayant des produits — un mot-clé sans bonne affaire
     // doit apparaître (bloc « aucune affaire aujourd'hui »), pas disparaître.
     //
-    // Filtré sur les mots-clés suivis, car `items_raw` en sait trop : les
-    // relevés d'un mot-clé retiré y survivent jusqu'à la purge (une quinzaine
-    // de jours), et son bloc restait affiché ici alors que la page qui les
-    // liste ne le montrait plus. Le compteur ci-dessous et ces blocs viennent
+    // Filtré sur les mots-clés suivis, car `items_raw` en sait trop : une URL
+    // suivie à l'unité peut avoir été relevée sous le mot-clé d'un autre
+    // utilisateur, et ce mot-clé n'a pas à avoir de bloc ici. Le compteur ci-dessous et ces blocs viennent
     // désormais du même ensemble, impossible qu'ils se contredisent.
     const tracked = new Set(trackedKeywords);
     const dealsByKeyword: KeywordDeals[] = Array.from(productCountByKeyword.keys())

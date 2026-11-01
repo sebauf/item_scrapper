@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
+import { auth } from '@/auth';
 import { NavLinks } from '@/components/NavLinks';
+import { UserMenu } from '@/components/UserMenu';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -15,7 +17,12 @@ export const viewport: Viewport = {
   ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Sans session (page de connexion), l'en-tête se réduit au logo : la
+  // navigation ne mènerait qu'à des redirections vers /login.
+  const session = await auth();
+  const email = session?.user?.email ?? null;
+
   return (
     <html lang="fr">
       <body className="min-h-screen bg-background text-foreground antialiased">
@@ -28,12 +35,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <span className="text-xl leading-none">📈</span>
               <span className="text-base tracking-tight">Price Tracker</span>
             </Link>
-            <NavLinks />
+            {email && (
+              <>
+                <NavLinks />
+                <UserMenu name={session?.user?.name ?? null} email={email} />
+              </>
+            )}
           </div>
         </header>
 
         {/* pb-16 on mobile leaves room for the fixed bottom tab bar */}
-        <div className="pb-16 md:pb-0">
+        <div className={email ? 'pb-16 md:pb-0' : undefined}>
           {children}
         </div>
       </body>

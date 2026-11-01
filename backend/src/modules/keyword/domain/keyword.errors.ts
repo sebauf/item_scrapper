@@ -16,6 +16,18 @@ export class KeywordAlreadyTracked extends ConflictError {
   }
 }
 
+/**
+ * 409 : la demande est valide, c'est l'état du compte (déjà au plafond) qui la
+ * refuse. Le message est affiché tel quel par le formulaire.
+ */
+export class KeywordQuotaExceeded extends ConflictError {
+  readonly code = 'KEYWORD_QUOTA_EXCEEDED';
+
+  constructor(max: number) {
+    super(`Vous suivez déjà ${max} mots-clés, le maximum autorisé. Retirez-en un pour en ajouter un autre.`);
+  }
+}
+
 export class KeywordNotFound extends ResourceNotFoundError {
   readonly code = 'KEYWORD_NOT_FOUND';
 

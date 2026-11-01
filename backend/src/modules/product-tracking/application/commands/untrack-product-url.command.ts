@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { ProductUrl } from '../../domain/product-url';
 import { ProductUrlNotFound } from '../../domain/product-tracking.errors';
 import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
@@ -15,9 +16,9 @@ import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
 export class UntrackProductUrlCommand {
   constructor(private readonly trackedUrls: TrackedUrlRepository) {}
 
-  async execute(rawUrl: unknown): Promise<void> {
+  async execute(owner: UserId, rawUrl: unknown): Promise<void> {
     const url = ProductUrl.create(rawUrl);
-    const existing = await this.trackedUrls.findByUrl(url);
+    const existing = await this.trackedUrls.findByUrl(owner, url);
 
     if (existing === null) throw new ProductUrlNotFound(url.value);
 

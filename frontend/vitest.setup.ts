@@ -1,7 +1,8 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import React from 'react';
+import { authMock } from './src/testing/auth-mock';
 import { navigationMock } from './src/testing/navigation-mock';
 
 /**
@@ -28,6 +29,16 @@ vi.mock('next/image', () => ({
 }));
 
 vi.mock('next/navigation', () => navigationMock);
+
+// Auth.js suppose un serveur Next et un fournisseur OAuth : remplacé par une
+// session factice (Alice connectée), cf. src/testing/auth-mock.ts.
+vi.mock('@/auth', () => authMock);
+
+// En beforeEach, pas en afterEach : `restoreMocks` (vitest.config.ts) efface les
+// implémentations des vi.fn() avant chaque test, session par défaut comprise.
+beforeEach(() => {
+  authMock.__reset();
+});
 
 afterEach(() => {
   cleanup();

@@ -6,6 +6,10 @@ gérée depuis la carte des carburants via le backend), plus, si elle est
 configurée, toutes celles d'une **zone** autour d'un point. Sans zone, seules
 les favorites déclenchent une alerte.
 
+Les favorites sont personnelles (un document par utilisateur et par station),
+mais l'alerte, elle, part vers **un seul** webhook : elle surveille donc
+l'**union** des favorites de tous les utilisateurs.
+
 L'import remplace `fuel_stations` à chaque passage (cf. import_stations.py) et
 n'en garde aucun historique. Comparer à l'import précédent ne suffit pas : une
 station qui clôt ses ruptures sans redéclarer de prix passe par un état « ni
@@ -151,8 +155,19 @@ class RestockWatch:
 
 
 def favorite_station_ids(db: Database) -> set[str]:
-    """Identifiants des stations favorites, écrites par le backend."""
-    return {doc["_id"] for doc in db["favorite_stations"].find({}, {"_id": 1})}
+    """Identifiants des stations favorites de tous les utilisateurs, écrites
+    par le backend.
+
+    Un document par (utilisateur, station) : l'identifiant de la station est
+    dans `stationId`. Les favorites antérieures aux comptes utilisateurs
+    avaient la station pour `_id` et n'ont `stationId` qu'une fois rattachées
+    à un compte (backend, `AUTH_LEGACY_OWNER_EMAIL`) — d'où le repli, pour
+    qu'une station historique non rattachée reste surveillée.
+    """
+    return {
+        doc.get("stationId") or doc["_id"]
+        for doc in db["favorite_stations"].find({}, {"_id": 1, "stationId": 1})
+    }
 
 
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:

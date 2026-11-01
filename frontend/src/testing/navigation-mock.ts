@@ -18,10 +18,25 @@ const router = {
 
 let pathname = '/';
 
+/**
+ * Le vrai `redirect` interrompt le rendu en levant une erreur spéciale
+ * (NEXT_REDIRECT) ; le double fait de même, pour que le code qui suit un
+ * `redirect` ne s'exécute pas non plus en test.
+ */
+export class RedirectSignal extends Error {
+  constructor(readonly url: string) {
+    super(`NEXT_REDIRECT ${url}`);
+    this.name = 'RedirectSignal';
+  }
+}
+
 export const navigationMock = {
   useRouter: () => router,
   usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(),
+  redirect: vi.fn((url: string): never => {
+    throw new RedirectSignal(url);
+  }),
   /** Positionne le chemin courant vu par `usePathname`. */
   __setPathname(next: string) {
     pathname = next;

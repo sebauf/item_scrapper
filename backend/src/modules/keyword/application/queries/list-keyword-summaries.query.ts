@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { UserId } from 'src/shared/domain/user-id';
 import { KeywordSummary, KeywordSummaryReadModel } from '../ports/keyword-summary.read-model';
 
 /**
@@ -8,14 +9,12 @@ import { KeywordSummary, KeywordSummaryReadModel } from '../ports/keyword-summar
  * que le controller dépende de la couche application et jamais directement d'un
  * read model : le jour où il faut un tri, un cache ou un filtre, ça se pose ici
  * sans toucher ni au HTTP ni à Mongo.
- *
- * Remplace frontend/src/lib/queries.ts:fetchKeywordSummaries.
  */
 @Injectable()
 export class ListKeywordSummariesQuery {
   constructor(private readonly readModel: KeywordSummaryReadModel) {}
 
-  execute(): Promise<KeywordSummary[]> {
-    return this.readModel.listTracked();
+  execute(owner: UserId): Promise<KeywordSummary[]> {
+    return this.readModel.listTracked(owner);
   }
 }
