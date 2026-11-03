@@ -27,10 +27,6 @@ SECRET_NAME = os.environ.get("PIPELINE_SECRET_NAME", "price-tracker-secrets")
 # réapprovisionnement, cf. pipeline/src/fuel/restock_alerts.py). En Kubernetes,
 # les Pods lisent tout le Secret : rien à relayer.
 PASSTHROUGH_ENV = (
-    "FUEL_WATCH_LAT",
-    "FUEL_WATCH_LNG",
-    "FUEL_WATCH_RADIUS_KM",
-    "FUEL_WATCH_FUELS",
     "FUEL_RESTOCK_WEBHOOK_URL",
     "FUEL_RESTOCK_WEBHOOK_SECRET",
 )

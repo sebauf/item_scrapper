@@ -247,6 +247,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Profil de l’utilisateur et état de ses alertes carburant */
+        get: operations["ProfileController_get"];
+        /** Remplacer le numéro de téléphone et les carburants surveillés */
+        put: operations["ProfileController_update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -490,6 +508,44 @@ export interface components {
              * @example 72
              */
             staleAfterHours: number;
+        };
+        FuelAlertStatusResponse: {
+            /** @description Vrai si l’alerte de réapprovisionnement part pour cet utilisateur */
+            active: boolean;
+            /** @description Ce qui manque pour l’activer : numéro, carburant, station favorite. Vide si active */
+            missing: ("phone" | "fuels" | "stations")[];
+        };
+        ProfileResponse: {
+            /** @example alice@example.com */
+            email: string;
+            /**
+             * @description Numéro au format E.164, destinataire des alertes
+             * @example +33612345678
+             */
+            phone: string | null;
+            /**
+             * @example [
+             *       "gazole"
+             *     ]
+             */
+            alertFuels: ("gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc")[];
+            /** @description Stations favorites — celles que surveille l’alerte */
+            favoriteStationCount: number;
+            fuelAlerts: components["schemas"]["FuelAlertStatusResponse"];
+        };
+        UpdateProfileDto: {
+            /**
+             * @description Numéro français ou international ; null ou vide pour l’effacer (coupe les alertes)
+             * @example 06 12 34 56 78
+             */
+            phone: string | null;
+            /**
+             * @description Carburants dont le retour en station favorite déclenche une alerte
+             * @example [
+             *       "gazole"
+             *     ]
+             */
+            alertFuels: ("gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc")[];
         };
     };
     responses: never;
@@ -1019,6 +1075,56 @@ export interface operations {
                 };
             };
             /** @description Position, rayon, carburant ou tri invalide */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ProfileController_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+        };
+    };
+    ProfileController_update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileDto"];
+            };
+        };
+        responses: {
+            /** @description Profil enregistré, numéro normalisé */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileResponse"];
+                };
+            };
+            /** @description Numéro de téléphone ou carburant invalide */
             400: {
                 headers: {
                     [name: string]: unknown;

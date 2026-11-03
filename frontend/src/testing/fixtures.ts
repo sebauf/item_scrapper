@@ -1,4 +1,4 @@
-import type { FuelPrice, FuelStation, ProductSummary } from '@/lib/api';
+import type { FuelPrice, FuelStation, ProductSummary, Profile } from '@/lib/api';
 
 /**
  * Produit de référence pour les tests de rendu.
@@ -55,6 +55,18 @@ export function aFuelStation(overrides: Partial<FuelStation> = {}): FuelStation 
     distanceKm: 1.234,
     fuels: [aFuelPrice()],
     isFavorite: false,
+    ...overrides,
+  };
+}
+
+/** Profil sans rien de renseigné : alertes inactives, tout manque. */
+export function aProfile(overrides: Partial<Profile> = {}): Profile {
+  return {
+    email: 'alice@example.com',
+    phone: null,
+    alertFuels: [],
+    favoriteStationCount: 0,
+    fuelAlerts: { active: false, missing: ['phone', 'fuels', 'stations'] },
     ...overrides,
   };
 }

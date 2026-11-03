@@ -89,6 +89,8 @@ describe('backend : seul un jeton signé par un émetteur connu ouvre l’API', 
     ['GET', '/favorites'],
     ['GET', '/product-urls'],
     ['GET', '/fuel-stations/favorites'],
+    ['GET', '/profile'],
+    ['PUT', '/profile'],
     ['GET', `/products/${productId(PRODUCT_A)}`],
     ['GET', '/keywords/lessive/products'],
     ['GET', '/fuel-stations?lat=45.75&lng=4.85'],
@@ -226,6 +228,25 @@ describe('frontend : chacun ne voit que ses propres données', () => {
 
     assert.match(alice, /Lessive Alice 3L/);
     assert.doesNotMatch(bob, /Lessive Alice 3L/);
+  });
+
+  it('ne montre pas à Bob le numéro de téléphone d’Alice', async () => {
+    // Écrit comme le backend l'enregistre : c'est le destinataire des alertes.
+    await stack.db.collection('user_profiles').replaceOne(
+      { _id: ALICE },
+      { phone: '+33612345678', alertFuels: ['gazole'], updatedAt: new Date() },
+      { upsert: true },
+    );
+
+    const alice = await page('/profile', cookies.alice);
+    const bob = await (await page('/profile', cookies.bob)).text();
+
+    assert.equal(alice.status, 200, withLogs(`/profile d’Alice → ${alice.status}`));
+    assert.match(await alice.text(), /\+33612345678/);
+    // Forme stockée et seule forme affichée (le champ vide porte un exemple
+    // « 06 12 34 56 78 » en placeholder, qui n’est pas un numéro).
+    assert.doesNotMatch(bob, /33612345678/);
+    assert.match(bob, /bob@example\.com/); // témoin : c'est bien la page de Bob
   });
 });
 
