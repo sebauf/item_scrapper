@@ -393,9 +393,12 @@ with `timezone=UTC`.
   route), signed with Hermes' Generic V2 scheme (`X-Webhook-Signature-V2` =
   HMAC-SHA256 of `<timestamp>.<body>`), `X-Request-ID` derived from the import
   and a hash of the user. The payload carries the recipient in **`to`**
-  (E.164) and a ready-to-send French `summary` — never the user's email — so
-  the route runs `deliver_only` with `prompt: "{summary}"` and
-  `deliver_extra: { chat_id: "{to}" }` (`deliver: sms`, `whatsapp`, `signal`…).
+  (E.164), the same recipient as a WhatsApp chat id in **`whatsappChatId`**
+  (`33612345678@s.whatsapp.net`, the form Hermes' Baileys bridge uses — a
+  template can only copy a field, not transform it), and a ready-to-send
+  French `summary` — never the user's email — so the route runs
+  `deliver_only` with `prompt: "{summary}"` and `deliver_extra: { chat_id:
+  "{to}" }` (`sms`, `signal`) or `"{whatsappChatId}"` (`whatsapp`).
   New stations and fuels not sold before are not restocks. A failed send is
   logged (phone masked), never fails the import, and leaves **that user's**
   state at « shortage », so their alert is retried on the next import (every

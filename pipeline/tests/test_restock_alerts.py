@@ -26,6 +26,7 @@ from src.fuel.restock_alerts import (
     request_id,
     sign,
     subscribers,
+    whatsapp_chat_id,
 )
 
 NOW = datetime(2026, 10, 26, 12, 0)
@@ -394,6 +395,7 @@ def test_envoie_un_webhook_signe_au_numero_de_l_utilisateur(alice, sent):
     payload = json.loads(request.data)
     assert payload["event_type"] == "fuel_restock"
     assert payload["to"] == ALICE_PHONE
+    assert payload["whatsappChatId"] == "33612345678@s.whatsapp.net"
     assert payload["count"] == 1
     assert payload["fuels"] == ["gazole"]
     assert payload["importedAt"] == "2026-10-26T17:00:00+00:00"
@@ -460,3 +462,11 @@ def test_un_echec_pour_l_un_ne_reenvoie_pas_a_l_autre(db, monkeypatch):
 
 def test_masque_le_numero():
     assert mask_phone("+33612345678") == "+33•••••5678"
+
+
+@pytest.mark.parametrize("phone, chat_id", [
+    ("+33612345678", "33612345678@s.whatsapp.net"),
+    ("+14155552671", "14155552671@s.whatsapp.net"),
+])
+def test_identifiant_de_discussion_whatsapp(phone, chat_id):
+    assert whatsapp_chat_id(phone) == chat_id

@@ -58,11 +58,15 @@ Un **webhook par destinataire** et par import, dont le corps porte le numéro
 dans `to` (E.164) et le message prêt à envoyer dans `summary`. La route Hermes
 correspondante, en `deliver_only` (aucun appel au modèle) :
 
-    deliver: "sms"            # ou whatsapp, signal…
+    deliver: "sms"            # ou signal
     deliver_only: true
     prompt: "{summary}"
     deliver_extra:
       chat_id: "{to}"
+
+Pour WhatsApp, `deliver: "whatsapp"` et `chat_id: "{whatsappChatId}"` : le
+pont de Hermes désigne une discussion par `33612345678@s.whatsapp.net`, pas
+par le numéro E.164.
 
 Signature : schéma « Generic V2 » du webhook Hermes — en-tête
 `X-Webhook-Signature-V2` = HMAC-SHA256 hexadécimal de `<timestamp>.<corps>`,
@@ -274,6 +278,15 @@ def _json_default(value):
     raise TypeError(f"{type(value).__name__} non sérialisable")
 
 
+def whatsapp_chat_id(phone: str) -> str:
+    """`+33612345678` → `33612345678@s.whatsapp.net`.
+
+    Un gabarit Hermes ne sait que recopier un champ, pas le transformer : la
+    conversion est donc faite ici, une fois pour toutes les routes WhatsApp.
+    """
+    return f"{phone.removeprefix('+')}@s.whatsapp.net"
+
+
 def build_payload(subscriber: Subscriber, restocks: list[dict], imported_at: datetime) -> dict:
     """Corps du webhook. L'adresse e-mail de l'utilisateur n'y figure pas :
     l'agent n'a besoin que du numéro où envoyer le message."""
@@ -281,8 +294,13 @@ def build_payload(subscriber: Subscriber, restocks: list[dict], imported_at: dat
         # Champ lu par Hermes pour filtrer les routes par `events`.
         "event_type": "fuel_restock",
         "importedAt": imported_at,
-        # Destinataire, au format E.164 — `deliver_extra.chat_id: "{to}"`.
+        # Destinataire, au format E.164 — `deliver_extra.chat_id: "{to}"`
+        # pour le SMS (Twilio) ou Signal.
         "to": subscriber.phone,
+        # Même destinataire, sous la forme d'un identifiant de discussion
+        # WhatsApp (pont Baileys de Hermes : indicatif sans « + », suffixe
+        # `@s.whatsapp.net`) — `deliver_extra.chat_id: "{whatsappChatId}"`.
+        "whatsappChatId": whatsapp_chat_id(subscriber.phone),
         "fuels": list(subscriber.fuels),
         "count": len(restocks),
         "summary": format_summary(restocks),
