@@ -232,6 +232,8 @@ Supports two execution backends via `PIPELINE_EXECUTOR` env var:
 ```
 src/modules/keyword/   write context: Keyword aggregate, KeywordName value object,
                        KeywordRepository port, TrackKeyword / UntrackKeyword commands
+src/modules/profile/   user profile: PhoneNumber value object (E.164), UserProfile
+                       (phone + alertFuels), GET/PUT /profile — read by the restock alert
 src/modules/catalog/   read-only context: ProductId / ProductQuery value objects,
                        DealPolicy, read models over items_raw / price_history / deal_scores
 src/shared/            DomainError families (400/409/404), Mongo connection + required indexes
@@ -324,7 +326,8 @@ What is personal vs shared:
 | keywords | `keywords.subscribers[]` (emails) | the term and its scrape — two users on « lessive » trigger one search |
 | tracked URLs | `tracked_urls.subscribers[]` | the URL and its price history |
 | favourites | `favorites { userId, url, addedAt }` | — |
-| favourite stations | `favorite_stations { userId, stationId, addedAt }` | restock alert watches the **union** (one webhook) |
+| favourite stations | `favorite_stations { userId, stationId, addedAt }` | — (each user's restock alert watches their own) |
+| profile | `user_profiles { _id: userId, phone, alertFuels }` | — |
 | catalogue, scores, fuel prices | — | entirely shared; product grids are not filtered per user |
 
 `enabled` on `keywords` / `tracked_urls` is **derived** from `subscribers`
@@ -367,30 +370,40 @@ with `timezone=UTC`.
   truncated, the import keeps the brands already stored — prices still update.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
-- `pipeline/src/fuel/restock_alerts.py` — **restock alert**, opt-in (off unless
-  `FUEL_RESTOCK_WEBHOOK_URL` or a zone is set). Watched stations = **all users'**
-  **favourite stations** (`favorite_stations.stationId`, starred on the fuel map,
-  falling back to `_id` for a legacy doc not yet attached to an account) ∪ the
-  optional zone (`FUEL_WATCH_LAT` / `FUEL_WATCH_LNG`, `FUEL_WATCH_RADIUS_KM`
-  default 5); without a zone, only favourites alert. `FUEL_WATCH_FUELS`
-  defaults to `gazole`. The import keeps no history, and a station closing its
-  shortages without re-declaring a price drops out of `fuel_stations` for a
-  while — so the alert keeps its own **last known state** per (watched station
-  × watched fuel) in `fuel_watch_state`, after each import. A **restock** = a
-  fuel now `available: true` whose last known state is `available: false`,
+- `pipeline/src/fuel/restock_alerts.py` — **restock alert, per user**, opt-in
+  (off unless `FUEL_RESTOCK_WEBHOOK_URL` is set; `FUEL_RESTOCK_WEBHOOK_SECRET`
+  is mandatory with it — unsigned, the route would text any number). A user is
+  watched only if they have **all three**: a phone (`user_profiles.phone`,
+  E.164), at least one fuel (`user_profiles.alertFuels`) and at least one
+  **favourite station** (`favorite_stations` with `userId`, starred on the fuel
+  map). Same rule as the backend's `UserProfile.missingForFuelAlerts`, shown on
+  the profile page; a legacy favourite without `userId` alerts nobody. The
+  former global zone (`FUEL_WATCH_LAT/LNG/RADIUS_KM`, `FUEL_WATCH_FUELS`) is
+  gone. The import keeps no history, and a station closing its shortages
+  without re-declaring a price drops out of `fuel_stations` for a while — so
+  the alert keeps its own **last known state** per (user × favourite station ×
+  watched fuel) in `fuel_watch_state`, after each import: per user, because
+  sends are per user and one can fail while another succeeds. A **restock** =
+  a fuel now `available: true` whose last known state is `available: false`,
   however many imports in between. Absent station / absent fuel never changes
-  the state; a first sighting is recorded without alerting; states of stations
-  no longer watched are deleted. Restocks trigger
-  **one** webhook per import to `FUEL_RESTOCK_WEBHOOK_URL`
-  (meant for a Hermes agent route), signed with Hermes' Generic V2 scheme
-  (`X-Webhook-Signature-V2` = HMAC-SHA256 of `<timestamp>.<body>` with
-  `FUEL_RESTOCK_WEBHOOK_SECRET`). The payload carries a ready-to-send French
-  `summary`, so the route can run `deliver_only`. New stations and fuels not
-  sold before are not restocks. A failed send is logged, never fails the
-  import, and leaves the state at « shortage », so the alert is retried on the
-  next import (every 30 min while the agent is down). In k8s these vars live
-  in `secrets.env` (task Pods only read the Secret — and the zone is the user's home); in Docker, `pipeline_tasks.py`
-  relays them from the Airflow env.
+  the state; a first sighting (new favourite, fuel just ticked, phone just set)
+  is recorded without alerting; states no longer watched are deleted
+  (including old `<stationId>:<fuel>` docs). Restocks trigger **one webhook
+  per recipient** per import to `FUEL_RESTOCK_WEBHOOK_URL` (a Hermes agent
+  route), signed with Hermes' Generic V2 scheme (`X-Webhook-Signature-V2` =
+  HMAC-SHA256 of `<timestamp>.<body>`), `X-Request-ID` derived from the import
+  and a hash of the user. The payload carries the recipient in **`to`**
+  (E.164), the same recipient as a WhatsApp chat id in **`whatsappChatId`**
+  (`33612345678@s.whatsapp.net`, the form Hermes' Baileys bridge uses — a
+  template can only copy a field, not transform it), and a ready-to-send
+  French `summary` — never the user's email — so the route runs
+  `deliver_only` with `prompt: "{summary}"` and `deliver_extra: { chat_id:
+  "{to}" }` (`sms`, `signal`) or `"{whatsappChatId}"` (`whatsapp`).
+  New stations and fuels not sold before are not restocks. A failed send is
+  logged (phone masked), never fails the import, and leaves **that user's**
+  state at « shortage », so their alert is retried on the next import (every
+  30 min). In k8s these vars live in `secrets.env` (task Pods only read the
+  Secret); in Docker, `pipeline_tasks.py` relays them from the Airflow env.
 - `backend/src/modules/fuel/` — reads `fuel_stations`, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
   sort requires `fuel`; `brand` = exact unified label, filtered inside `$geoNear`
@@ -415,7 +428,7 @@ with `timezone=UTC`.
   defaults to **TotalEnergies** (`DEFAULT_BRAND` in `lib/fuel.ts`); `brand=all`
   in the URL shows every brand, as `fuel=all` does for fuels. Each listed station
   has a star (`FavoriteStationButton`, optimistic, rolled back on failure) that
-  adds it to the favourite stations watched by the restock alert.
+  adds it to the user's favourite stations, the ones their restock alert watches.
   Each station also links to **Google Maps** (`googleMapsUrl` in `lib/fuel.ts`,
   Maps URLs API, no key) — in the list (a sibling of the select button, like the
   star) and in the map popup next to the OSM itinerary. The link is a text search
@@ -431,6 +444,7 @@ with `timezone=UTC`.
 - `src/app/keywords/page.tsx` — tracked keywords, add/remove via Server Actions
 - `src/app/keyword/[slug]/page.tsx` — product grid, server-side filter/sort/paginate
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
+- `src/app/profile/page.tsx` + `src/components/ProfileForm.tsx` — phone number + watched fuels for the restock alert, and its status (`fuelAlerts.missing` from the backend); reached from the avatar in `UserMenu`
 - `src/app/fuel/page.tsx` + `src/components/FuelExplorer.tsx` / `FuelMap.tsx` — fuel-price map; `src/lib/fuel.ts` holds its URL parsing and display rules
 - `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
@@ -480,8 +494,9 @@ keywords, favourites and tracked URLs, and nothing else.
 - `keywords` — one doc per scraped term; `keyword` (unique), `enabled` (read by the scrapper, derived from `subscribers`), `subscribers[]` (emails of the users tracking it). Written by the backend (and seeded by the scrapper on an empty collection)
 - `tracked_urls` — one doc per individually tracked product URL; `url` (unique), `enabled`, `subscribers[]` — same model as `keywords`. Never deleted, so the purge keeps sparing it
 - `favorites` — one doc per (user, product); `userId`, `url`, `addedAt`; unique index `userId_url` (partial on `userId` existing). Written by the backend; `url` read by the purge
-- `favorite_stations` — one doc per (user, station); `userId`, `stationId` (official id), `addedAt`; unique index `userId_stationId`. Legacy docs keep `_id` = station id. Written only by the backend (star on the fuel map), read by the pipeline's restock alert (union of all users). Not purged when a station leaves the feed (it becomes useful again if the station comes back)
-- `fuel_watch_state` — last known state of each (watched station × watched fuel), keyed by `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `available`, `shortageSince`, `seenAt`. Written only by the restock alert (`restock_alerts.py`), after each import
+- `favorite_stations` — one doc per (user, station); `userId`, `stationId` (official id), `addedAt`; unique index `userId_stationId`. Legacy docs keep `_id` = station id. Written only by the backend (star on the fuel map), read by the pipeline's restock alert (each user's own stations). Not purged when a station leaves the feed (it becomes useful again if the station comes back)
+- `user_profiles` — one doc per user, `_id` = user id (email); `phone` (E.164 or null), `alertFuels[]` (fuel codes), `updatedAt`. Written only by the backend (profile page, `PUT /api/v1/profile`), read by the restock alert (recipient + fuels)
+- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `seenAt`. Written only by the restock alert (`restock_alerts.py`), after each import
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 

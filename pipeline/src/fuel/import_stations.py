@@ -232,7 +232,7 @@ if __name__ == "__main__":
     from pymongo import MongoClient
 
     from src.config import DB_NAME, MONGODB_URI
-    from src.fuel.restock_alerts import RestockWatch, alert_restocks
+    from src.fuel.restock_alerts import RestockConfig, alert_restocks
 
     client = MongoClient(MONGODB_URI)
     records = fetch_records()
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         brands = None
 
     db = client[DB_NAME]
-    watch = RestockWatch.from_env(os.environ)
+    restock = RestockConfig.from_env(os.environ)
 
     imported_at = datetime.now(timezone.utc).replace(tzinfo=None)
     count = import_stations(db, records, brands, now=imported_at)
@@ -251,5 +251,5 @@ if __name__ == "__main__":
     print(f"fuel_stations: {count} stations imported ({len(records)} records received)")
     print(f"brands: {branded}/{count} stations matched to a brand")
 
-    if watch:
-        alert_restocks(db, watch, imported_at)
+    if restock:
+        alert_restocks(db, restock, imported_at)

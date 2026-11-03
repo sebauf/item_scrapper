@@ -10,6 +10,7 @@ import {
   trackProductUrl,
   untrackKeyword,
   untrackProductUrl,
+  updateProfile,
 } from '@/lib/api';
 
 /**
@@ -130,4 +131,34 @@ export async function removeFavoriteStationAction(stationId: string): Promise<vo
   if (!stationId) return;
   await removeFavoriteStation(stationId);
   revalidatePath('/fuel');
+}
+
+export interface ProfileFormState {
+  error?: string;
+  success?: boolean;
+}
+
+/**
+ * Enregistre le profil (numéro + carburants surveillés). Comme pour les
+ * autres formulaires, un refus du backend (numéro mal formé…) est renvoyé
+ * avec son message, une panne est signalée sans détail.
+ */
+export async function saveProfileAction(
+  _prev: ProfileFormState,
+  formData: FormData,
+): Promise<ProfileFormState> {
+  const raw = formData.get('phone');
+  const phone = typeof raw === 'string' && raw.trim() !== '' ? raw : null;
+  const alertFuels = formData.getAll('alertFuels').filter((v): v is string => typeof v === 'string');
+
+  try {
+    await updateProfile({ phone, alertFuels });
+  } catch (error) {
+    if (error instanceof ApiError && error.status < 500) return { error: error.message };
+    console.error('saveProfileAction', error);
+    return { error: 'Le service est momentanément indisponible. Réessayez.' };
+  }
+
+  revalidatePath('/profile');
+  return { success: true };
 }

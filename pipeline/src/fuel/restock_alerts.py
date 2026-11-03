@@ -1,24 +1,36 @@
-"""Alerte de réapprovisionnement : prévient un agent (Hermes) par webhook quand
-un carburant surveillé redevient disponible dans une station surveillée.
+"""Alerte de réapprovisionnement, **par utilisateur** : prévient chaque
+utilisateur, par un message sur son téléphone, quand un carburant qu'il
+surveille redevient disponible dans l'une de ses stations favorites.
 
-Stations surveillées : les **favorites** (collection `favorite_stations`,
-gérée depuis la carte des carburants via le backend), plus, si elle est
-configurée, toutes celles d'une **zone** autour d'un point. Sans zone, seules
-les favorites déclenchent une alerte.
+Qui reçoit quoi — trois conditions, toutes écrites par le backend :
 
-Les favorites sont personnelles (un document par utilisateur et par station),
-mais l'alerte, elle, part vers **un seul** webhook : elle surveille donc
-l'**union** des favorites de tous les utilisateurs.
+- un **numéro** au format E.164 dans son profil (`user_profiles.phone`) ;
+- au moins un **carburant** surveillé (`user_profiles.alertFuels`) ;
+- au moins une **station favorite** (`favorite_stations`, étoile sur la carte).
+
+Il manque l'une des trois, l'utilisateur n'est pas surveillé du tout. C'est la
+même règle que `UserProfile.missingForFuelAlerts` côté backend, qui l'affiche
+sur la page de profil ; ici, elle s'applique pour de bon. Une favorite
+antérieure aux comptes (sans `userId`) n'appartient à personne et n'alerte
+donc personne : le backend la rattache à `AUTH_LEGACY_OWNER_EMAIL` à son
+démarrage.
 
 L'import remplace `fuel_stations` à chaque passage (cf. import_stations.py) et
 n'en garde aucun historique. Comparer à l'import précédent ne suffit pas : une
 station qui clôt ses ruptures sans redéclarer de prix passe par un état « ni
 prix, ni rupture », où elle (ou le carburant) disparaît de `fuel_stations` ; au
 retour du prix, l'import précédent ne dit plus qu'elle était en rupture. Ce
-module tient donc son propre **dernier état connu** de chaque couple (station
-surveillée × carburant surveillé), dans `fuel_watch_state`, qu'il est seul à
-écrire (`_id` = `<stationId>:<carburant>`, `available`, `shortageSince`,
-`seenAt`).
+module tient donc son propre **dernier état connu**, dans `fuel_watch_state`,
+qu'il est seul à écrire, pour chaque triplet surveillé (utilisateur × station
+favorite × carburant surveillé) : `_id` = `<userId>:<stationId>:<carburant>`,
+`available`, `shortageSince`, `seenAt`.
+
+Pourquoi un état par utilisateur, et pas par (station × carburant) partagé :
+l'envoi est par utilisateur, et peut échouer pour l'un et réussir pour l'autre
+(numéro refusé par la passerelle, par exemple). Un état partagé obligerait à
+choisir entre réalerter celui qui a déjà reçu le message et perdre l'alerte de
+celui qui ne l'a pas reçue. Le volume reste négligeable (quelques stations ×
+quelques carburants par utilisateur).
 
 Définition retenue : un carburant est **réapprovisionné** s'il est disponible
 (`available: true`) à cet import et que son dernier état connu est « en
@@ -28,41 +40,51 @@ entre les deux. Règles de mise à jour, après chaque import :
 - carburant présent, disponible ou non → l'état enregistré devient le sien ;
 - station absente, carburant absent (non vendu, ou ni prix ni rupture) → rien
   ne change : un état ambigu n'efface jamais le dernier état connu ;
-- aucun état enregistré (station ou carburant vu pour la première fois) → on
-  l'enregistre sans alerter : rien ne dit qu'il était en rupture ;
-- station qui n'est plus surveillée (favorite retirée, zone déplacée) → son
-  état est supprimé, sans quoi une station remise en favorite des mois plus
-  tard alerterait sur un état périmé. Une station absente du flux qui n'est
-  pas favorite est conservée tant qu'une zone est configurée : sans sa
-  position, impossible de dire si elle en sort.
+- aucun état enregistré (triplet vu pour la première fois : station mise en
+  favori, carburant coché, numéro renseigné) → on l'enregistre sans alerter :
+  rien ne dit qu'il était en rupture ;
+- triplet qui n'est plus surveillé (favorite retirée, carburant décoché,
+  numéro effacé) → son état est supprimé, sans quoi une surveillance reprise
+  des mois plus tard alerterait sur un état périmé.
 
-Configuration par l'environnement ; sans webhook ni zone, la fonctionnalité
-est désactivée et l'import se comporte comme s'il n'existait pas :
+Configuration par l'environnement ; sans webhook, la fonctionnalité est
+désactivée et l'import se comporte comme si elle n'existait pas :
 
-- `FUEL_WATCH_LAT`, `FUEL_WATCH_LNG` : centre de la zone surveillée, en degrés
-  (facultatif — sans eux, seules les favorites sont surveillées) ;
-- `FUEL_WATCH_RADIUS_KM` : rayon de la zone, 5 km par défaut ;
-- `FUEL_WATCH_FUELS` : codes surveillés séparés par des virgules, `gazole` par
-  défaut ;
 - `FUEL_RESTOCK_WEBHOOK_URL` : route webhook de l'agent, par exemple
   `http://192.168.1.10:8644/webhooks/fuel-restock` ;
 - `FUEL_RESTOCK_WEBHOOK_SECRET` : secret HMAC partagé avec la route.
+
+Un **webhook par destinataire** et par import, dont le corps porte le numéro
+dans `to` (E.164) et le message prêt à envoyer dans `summary`. La route Hermes
+correspondante, en `deliver_only` (aucun appel au modèle) :
+
+    deliver: "sms"            # ou signal
+    deliver_only: true
+    prompt: "{summary}"
+    deliver_extra:
+      chat_id: "{to}"
+
+Pour WhatsApp, `deliver: "whatsapp"` et `chat_id: "{whatsappChatId}"` : le
+pont de Hermes désigne une discussion par `33612345678@s.whatsapp.net`, pas
+par le numéro E.164.
 
 Signature : schéma « Generic V2 » du webhook Hermes — en-tête
 `X-Webhook-Signature-V2` = HMAC-SHA256 hexadécimal de `<timestamp>.<corps>`,
 et `X-Webhook-Timestamp` en secondes Unix. Hermes refuse un horodatage à plus
 de 5 minutes de son horloge, ce qui bloque le rejeu d'une requête interceptée.
+La signature est ce qui empêche un tiers d'utiliser la route pour envoyer des
+messages à un numéro de son choix : elle est obligatoire.
 
 Un échec d'envoi ne fait jamais échouer l'import : les prix doivent être à jour
 même si l'agent est arrêté. Les carburants concernés restent alors « en
-rupture » dans `fuel_watch_state`, et l'alerte repart à l'import suivant —
-toutes les 30 minutes tant que l'agent ne répond pas, ce qui est préférable à
-une alerte perdue.
+rupture » dans l'état **de ce destinataire seulement**, et son alerte repart à
+l'import suivant — toutes les 30 minutes tant que l'envoi échoue, ce qui est
+préférable à une alerte perdue.
 """
 import hashlib
 import hmac
 import json
-import math
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -70,15 +92,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pymongo import ReplaceOne
-from pymongo.collection import Collection
 from pymongo.database import Database
-
-DEFAULT_RADIUS_KM = 5.0
-DEFAULT_FUELS = ("gazole",)
-
-# Rayon moyen de la Terre (IUGG). L'erreur de la formule de haversine — la
-# Terre n'est pas une sphère — reste sous 0,5 %, soit 25 m sur 5 km.
-EARTH_RADIUS_KM = 6371.0088
 
 REQUEST_TIMEOUT_SECONDS = 10
 
@@ -90,142 +104,104 @@ FUEL_LABELS = {
     "e85": "E85",
     "gplc": "GPLc",
 }
+FUEL_ORDER = {code: i for i, code in enumerate(FUEL_LABELS)}
+
+# Même forme que le backend (profile/domain/phone-number.ts), qui normalise à
+# la saisie. Revérifiée ici : un numéro écrit à la main dans Mongo ne doit pas
+# partir vers la passerelle SMS.
+E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
 @dataclass(frozen=True)
-class RestockWatch:
-    # Centre de la zone ; None (les deux) si seules les favorites sont surveillées.
-    lat: float | None
-    lng: float | None
-    radius_km: float
-    fuels: tuple[str, ...]
-    webhook_url: str | None
-    webhook_secret: str | None
+class RestockConfig:
+    webhook_url: str
+    webhook_secret: str
 
     @classmethod
-    def from_env(cls, environ) -> "RestockWatch | None":
+    def from_env(cls, environ) -> "RestockConfig | None":
         """Configuration lue dans l'environnement, ou None si désactivée.
 
-        Une configuration invalide désactive l'alerte avec un message, sans
+        Une configuration incomplète désactive l'alerte avec un message, sans
         lever : une faute de frappe dans une variable ne doit pas bloquer
         l'import des prix de toute la France.
         """
-        lat, lng = environ.get("FUEL_WATCH_LAT"), environ.get("FUEL_WATCH_LNG")
         url = environ.get("FUEL_RESTOCK_WEBHOOK_URL")
-        if not url and not (lat or lng):
+        if not url:
             return None
-        if bool(lat) != bool(lng):
-            print("restock: FUEL_WATCH_LAT et FUEL_WATCH_LNG vont ensemble, alerte désactivée")
-            return None
-        try:
-            watch = cls(
-                lat=float(lat) if lat else None,
-                lng=float(lng) if lng else None,
-                radius_km=float(environ.get("FUEL_WATCH_RADIUS_KM") or DEFAULT_RADIUS_KM),
-                fuels=tuple(
-                    code.strip().lower()
-                    for code in (environ.get("FUEL_WATCH_FUELS") or ",".join(DEFAULT_FUELS)).split(",")
-                    if code.strip()
-                ),
-                webhook_url=environ.get("FUEL_RESTOCK_WEBHOOK_URL") or None,
-                webhook_secret=environ.get("FUEL_RESTOCK_WEBHOOK_SECRET") or None,
-            )
-        except ValueError as error:
-            print(f"restock: configuration illisible ({error}), alerte désactivée")
-            return None
-        if watch.has_zone and (
-            not (-90 <= watch.lat <= 90 and -180 <= watch.lng <= 180) or watch.radius_km <= 0
-        ):
-            print("restock: zone surveillée hors limites, alerte désactivée")
-            return None
-        unknown = set(watch.fuels) - set(FUEL_LABELS)
-        if unknown or not watch.fuels:
-            print(f"restock: carburant(s) inconnu(s) {sorted(unknown)}, alerte désactivée")
-            return None
-        if watch.webhook_url and not watch.webhook_secret:
-            # Hermes rejette une requête non signée dès qu'un secret est
-            # configuré côté route ; envoyer sans signature échouerait toujours.
+        secret = environ.get("FUEL_RESTOCK_WEBHOOK_SECRET")
+        if not secret:
+            # Sans signature, n'importe qui pourrait faire envoyer un message
+            # à n'importe quel numéro par la route ; Hermes rejette d'ailleurs
+            # une requête non signée dès qu'un secret est configuré.
             print("restock: FUEL_RESTOCK_WEBHOOK_SECRET manquant, alerte désactivée")
             return None
-        return watch
-
-    @property
-    def has_zone(self) -> bool:
-        return self.lat is not None and self.lng is not None
+        return cls(webhook_url=url, webhook_secret=secret)
 
 
-def favorite_station_ids(db: Database) -> set[str]:
-    """Identifiants des stations favorites de tous les utilisateurs, écrites
-    par le backend.
+@dataclass(frozen=True)
+class Subscriber:
+    """Un utilisateur qui remplit les trois conditions de l'alerte."""
+    user_id: str
+    phone: str
+    fuels: tuple[str, ...]
+    station_ids: frozenset[str]
 
-    Un document par (utilisateur, station) : l'identifiant de la station est
-    dans `stationId`. Les favorites antérieures aux comptes utilisateurs
-    avaient la station pour `_id` et n'ont `stationId` qu'une fois rattachées
-    à un compte (backend, `AUTH_LEGACY_OWNER_EMAIL`) — d'où le repli, pour
-    qu'une station historique non rattachée reste surveillée.
-    """
-    return {
-        doc.get("stationId") or doc["_id"]
-        for doc in db["favorite_stations"].find({}, {"_id": 1, "stationId": 1})
-    }
-
-
-def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    d_phi = phi2 - phi1
-    d_lambda = math.radians(lng2 - lng1)
-    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
-    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
+    def watched(self) -> set[str]:
+        return {
+            state_id(self.user_id, station_id, fuel)
+            for station_id in self.station_ids
+            for fuel in self.fuels
+        }
 
 
-def watched_stations(
-    collection: Collection, watch: RestockWatch, favorite_ids: set[str]
-) -> dict[str, dict]:
-    """Stations surveillées — favorites ou dans la zone — par identifiant.
+def subscribers(db: Database) -> list[Subscriber]:
+    """Utilisateurs surveillés : numéro valide, carburant connu, station
+    favorite. Triés par identifiant, pour un ordre d'envoi stable."""
+    stations_by_user: dict[str, set[str]] = {}
+    for doc in db["favorite_stations"].find(
+        {"userId": {"$exists": True}}, {"userId": 1, "stationId": 1}
+    ):
+        if doc.get("stationId"):
+            stations_by_user.setdefault(doc["userId"], set()).add(doc["stationId"])
 
-    `distanceKm` est la distance au centre de la zone (favorites hors zone
-    comprises), None sans zone. Calculée en Python plutôt qu'avec `$geoNear` :
-    une seule passe sur ~10 000 documents réduits à leur position et leurs
-    carburants, et le même code tourne sous mongomock, qui ne connaît pas les
-    requêtes géographiques.
-    """
-    stations = {}
-    projection = {"location": 1, "fuels": 1, "brand": 1, "name": 1, "address": 1,
-                  "city": 1, "postcode": 1}
-    for doc in collection.find({}, projection):
-        distance = None
-        if watch.has_zone:
-            lng, lat = doc["location"]["coordinates"]
-            distance = haversine_km(watch.lat, watch.lng, lat, lng)
-        favorite = doc["_id"] in favorite_ids
-        if favorite or (distance is not None and distance <= watch.radius_km):
-            stations[doc["_id"]] = {
-                **doc,
-                "distanceKm": round(distance, 2) if distance is not None else None,
-                "favorite": favorite,
-            }
-    return stations
+    result = []
+    for profile in db["user_profiles"].find({}, {"phone": 1, "alertFuels": 1}):
+        user_id, phone = profile["_id"], profile.get("phone")
+        fuels = tuple(sorted(
+            {code for code in profile.get("alertFuels") or [] if code in FUEL_LABELS},
+            key=FUEL_ORDER.__getitem__,
+        ))
+        station_ids = stations_by_user.get(user_id)
+        if not (isinstance(phone, str) and E164.match(phone) and fuels and station_ids):
+            continue
+        result.append(Subscriber(user_id, phone, fuels, frozenset(station_ids)))
+    return sorted(result, key=lambda s: s.user_id)
 
 
-def state_id(station_id: str, fuel: str) -> str:
-    return f"{station_id}:{fuel}"
+def state_id(user_id: str, station_id: str, fuel: str) -> str:
+    return f"{user_id}:{station_id}:{fuel}"
 
 
 def detect_restocks(
-    stations: dict[str, dict], states: dict[str, dict], fuels: tuple[str, ...], seen_at: datetime
+    subscriber: Subscriber, stations: dict[str, dict], states: dict[str, dict], seen_at: datetime
 ) -> tuple[list[dict], list[dict]]:
-    """Compare les stations surveillées à leur dernier état connu.
+    """Compare les stations favorites d'un utilisateur au dernier état connu
+    pour lui.
 
-    Renvoie les réapprovisionnements — favorites d'abord, puis du plus proche
-    au plus loin — et les nouveaux états à enregistrer. Seuls les carburants
+    Renvoie ses réapprovisionnements — par station, puis dans l'ordre des
+    carburants — et les nouveaux états à enregistrer. Seuls les carburants
     présents produisent un état : un absent laisse l'ancien en place.
     """
     restocks, updates = [], []
-    for station_id, station in stations.items():
+    for station_id in sorted(subscriber.station_ids):
+        station = stations.get(station_id)
+        if station is None:
+            continue
         for fuel in station["fuels"]:
-            if fuel["code"] not in fuels:
+            if fuel["code"] not in subscriber.fuels:
                 continue
-            known = states.get(state_id(station_id, fuel["code"]))
+            key = state_id(subscriber.user_id, station_id, fuel["code"])
+            known = states.get(key)
             was_short = known is not None and known["available"] is False
             if fuel["available"] and was_short:
                 restocks.append({
@@ -235,8 +211,6 @@ def detect_restocks(
                     "address": station.get("address"),
                     "postcode": station.get("postcode"),
                     "city": station.get("city"),
-                    "favorite": station["favorite"],
-                    "distanceKm": station["distanceKm"],
                     "fuel": fuel["code"],
                     "price": fuel["price"],
                     "updatedAt": fuel["updatedAt"],
@@ -249,19 +223,15 @@ def detect_restocks(
                     known.get("shortageSince") if was_short else None
                 )
             updates.append({
-                "_id": state_id(station_id, fuel["code"]),
+                "_id": key,
+                "userId": subscriber.user_id,
                 "stationId": station_id,
                 "fuel": fuel["code"],
                 "available": fuel["available"],
                 "shortageSince": shortage_since,
                 "seenAt": seen_at,
             })
-    restocks.sort(key=lambda r: (
-        not r["favorite"],
-        r["distanceKm"] if r["distanceKm"] is not None else math.inf,
-        r["stationId"],
-        r["fuel"],
-    ))
+    restocks.sort(key=lambda r: (r["stationId"], FUEL_ORDER[r["fuel"]]))
     return restocks, updates
 
 
@@ -280,27 +250,22 @@ def _local(value: datetime) -> str:
     return f"{local:%d/%m à %H:%M}{suffix}"
 
 
-def _decimal(value: float) -> str:
-    return f"{value:g}".replace(".", ",")
-
-
-def format_summary(restocks: list[dict], watch: RestockWatch) -> str:
+def format_summary(restocks: list[dict]) -> str:
     """Message prêt à envoyer tel quel (route Hermes en `deliver_only`).
 
     Un gabarit Hermes ne sait pas boucler sur une liste : le texte est donc
-    rendu ici, et la route n'a qu'à afficher `{summary}`.
+    rendu ici, et la route n'a qu'à afficher `{summary}`. Court, parce qu'il
+    part souvent par SMS.
     """
     stations = {r["stationId"] for r in restocks}
-    labels = ", ".join(FUEL_LABELS[code] for code in watch.fuels)
-    lines = [f"⛽ {labels} de retour dans {len(stations)} station(s) :"]
+    fuels = sorted({r["fuel"] for r in restocks}, key=FUEL_ORDER.__getitem__)
+    labels = ", ".join(FUEL_LABELS[code] for code in fuels)
+    lines = [f"⛽ {labels} de retour dans {len(stations)} station(s) favorite(s) :"]
     for r in restocks:
-        bullet = "★" if r["favorite"] else "•"
         who = r["brand"] or r["name"] or "Station"
         where = ", ".join(p for p in (r["address"], f"{r['postcode']} {r['city']}".strip()) if p)
         price = f"{r['price']:.3f} €".replace(".", ",")
-        line = f"{bullet} {FUEL_LABELS[r['fuel']]} — {who}, {where} — {price}"
-        if r["distanceKm"] is not None:
-            line += f" ({_decimal(r['distanceKm'])} km)"
+        line = f"• {FUEL_LABELS[r['fuel']]} — {who}, {where} — {price}"
         if r["shortageSince"] is not None:
             line += f", en rupture depuis le {_local(r['shortageSince'])}"
         lines.append(line)
@@ -313,18 +278,32 @@ def _json_default(value):
     raise TypeError(f"{type(value).__name__} non sérialisable")
 
 
-def build_payload(restocks: list[dict], watch: RestockWatch, imported_at: datetime) -> dict:
+def whatsapp_chat_id(phone: str) -> str:
+    """`+33612345678` → `33612345678@s.whatsapp.net`.
+
+    Un gabarit Hermes ne sait que recopier un champ, pas le transformer : la
+    conversion est donc faite ici, une fois pour toutes les routes WhatsApp.
+    """
+    return f"{phone.removeprefix('+')}@s.whatsapp.net"
+
+
+def build_payload(subscriber: Subscriber, restocks: list[dict], imported_at: datetime) -> dict:
+    """Corps du webhook. L'adresse e-mail de l'utilisateur n'y figure pas :
+    l'agent n'a besoin que du numéro où envoyer le message."""
     return {
         # Champ lu par Hermes pour filtrer les routes par `events`.
         "event_type": "fuel_restock",
         "importedAt": imported_at,
-        "fuels": list(watch.fuels),
-        "zone": (
-            {"lat": watch.lat, "lng": watch.lng, "radiusKm": watch.radius_km}
-            if watch.has_zone else None
-        ),
+        # Destinataire, au format E.164 — `deliver_extra.chat_id: "{to}"`
+        # pour le SMS (Twilio) ou Signal.
+        "to": subscriber.phone,
+        # Même destinataire, sous la forme d'un identifiant de discussion
+        # WhatsApp (pont Baileys de Hermes : indicatif sans « + », suffixe
+        # `@s.whatsapp.net`) — `deliver_extra.chat_id: "{whatsappChatId}"`.
+        "whatsappChatId": whatsapp_chat_id(subscriber.phone),
+        "fuels": list(subscriber.fuels),
         "count": len(restocks),
-        "summary": format_summary(restocks, watch),
+        "summary": format_summary(restocks),
         "restocks": restocks,
     }
 
@@ -334,14 +313,20 @@ def sign(secret: str, timestamp: int, body: bytes) -> str:
     return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
-def send_webhook(url: str, secret: str, payload: dict, request_id: str) -> int:
-    """POST signé ; renvoie le statut HTTP, lève sur une erreur réseau ou ≥ 400.
-
-    `X-Request-ID` est dérivé de l'import : Hermes ignore un identifiant déjà
-    vu dans l'heure, donc un double envoi du même import ne notifie qu'une fois.
-    Le renvoi d'une alerte échouée, à l'import suivant, porte un nouvel
-    identifiant : c'est voulu, Hermes ne doit pas le dédupliquer.
+def request_id(subscriber: Subscriber, imported_at: datetime) -> str:
+    """Dérivé de l'import **et** du destinataire : Hermes ignore un
+    identifiant déjà vu dans l'heure, donc un double envoi du même import ne
+    notifie qu'une fois, sans pour autant confondre deux destinataires.
+    L'utilisateur y figure haché — l'en-tête finit dans les journaux de
+    l'agent. Le renvoi d'une alerte échouée, à l'import suivant, porte un
+    nouvel identifiant : c'est voulu, Hermes ne doit pas le dédupliquer.
     """
+    user = hashlib.sha256(subscriber.user_id.encode()).hexdigest()[:12]
+    return f"fuel-restock-{imported_at:%Y%m%dT%H%M%S}-{user}"
+
+
+def send_webhook(url: str, secret: str, payload: dict, request_id: str) -> int:
+    """POST signé ; renvoie le statut HTTP, lève sur une erreur réseau ou ≥ 400."""
     body = json.dumps(payload, default=_json_default, ensure_ascii=False).encode()
     timestamp = int(time.time())
     request = Request(
@@ -359,62 +344,64 @@ def send_webhook(url: str, secret: str, payload: dict, request_id: str) -> int:
         return response.status
 
 
-def _stale_station_ids(
-    states: dict[str, dict], stations: dict[str, dict], present_ids: set[str],
-    favorite_ids: set[str], watch: RestockWatch,
-) -> set[str]:
-    """Stations dont l'état doit être oublié : ni favorites, ni dans la zone.
-
-    Une station absente du flux n'est jugée que sans zone (seules les
-    favorites comptent alors) ; avec une zone, sa position est inconnue et son
-    état reste en place — cf. la docstring du module.
-    """
-    stale = set()
-    for station_id in {state["stationId"] for state in states.values()}:
-        if station_id in stations or station_id in favorite_ids:
-            continue
-        if station_id in present_ids or not watch.has_zone:
-            stale.add(station_id)
-    return stale
+def mask_phone(phone: str) -> str:
+    """`+33612345678` → `+33•••••5678` : assez pour s'y retrouver dans les
+    journaux d'Airflow, sans y recopier les numéros."""
+    return phone[:3] + "•" * max(len(phone) - 7, 0) + phone[-4:]
 
 
-def alert_restocks(db: Database, watch: RestockWatch, imported_at: datetime) -> list[dict]:
-    """Détecte, notifie, puis met à jour `fuel_watch_state`. Renvoie les
-    réapprovisionnements détectés.
+def alert_restocks(db: Database, config: RestockConfig, imported_at: datetime) -> dict[str, list[dict]]:
+    """Détecte, notifie chaque destinataire, puis met à jour
+    `fuel_watch_state`. Renvoie les réapprovisionnements détectés, par
+    utilisateur (seuls ceux qui en ont un).
 
-    À appeler une fois, après l'import. N'envoie rien s'il n'y a aucun
-    réapprovisionnement : l'agent n'est réveillé que pour un événement réel.
-    Ne lève jamais sur un échec d'envoi — cf. la docstring du module.
+    À appeler une fois, après l'import. N'envoie rien à un utilisateur sans
+    réapprovisionnement : il n'est dérangé que pour un événement réel. Ne lève
+    jamais sur un échec d'envoi — cf. la docstring du module.
     """
     collection = db["fuel_watch_state"]
-    favorite_ids = favorite_station_ids(db)
-    stations = watched_stations(db["fuel_stations"], watch, favorite_ids)
+    subs = subscribers(db)
+    station_ids = sorted({sid for sub in subs for sid in sub.station_ids})
+    projection = {"fuels": 1, "brand": 1, "name": 1, "address": 1, "city": 1, "postcode": 1}
+    stations = {
+        doc["_id"]: doc
+        for doc in db["fuel_stations"].find({"_id": {"$in": station_ids}}, projection)
+    }
     states = {doc["_id"]: doc for doc in collection.find({})}
-    restocks, updates = detect_restocks(stations, states, watch.fuels, imported_at)
 
-    present_ids = {doc["_id"] for doc in db["fuel_stations"].find({}, {"_id": 1})}
-    stale = _stale_station_ids(states, stations, present_ids, favorite_ids, watch)
-    watched_count = len(
-        set(stations) | favorite_ids | ({s["stationId"] for s in states.values()} - stale)
-    )
-    print(f"restock: {watched_count} station(s) surveillée(s), {len(restocks)} réapprovisionnement(s)")
+    watched: set[str] = set()
+    all_updates: list[dict] = []
+    detected: dict[str, list[dict]] = {}
+    sent = failed = 0
+    for sub in subs:
+        watched |= sub.watched()
+        restocks, updates = detect_restocks(sub, stations, states, imported_at)
+        if restocks:
+            detected[sub.user_id] = restocks
+            payload = build_payload(sub, restocks, imported_at)
+            try:
+                status = send_webhook(
+                    config.webhook_url, config.webhook_secret, payload, request_id(sub, imported_at)
+                )
+                sent += 1
+                print(f"restock: alerte envoyée à {mask_phone(sub.phone)} (HTTP {status})")
+            except Exception as error:  # noqa: BLE001 — l'import des prix prime sur l'alerte
+                failed += 1
+                print(f"restock: échec de l'envoi à {mask_phone(sub.phone)} ({error}), "
+                      "nouvel essai au prochain import")
+                # Ces carburants restent « en rupture » pour lui : l'alerte repartira.
+                unsent = {state_id(sub.user_id, r["stationId"], r["fuel"]) for r in restocks}
+                updates = [u for u in updates if u["_id"] not in unsent]
+        all_updates.extend(updates)
 
-    if restocks and not watch.webhook_url:
-        print("restock: FUEL_RESTOCK_WEBHOOK_URL absent, alerte non envoyée")
-    elif restocks:
-        payload = build_payload(restocks, watch, imported_at)
-        request_id = f"fuel-restock-{imported_at:%Y%m%dT%H%M%S}"
-        try:
-            status = send_webhook(watch.webhook_url, watch.webhook_secret, payload, request_id)
-            print(f"restock: webhook envoyé (HTTP {status})")
-        except Exception as error:  # noqa: BLE001 — l'import des prix prime sur l'alerte
-            print(f"restock: échec de l'envoi du webhook ({error}), nouvel essai au prochain import")
-            # Ces carburants restent « en rupture » : l'alerte repartira.
-            unsent = {state_id(r["stationId"], r["fuel"]) for r in restocks}
-            updates = [u for u in updates if u["_id"] not in unsent]
+    stale = sorted(set(states) - watched)
+    print(f"restock: {len(subs)} destinataire(s), {len(watched)} couple(s) station × carburant "
+          f"surveillé(s), {sent} alerte(s) envoyée(s), {failed} échec(s)")
 
-    if updates:
-        collection.bulk_write([ReplaceOne({"_id": u["_id"]}, u, upsert=True) for u in updates])
+    if all_updates:
+        collection.bulk_write([ReplaceOne({"_id": u["_id"]}, u, upsert=True) for u in all_updates])
     if stale:
-        collection.delete_many({"stationId": {"$in": sorted(stale)}})
-    return restocks
+        # Y compris les états de l'ancienne alerte globale (`<station>:<carburant>`,
+        # sans `userId`), qui ne correspondent plus à aucun triplet.
+        collection.delete_many({"_id": {"$in": stale}})
+    return detected

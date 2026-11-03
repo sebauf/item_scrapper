@@ -1,7 +1,10 @@
+import Link from 'next/link';
 import { signOut } from '@/auth';
 
 /**
- * Utilisateur connecté et déconnexion, à droite de l'en-tête.
+ * Utilisateur connecté et déconnexion, à droite de l'en-tête. L'initiale et
+ * le nom mènent au profil (numéro de téléphone et alertes carburant) ;
+ * l'initiale reste visible sur mobile, où c'est le seul accès au profil.
  *
  * Composant serveur : la déconnexion est une Server Action (`signOut`
  * d'Auth.js efface le cookie de session), aucun JavaScript client n'est
@@ -13,15 +16,20 @@ export function UserMenu({ name, email }: { name: string | null; email: string }
 
   return (
     <div className="ml-auto flex items-center gap-3 min-w-0">
-      <span
-        className="hidden sm:flex w-8 h-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent text-sm font-semibold"
-        aria-hidden
+      <Link
+        href="/profile"
+        className="flex items-center gap-3 min-w-0 rounded-lg hover:text-foreground"
+        title={`Profil et alertes (${email})`}
+        aria-label="Profil"
       >
-        {initial}
-      </span>
-      <span className="hidden lg:block text-sm text-muted truncate max-w-48" title={email}>
-        {label}
-      </span>
+        <span
+          className="flex w-8 h-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent text-sm font-semibold"
+          aria-hidden
+        >
+          {initial}
+        </span>
+        <span className="hidden lg:block text-sm text-muted truncate max-w-48">{label}</span>
+      </Link>
       <form
         action={async () => {
           'use server';

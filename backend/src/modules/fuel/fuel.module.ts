@@ -16,7 +16,8 @@ import { FuelStationController } from './interface/fuel.controller';
  * `fuel_stations` est écrite par l'import du pipeline
  * (pipeline/src/fuel/import_stations.py) à partir du flux officiel ; le
  * backend ne fait que la lire. Il écrit en revanche `favorite_stations`, que
- * le pipeline relit pour l'alerte de réapprovisionnement. Aucun lien avec
+ * le pipeline relit pour l'alerte de réapprovisionnement (avec le profil de
+ * l'utilisateur, cf. ProfileModule). Aucun lien avec
  * Catalog : ni mot-clé, ni scrape, ni score — un autre domaine qui partage
  * seulement la base.
  */
@@ -30,5 +31,8 @@ import { FuelStationController } from './interface/fuel.controller';
     { provide: FuelStationReadModel, useClass: MongoFuelStationReadModel },
     { provide: FavoriteStationRepository, useClass: MongoFavoriteStationRepository },
   ],
+  // Le contexte Profile compte les stations favorites (les stations que
+  // surveille l'alerte de réapprovisionnement).
+  exports: [FavoriteStationRepository],
 })
 export class FuelModule {}

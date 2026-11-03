@@ -6,6 +6,7 @@ import { FavoriteModule } from './modules/favorite/favorite.module';
 import { FuelModule } from './modules/fuel/fuel.module';
 import { KeywordModule } from './modules/keyword/keyword.module';
 import { ProductTrackingModule } from './modules/product-tracking/product-tracking.module';
+import { ProfileModule } from './modules/profile/profile.module';
 import { MongoModule } from './shared/infrastructure/mongo/mongo.module';
 
 /**
@@ -22,6 +23,7 @@ import { MongoModule } from './shared/infrastructure/mongo/mongo.module';
     ProductTrackingModule,
     FavoriteModule,
     FuelModule,
+    ProfileModule,
   ],
 })
 export class AppModule {}

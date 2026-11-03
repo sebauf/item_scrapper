@@ -37,7 +37,7 @@ export function FavoriteStationButton({
       disabled={isPending}
       aria-pressed={isFavorite}
       aria-label={label}
-      title={isFavorite ? `${label} (alerte de réapprovisionnement active)` : label}
+      title={isFavorite ? `${label} (surveillée par vos alertes carburant)` : label}
       className={`inline-flex h-9 w-9 items-center justify-center rounded-full border transition-colors disabled:opacity-60 ${
         isFavorite
           ? 'bg-warn-soft text-warn border-warn-border hover:bg-warn-soft/70'

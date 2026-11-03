@@ -21,6 +21,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
     removeFavorite: vi.fn(),
     addFavoriteStation: vi.fn(),
     removeFavoriteStation: vi.fn(),
+    updateProfile: vi.fn(),
   };
 });
 
@@ -232,5 +233,44 @@ describe('stations favorites', () => {
     await actions.addFavoriteStationAction('');
 
     expect(api.addFavoriteStation).not.toHaveBeenCalled();
+  });
+});
+
+describe('saveProfileAction', () => {
+  it('envoie le numéro et les carburants cochés, puis rafraîchit le profil', async () => {
+    const data = formData({ phone: '06 12 34 56 78' });
+    data.append('alertFuels', 'gazole');
+    data.append('alertFuels', 'e10');
+
+    await expect(actions.saveProfileAction({}, data)).resolves.toEqual({ success: true });
+
+    expect(api.updateProfile).toHaveBeenCalledWith({ phone: '06 12 34 56 78', alertFuels: ['gazole', 'e10'] });
+    expect(revalidatePath).toHaveBeenCalledWith('/profile');
+  });
+
+  it('un numéro vide efface le numéro, aucun carburant coché donne une liste vide', async () => {
+    await actions.saveProfileAction({}, formData({ phone: '   ' }));
+
+    expect(api.updateProfile).toHaveBeenCalledWith({ phone: null, alertFuels: [] });
+  });
+
+  it('remonte le message du backend sur un numéro refusé', async () => {
+    vi.mocked(api.updateProfile).mockRejectedValue(
+      new ApiError(400, 'INVALID_PHONE_NUMBER', 'Numéro de téléphone invalide.'),
+    );
+
+    await expect(actions.saveProfileAction({}, formData({ phone: '12' }))).resolves.toEqual({
+      error: 'Numéro de téléphone invalide.',
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it('masque le détail d’une panne', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(api.updateProfile).mockRejectedValue(new ApiError(503, null, 'upstream down'));
+
+    await expect(actions.saveProfileAction({}, formData({ phone: '' }))).resolves.toEqual({
+      error: 'Le service est momentanément indisponible. Réessayez.',
+    });
   });
 });

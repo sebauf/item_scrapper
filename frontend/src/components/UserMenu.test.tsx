@@ -26,3 +26,11 @@ describe('UserMenu', () => {
     expect(authMock.signOut).toHaveBeenCalledWith({ redirectTo: '/login' });
   });
 });
+
+describe('UserMenu — profil', () => {
+  it('mène à la page de profil', () => {
+    render(<UserMenu name="Alice" email="alice@example.com" />);
+
+    expect(screen.getByRole('link', { name: 'Profil' })).toHaveAttribute('href', '/profile');
+  });
+});

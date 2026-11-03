@@ -43,6 +43,8 @@ export type FuelStation = Schemas['FuelStationResponse'];
 export type FuelPrice = Schemas['FuelPriceResponse'];
 export type FuelCode = FuelPrice['code'];
 export type BrandCount = Schemas['BrandCountResponse'];
+export type Profile = Schemas['ProfileResponse'];
+export type FuelAlertRequirement = Profile['fuelAlerts']['missing'][number];
 
 const BASE_URL = process.env.BACKEND_URL ?? 'http://localhost:3001';
 const API = `${BASE_URL}/api/v1`;
@@ -217,4 +219,25 @@ export function addFavoriteStation(stationId: string): Promise<void> {
 
 export function removeFavoriteStation(stationId: string): Promise<void> {
   return request<void>(`/fuel-stations/favorites/${encodeURIComponent(stationId)}`, { method: 'DELETE' });
+}
+
+/** Profil de l'utilisateur connecté : numéro, carburants surveillés, état des alertes. */
+export function getProfile(): Promise<Profile> {
+  return request<Profile>('/profile');
+}
+
+/**
+ * Remplace le profil. Le backend normalise le numéro (`06 12…` → `+336…`) et
+ * renvoie le profil enregistré ; un numéro ou un carburant invalide → 400.
+ *
+ * `alertFuels` est accepté en `string[]` plutôt qu'avec le type énuméré du
+ * contrat : ce sont les cases cochées d'un formulaire, que le backend valide
+ * (un code inconnu → 400 avec un message), pas des valeurs déjà sûres.
+ */
+export function updateProfile(input: { phone: string | null; alertFuels: string[] }): Promise<Profile> {
+  return request<Profile>('/profile', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
+  });
 }
