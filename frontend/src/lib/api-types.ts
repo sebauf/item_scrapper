@@ -212,6 +212,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/fuel-stations/favorites/details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stations favorites avec leurs prix et la prévision de rupture à 24 h de chaque carburant */
+        get: operations["FuelFavoriteController_details"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/fuel-stations/favorites/{id}": {
         parameters: {
             query?: never;
@@ -424,6 +441,98 @@ export interface components {
             id: string;
             /** @description Date de mise en favori (ISO 8601) */
             addedAt: string;
+        };
+        ShortageOutlookResponse: {
+            /**
+             * @description Probabilité (0 à 1) qu’une rupture commence avant `horizonEnd`
+             * @example 0.62
+             */
+            risk: number;
+            /**
+             * @description low < elevatedThreshold ≤ elevated < likelyThreshold ≤ likely
+             * @enum {string}
+             */
+            level: "low" | "elevated" | "likely";
+            /** @description Calcul de la prévision par le pipeline (ISO 8601) */
+            computedAt: string;
+            /** @description Fin de l’horizon du modèle (computedAt + 24 h) : la rupture prévue commencerait avant cette date */
+            horizonEnd: string;
+        };
+        FavoriteFuelResponse: {
+            /** @enum {string} */
+            code: "gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc";
+            /**
+             * @description Prix au litre en euros, null pendant une rupture déclarée sans prix
+             * @example 1.689
+             */
+            price: number | null;
+            /** @description Déclaration du prix par la station (ISO 8601) — pas la date de notre import */
+            updatedAt: string | null;
+            /** @description Vendu, avec un prix, et sans rupture en cours */
+            available: boolean;
+            /** @description Début de la rupture en cours */
+            shortageSince: string | null;
+            /** @description Prix déclaré il y a plus de `staleAfterHours` heures */
+            isStale: boolean;
+            /** @description Prévision de rupture à 24 h — null si le carburant est déjà en rupture, sans modèle en service, ou prévision trop ancienne */
+            shortageOutlook: components["schemas"]["ShortageOutlookResponse"] | null;
+        };
+        FavoriteStationInfoResponse: {
+            /** @example TotalEnergies */
+            brand: string | null;
+            name: string | null;
+            /** @example 12 avenue Félix Faure */
+            address: string;
+            /** @example Lyon */
+            city: string;
+            /** @example 69003 */
+            postcode: string;
+            /** @enum {string|null} */
+            roadType: "R" | "A" | null;
+            /** @example 45.75938 */
+            latitude: number;
+            /** @example 4.85491 */
+            longitude: number;
+            fuels: components["schemas"]["FavoriteFuelResponse"][];
+        };
+        FavoriteStationDetailsResponse: {
+            /**
+             * @description Identifiant officiel du point de vente
+             * @example 69003001
+             */
+            id: string;
+            /** @description Date de mise en favori (ISO 8601) */
+            addedAt: string;
+            /** @description null si la station n’est plus dans le flux officiel */
+            station: components["schemas"]["FavoriteStationInfoResponse"] | null;
+        };
+        ShortageForecastRulesResponse: {
+            /**
+             * @description Horizon du modèle, en heures
+             * @example 24
+             */
+            horizonHours: number;
+            /**
+             * @description Âge au-delà duquel une prévision est écartée
+             * @example 2
+             */
+            maxAgeHours: number;
+            /** @example 0.15 */
+            elevatedThreshold: number;
+            /**
+             * @description Même seuil par défaut que l’alerte de risque
+             * @example 0.5
+             */
+            likelyThreshold: number;
+            /** @description Prévision retenue la plus récente */
+            computedAt: string | null;
+        };
+        FavoriteStationDetailsListResponse: {
+            /** @description De la plus récemment ajoutée à la plus ancienne */
+            stations: components["schemas"]["FavoriteStationDetailsResponse"][];
+            /** @example 72 */
+            staleAfterHours: number;
+            forecast: components["schemas"]["ShortageForecastRulesResponse"];
         };
         FuelPriceResponse: {
             /** @enum {string} */
@@ -977,6 +1086,25 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FavoriteStationResponse"][];
+                };
+            };
+        };
+    };
+    FuelFavoriteController_details: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FavoriteStationDetailsListResponse"];
                 };
             };
         };

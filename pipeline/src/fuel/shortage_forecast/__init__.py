@@ -14,5 +14,7 @@ Vue d'ensemble — le détail est dans la docstring de chaque module :
 - `episodes` : collection `fuel_shortages`, tenue à jour par l'import toutes
   les 30 minutes et resynchronisée sur l'archive à chaque entraînement ;
 - `train`    : point d'entrée de la tâche quotidienne ;
-- `predict`  : risque des stations favorites, lu par les alertes.
+- `predict`  : risque en direct d'une liste de couples (station × carburant) ;
+- `forecasts`: risque des stations favorites, publié après chaque import dans
+  `fuel_shortage_forecasts` (lu par le backend) et relu par les alertes.
 """

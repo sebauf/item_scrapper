@@ -125,3 +125,111 @@ export class FavoriteStationResponse {
   @ApiProperty({ description: 'Date de mise en favori (ISO 8601)' })
   addedAt!: string;
 }
+
+export class ShortageOutlookResponse {
+  @ApiProperty({
+    example: 0.62,
+    description: 'Probabilité (0 à 1) qu’une rupture commence avant `horizonEnd`',
+  })
+  risk!: number;
+
+  @ApiProperty({
+    enum: ['low', 'elevated', 'likely'],
+    description: 'low < elevatedThreshold ≤ elevated < likelyThreshold ≤ likely',
+  })
+  level!: string;
+
+  @ApiProperty({ description: 'Calcul de la prévision par le pipeline (ISO 8601)' })
+  computedAt!: string;
+
+  @ApiProperty({
+    description:
+      'Fin de l’horizon du modèle (computedAt + 24 h) : la rupture prévue commencerait avant cette date',
+  })
+  horizonEnd!: string;
+}
+
+export class FavoriteFuelResponse extends FuelPriceResponse {
+  @ApiProperty({
+    type: ShortageOutlookResponse,
+    nullable: true,
+    description:
+      'Prévision de rupture à 24 h — null si le carburant est déjà en rupture, sans modèle en service, ou prévision trop ancienne',
+  })
+  shortageOutlook!: ShortageOutlookResponse | null;
+}
+
+export class FavoriteStationInfoResponse {
+  @ApiProperty({ type: String, nullable: true, example: 'TotalEnergies' })
+  brand!: string | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  name!: string | null;
+
+  @ApiProperty({ example: '12 avenue Félix Faure' })
+  address!: string;
+
+  @ApiProperty({ example: 'Lyon' })
+  city!: string;
+
+  @ApiProperty({ example: '69003' })
+  postcode!: string;
+
+  @ApiProperty({ type: String, nullable: true, enum: ['R', 'A'] })
+  roadType!: string | null;
+
+  @ApiProperty({ example: 45.75938 })
+  latitude!: number;
+
+  @ApiProperty({ example: 4.85491 })
+  longitude!: number;
+
+  @ApiProperty({ type: [FavoriteFuelResponse] })
+  fuels!: FavoriteFuelResponse[];
+}
+
+export class FavoriteStationDetailsResponse {
+  @ApiProperty({ description: 'Identifiant officiel du point de vente', example: '69003001' })
+  id!: string;
+
+  @ApiProperty({ description: 'Date de mise en favori (ISO 8601)' })
+  addedAt!: string;
+
+  @ApiProperty({
+    type: FavoriteStationInfoResponse,
+    nullable: true,
+    description: 'null si la station n’est plus dans le flux officiel',
+  })
+  station!: FavoriteStationInfoResponse | null;
+}
+
+export class ShortageForecastRulesResponse {
+  @ApiProperty({ example: 24, description: 'Horizon du modèle, en heures' })
+  horizonHours!: number;
+
+  @ApiProperty({ example: 2, description: 'Âge au-delà duquel une prévision est écartée' })
+  maxAgeHours!: number;
+
+  @ApiProperty({ example: 0.15 })
+  elevatedThreshold!: number;
+
+  @ApiProperty({ example: 0.5, description: 'Même seuil par défaut que l’alerte de risque' })
+  likelyThreshold!: number;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Prévision retenue la plus récente' })
+  computedAt!: string | null;
+}
+
+export class FavoriteStationDetailsListResponse {
+  @ApiProperty({
+    type: [FavoriteStationDetailsResponse],
+    description: 'De la plus récemment ajoutée à la plus ancienne',
+  })
+  stations!: FavoriteStationDetailsResponse[];
+
+  @ApiProperty({ example: 72 })
+  staleAfterHours!: number;
+
+  @ApiProperty({ type: ShortageForecastRulesResponse })
+  forecast!: ShortageForecastRulesResponse;
+}

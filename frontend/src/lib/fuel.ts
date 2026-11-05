@@ -1,4 +1,12 @@
-import type { BrandCount, FuelCode, FuelPrice, FuelStation } from './api';
+import type {
+  BrandCount,
+  FavoriteFuel,
+  FuelCode,
+  FuelPrice,
+  FuelStation,
+  ShortageOutlook,
+  ShortageRiskLevel,
+} from './api';
 
 /**
  * Logique d'affichage de la carte des carburants — tout ce qui se teste sans
@@ -173,7 +181,9 @@ function comparable(value: string): string {
  * Sans enseigne (station absente d'OSM, ~5 %), le nom tient lieu de titre ;
  * sans l'un ni l'autre, on le dit plutôt que d'inventer.
  */
-export function stationLabel(station: FuelStation): { title: string; detail: string | null } {
+export function stationLabel(
+  station: Pick<FuelStation, 'brand' | 'name'>,
+): { title: string; detail: string | null } {
   const { brand, name } = station;
   if (brand === null) return { title: name ?? 'Enseigne inconnue', detail: null };
   const redundant = name === null || comparable(name) === comparable(brand);
@@ -247,4 +257,89 @@ export function priceTiers(
   const lowMax = prices[Math.floor((prices.length - 1) / 3)];
   const midMax = prices[Math.floor((2 * (prices.length - 1)) / 3)];
   return (price) => (price <= lowMax ? 'low' : price <= midMax ? 'mid' : 'high');
+}
+
+// --- Prévision de rupture (page « Mes stations ») --------------------------------
+
+/**
+ * Fuseau des dates affichées. Explicite : la page est rendue côté serveur, dans
+ * un Pod réglé en UTC — sans lui, « avant 11 h 30 » voudrait dire 12 h 30 à
+ * Paris en hiver.
+ */
+const DISPLAY_TIME_ZONE = 'Europe/Paris';
+
+const dayKey = new Intl.DateTimeFormat('fr-FR', {
+  timeZone: DISPLAY_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const clock = new Intl.DateTimeFormat('fr-FR', {
+  timeZone: DISPLAY_TIME_ZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+});
+const weekdayDate = new Intl.DateTimeFormat('fr-FR', {
+  timeZone: DISPLAY_TIME_ZONE,
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+});
+
+/** Probabilité en pourcentage entier — au-delà, une précision que le modèle n'a pas. */
+export function formatRisk(risk: number): string {
+  if (risk > 0 && risk < 0.01) return '< 1 %';
+  return `${Math.round(risk * 100)} %`;
+}
+
+/**
+ * Échéance lisible, heure de Paris : « aujourd'hui à 18:30 », « demain à
+ * 11:30 », sinon « le jeu. 7 nov. à 11:30 ».
+ */
+export function formatDeadline(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  const time = clock.format(date);
+  const day = dayKey.format(date);
+  if (day === dayKey.format(now)) return `aujourd’hui à ${time}`;
+  if (day === dayKey.format(new Date(now.getTime() + 86_400_000))) return `demain à ${time}`;
+  return `le ${weekdayDate.format(date)} à ${time}`;
+}
+
+export const RISK_LEVEL_LABELS: Record<ShortageRiskLevel, string> = {
+  low: 'Risque faible',
+  elevated: 'Risque élevé',
+  likely: 'Rupture probable',
+};
+
+/**
+ * Phrase d'une prévision. Le modèle ne prédit pas une date mais une
+ * probabilité sur 24 h : la seule date honnête est la fin de cet horizon, d'où
+ * « avant… » / « d'ici… » plutôt qu'un « le … à … » qui promettrait une heure.
+ */
+export function outlookSentence(outlook: ShortageOutlook, now: Date = new Date()): string {
+  const deadline = formatDeadline(outlook.horizonEnd, now);
+  switch (outlook.level) {
+    case 'likely':
+      return `Rupture probable avant ${deadline}`;
+    case 'elevated':
+      return `Risque de rupture élevé d’ici ${deadline}`;
+    case 'low':
+      return `Pas de rupture attendue d’ici ${deadline}`;
+  }
+}
+
+const LEVEL_RANK: Record<ShortageRiskLevel, number> = { low: 0, elevated: 1, likely: 2 };
+
+/** Pire niveau parmi les carburants prévus d'une station, null si aucun. */
+export function worstRiskLevel(fuels: FavoriteFuel[]): ShortageRiskLevel | null {
+  return fuels.reduce<ShortageRiskLevel | null>((worst, fuel) => {
+    const level = fuel.shortageOutlook?.level ?? null;
+    if (level === null) return worst;
+    return worst === null || LEVEL_RANK[level] > LEVEL_RANK[worst] ? level : worst;
+  }, null);
+}
+
+/** Carburants dans l'ordre d'affichage habituel (du plus vendu au plus rare). */
+export function sortFuels<T extends { code: FuelCode }>(fuels: T[]): T[] {
+  return [...fuels].sort((a, b) => FUEL_CODES.indexOf(a.code) - FUEL_CODES.indexOf(b.code));
 }

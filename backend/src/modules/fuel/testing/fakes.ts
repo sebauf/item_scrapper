@@ -3,7 +3,12 @@ import {
   FuelStationReadModel,
   FuelStationRow,
   NearbyStations,
+  StationRow,
 } from '../application/ports/fuel-station.read-model';
+import {
+  ShortageForecastReadModel,
+  ShortageForecastRow,
+} from '../application/ports/shortage-forecast.read-model';
 import { StationSearch } from '../domain/station-search';
 
 /**
@@ -61,5 +66,23 @@ export class FakeFuelStationReadModel extends FuelStationReadModel {
   /** Une station existe si le résultat préparé la contient. */
   exists(stationId: string): Promise<boolean> {
     return Promise.resolve(this.result.stations.some((station) => station.id === stationId));
+  }
+
+  findByIds(stationIds: string[]): Promise<StationRow[]> {
+    return Promise.resolve(
+      this.result.stations
+        .filter((station) => stationIds.includes(station.id))
+        .map(({ distanceKm: _distance, ...station }) => station),
+    );
+  }
+}
+
+export class FakeShortageForecastReadModel extends ShortageForecastReadModel {
+  constructor(private readonly rows: ShortageForecastRow[] = []) {
+    super();
+  }
+
+  findForStations(stationIds: string[]): Promise<ShortageForecastRow[]> {
+    return Promise.resolve(this.rows.filter((row) => stationIds.includes(row.stationId)));
   }
 }

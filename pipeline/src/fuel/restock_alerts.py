@@ -478,18 +478,6 @@ def mask_phone(phone: str) -> str:
     return phone[:3] + "•" * max(len(phone) - 7, 0) + phone[-4:]
 
 
-def watched_pairs(subs: list[Subscriber], stations: dict[str, dict]) -> list[tuple[str, str]]:
-    """(station, carburant) surveillés par au moins un utilisateur et
-    disponibles maintenant — les seuls dont on prévoit le risque."""
-    pairs = set()
-    for sub in subs:
-        for station_id in sub.station_ids:
-            for fuel in (stations.get(station_id) or {}).get("fuels", []):
-                if fuel["code"] in sub.fuels and fuel["available"]:
-                    pairs.add((station_id, fuel["code"]))
-    return sorted(pairs)
-
-
 def _revert(kind: str, events: list[dict], sub: Subscriber, updates: dict[str, dict], states: dict[str, dict]):
     """Après un échec d'envoi : remet l'état de ces triplets tel qu'il était,
     pour que l'alerte reparte au prochain import."""
@@ -514,7 +502,7 @@ def alert_fuel_events(
     par type (seuls les utilisateurs et les types non vides).
 
     `risks` : risque de rupture à 24 h par (station, carburant), cf.
-    `shortage_forecast.predict` ; None (pas de modèle) → pas d'alerte de risque.
+    `shortage_forecast.forecasts` ; None (pas de modèle) → pas d'alerte de risque.
 
     À appeler une fois, après l'import. N'envoie rien à un utilisateur sans
     événement : il n'est dérangé que pour un fait nouveau. Ne lève jamais sur
@@ -571,27 +559,3 @@ def watched_stations(db: Database, subs: list[Subscriber]) -> dict[str, dict]:
         doc["_id"]: doc
         for doc in db["fuel_stations"].find({"_id": {"$in": station_ids}}, projection)
     }
-
-
-def predict_watched_risks(db: Database, imported_at: datetime) -> dict[tuple[str, str], float] | None:
-    """Risque à 24 h des couples surveillés, ou None sans modèle en service.
-
-    Ne lève jamais : une prévision ratée ne doit priver personne des alertes
-    de rupture et de réapprovisionnement, qui n'en dépendent pas.
-    """
-    try:
-        from src.fuel.shortage_forecast.model import load_model
-        from src.fuel.shortage_forecast.predict import predict_risks
-
-        model = load_model(db, imported_at)
-        if model is None:
-            print("shortage-risk: aucun modèle en service, pas d'alerte de risque")
-            return None
-        subs = subscribers(db)
-        risks = predict_risks(db, model, watched_pairs(subs, watched_stations(db, subs)), imported_at)
-        high = sum(1 for p in risks.values() if p >= DEFAULT_RISK_THRESHOLD)
-        print(f"shortage-risk: {len(risks)} couple(s) évalué(s), {high} à {DEFAULT_RISK_THRESHOLD:.0%} ou plus")
-        return risks
-    except Exception as error:  # noqa: BLE001
-        print(f"shortage-risk: prévision impossible ({error!r}), pas d'alerte de risque")
-        return None

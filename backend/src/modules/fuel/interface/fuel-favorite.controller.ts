@@ -4,8 +4,12 @@ import { UserId } from 'src/shared/domain/user-id';
 import { CurrentUser } from 'src/shared/interface/http/auth.guard';
 import { AddFavoriteStationCommand } from '../application/commands/add-favorite-station.command';
 import { RemoveFavoriteStationCommand } from '../application/commands/remove-favorite-station.command';
+import { ListFavoriteStationDetailsQuery } from '../application/queries/list-favorite-station-details.query';
 import { ListFavoriteStationsQuery } from '../application/queries/list-favorite-stations.query';
-import { FavoriteStationResponse } from './dto/fuel-station.response';
+import {
+  FavoriteStationDetailsListResponse,
+  FavoriteStationResponse,
+} from './dto/fuel-station.response';
 
 /**
  * Stations favorites. `PUT`/`DELETE` sur l'identifiant, idempotents (204
@@ -21,6 +25,7 @@ export class FuelFavoriteController {
     private readonly addFavorite: AddFavoriteStationCommand,
     private readonly removeFavorite: RemoveFavoriteStationCommand,
     private readonly listFavorites: ListFavoriteStationsQuery,
+    private readonly listDetails: ListFavoriteStationDetailsQuery,
   ) {}
 
   @Get()
@@ -28,6 +33,15 @@ export class FuelFavoriteController {
   @ApiResponse({ status: 200, type: [FavoriteStationResponse] })
   list(@CurrentUser() user: UserId): Promise<FavoriteStationResponse[]> {
     return this.listFavorites.execute(user);
+  }
+
+  @Get('details')
+  @ApiOperation({
+    summary: 'Stations favorites avec leurs prix et la prévision de rupture à 24 h de chaque carburant',
+  })
+  @ApiResponse({ status: 200, type: FavoriteStationDetailsListResponse })
+  details(@CurrentUser() user: UserId): Promise<FavoriteStationDetailsListResponse> {
+    return this.listDetails.execute(user);
   }
 
   @Put(':id')

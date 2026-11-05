@@ -3,10 +3,17 @@ import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing
 import { AddFavoriteStationCommand } from '../application/commands/add-favorite-station.command';
 import { RemoveFavoriteStationCommand } from '../application/commands/remove-favorite-station.command';
 import { FuelStationReadModel } from '../application/ports/fuel-station.read-model';
+import { ShortageForecastReadModel } from '../application/ports/shortage-forecast.read-model';
+import { ListFavoriteStationDetailsQuery } from '../application/queries/list-favorite-station-details.query';
 import { ListFavoriteStationsQuery } from '../application/queries/list-favorite-stations.query';
 import { SearchFuelStationsQuery } from '../application/queries/search-fuel-stations.query';
 import { FavoriteStationRepository } from '../domain/favorite-station.repository';
-import { aFuelStation, FakeFuelStationReadModel } from '../testing/fakes';
+import {
+  aFuelPrice,
+  aFuelStation,
+  FakeFuelStationReadModel,
+  FakeShortageForecastReadModel,
+} from '../testing/fakes';
 import { InMemoryFavoriteStationRepository } from '../testing/in-memory-favorite-station.repository';
 import { FuelFavoriteController } from './fuel-favorite.controller';
 import { FuelStationController } from './fuel.controller';
@@ -29,12 +36,24 @@ describe('Fuel favorites — API', () => {
         AddFavoriteStationCommand,
         RemoveFavoriteStationCommand,
         ListFavoriteStationsQuery,
+        ListFavoriteStationDetailsQuery,
         SearchFuelStationsQuery,
         { provide: FavoriteStationRepository, useValue: favorites },
         {
+          provide: ShortageForecastReadModel,
+          useValue: new FakeShortageForecastReadModel([
+            { stationId: '69003001', fuel: 'gazole', risk: 0.62, computedAt: new Date() },
+          ]),
+        },
+        {
           provide: FuelStationReadModel,
           useValue: new FakeFuelStationReadModel({
-            stations: [aFuelStation({ id: '69003001' })],
+            stations: [
+              aFuelStation({
+                id: '69003001',
+                fuels: [aFuelPrice({ code: 'gazole', updatedAt: new Date() })],
+              }),
+            ],
             truncated: false,
             brands: [],
             lastImportAt: null,
@@ -129,6 +148,39 @@ describe('Fuel favorites — API', () => {
     expect(await favorites.list(ALICE)).toEqual([]);
     const bobs = await app.inject({ headers: authAs(BOB), method: 'GET', url: '/api/v1/fuel-stations/favorites' });
     expect(jsonOf<{ id: string }[]>(bobs).map((f) => f.id)).toEqual(['69003001']);
+  });
+
+  it('GET details renvoie prix et prévision de rupture des favorites', async () => {
+    await start({ '69003001': new Date() });
+
+    const response = await app.inject({
+      headers: authAs(),
+      method: 'GET',
+      url: '/api/v1/fuel-stations/favorites/details',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = jsonOf<{
+      stations: { id: string; station: { fuels: { code: string; shortageOutlook: { level: string } | null }[] } }[];
+    }>(response);
+    expect(body.stations).toHaveLength(1);
+    expect(body.stations[0].id).toBe('69003001');
+    expect(body.stations[0].station.fuels[0]).toMatchObject({
+      code: 'gazole',
+      shortageOutlook: { level: 'likely' },
+    });
+  });
+
+  it('GET details ne montre pas les favorites des autres', async () => {
+    await start({ '69003001': new Date() });
+
+    const response = await app.inject({
+      headers: authAs(BOB),
+      method: 'GET',
+      url: '/api/v1/fuel-stations/favorites/details',
+    });
+
+    expect(jsonOf<{ stations: unknown[] }>(response).stations).toEqual([]);
   });
 
   it('refuse une requête sans jeton', async () => {

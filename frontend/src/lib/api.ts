@@ -43,6 +43,12 @@ export type FuelStation = Schemas['FuelStationResponse'];
 export type FuelPrice = Schemas['FuelPriceResponse'];
 export type FuelCode = FuelPrice['code'];
 export type BrandCount = Schemas['BrandCountResponse'];
+export type FavoriteStationDetailsList = Schemas['FavoriteStationDetailsListResponse'];
+export type FavoriteStationDetails = Schemas['FavoriteStationDetailsResponse'];
+export type FavoriteStationInfo = Schemas['FavoriteStationInfoResponse'];
+export type FavoriteFuel = Schemas['FavoriteFuelResponse'];
+export type ShortageOutlook = Schemas['ShortageOutlookResponse'];
+export type ShortageRiskLevel = ShortageOutlook['level'];
 export type Profile = Schemas['ProfileResponse'];
 export type FuelAlertRequirement = Profile['fuelAlerts']['missing'][number];
 
@@ -213,6 +219,11 @@ export function searchFuelStations(queryString: string): Promise<FuelStationSear
 }
 
 /** Idempotent : une station déjà favorite le reste (204 dans les deux cas). */
+/** Stations favorites de l'utilisateur, avec prix et prévision de rupture à 24 h. */
+export function getFavoriteStationDetails(): Promise<FavoriteStationDetailsList> {
+  return request<FavoriteStationDetailsList>('/fuel-stations/favorites/details');
+}
+
 export function addFavoriteStation(stationId: string): Promise<void> {
   return request<void>(`/fuel-stations/favorites/${encodeURIComponent(stationId)}`, { method: 'PUT' });
 }

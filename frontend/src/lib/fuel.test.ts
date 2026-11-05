@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { aFuelPrice, aFuelStation } from '@/testing/fixtures';
+import { aFavoriteFuel, aFuelPrice, aFuelStation } from '@/testing/fixtures';
 import {
   brandOptions,
   buildFuelApiQuery,
   buildFuelPageHref,
   DEFAULT_CENTER,
+  formatDeadline,
   formatDistance,
   formatLiterPrice,
+  formatRisk,
   googleMapsUrl,
+  outlookSentence,
   parseFuelSearchParams,
   priceTiers,
+  sortFuels,
   stationLabel,
+  worstRiskLevel,
 } from './fuel';
 
 describe('parseFuelSearchParams', () => {
@@ -201,5 +206,64 @@ describe('priceTiers', () => {
     const tierOf = priceTiers([stationAt('a', 1.7), stationAt('b', 1.8)], 'e10');
 
     expect(tierOf(1.7)).toBeNull();
+  });
+});
+
+describe('prévision de rupture', () => {
+  // 5 nov. 2026, 12:00 UTC = 13:00 à Paris (heure d'hiver, UTC+1).
+  const now = new Date('2026-11-05T12:00:00.000Z');
+
+  it('formate la probabilité en pourcentage entier', () => {
+    expect(formatRisk(0.623)).toBe('62 %');
+    expect(formatRisk(0)).toBe('0 %');
+    expect(formatRisk(0.004)).toBe('< 1 %');
+    expect(formatRisk(1)).toBe('100 %');
+  });
+
+  it('écrit l’échéance en heure de Paris, relative au jour', () => {
+    expect(formatDeadline('2026-11-05T17:30:00.000Z', now)).toBe('aujourd’hui à 18:30');
+    expect(formatDeadline('2026-11-06T10:30:00.000Z', now)).toBe('demain à 11:30');
+    // 23:30 UTC le 5 = 00:30 le 6 à Paris : c'est déjà « demain ».
+    expect(formatDeadline('2026-11-05T23:30:00.000Z', now)).toBe('demain à 00:30');
+    expect(formatDeadline('2026-11-07T10:30:00.000Z', now)).toBe('le sam. 7 nov. à 11:30');
+  });
+
+  it('formule la prévision comme une échéance, jamais comme une heure de rupture', () => {
+    const outlook = {
+      risk: 0.62,
+      level: 'likely' as const,
+      computedAt: '2026-11-05T11:30:00.000Z',
+      horizonEnd: '2026-11-06T11:30:00.000Z',
+    };
+    expect(outlookSentence(outlook, now)).toBe('Rupture probable avant demain à 12:30');
+    expect(outlookSentence({ ...outlook, level: 'elevated' }, now)).toBe(
+      'Risque de rupture élevé d’ici demain à 12:30',
+    );
+    expect(outlookSentence({ ...outlook, level: 'low' }, now)).toBe(
+      'Pas de rupture attendue d’ici demain à 12:30',
+    );
+  });
+
+  it('retient le pire niveau des carburants prévus', () => {
+    const outlook = (level: 'low' | 'elevated' | 'likely') => ({
+      risk: 0.1,
+      level,
+      computedAt: now.toISOString(),
+      horizonEnd: now.toISOString(),
+    });
+    expect(worstRiskLevel([])).toBeNull();
+    expect(worstRiskLevel([aFavoriteFuel()])).toBeNull();
+    expect(
+      worstRiskLevel([
+        aFavoriteFuel({ shortageOutlook: outlook('low') }),
+        aFavoriteFuel({ shortageOutlook: outlook('elevated') }),
+        aFavoriteFuel(),
+      ]),
+    ).toBe('elevated');
+  });
+
+  it('range les carburants du plus vendu au plus rare', () => {
+    const sorted = sortFuels([aFavoriteFuel({ code: 'e85' }), aFavoriteFuel({ code: 'gazole' }), aFavoriteFuel({ code: 'e10' })]);
+    expect(sorted.map((f) => f.code)).toEqual(['gazole', 'e10', 'e85']);
   });
 });
