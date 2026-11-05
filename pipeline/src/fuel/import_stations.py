@@ -232,7 +232,8 @@ if __name__ == "__main__":
     from pymongo import MongoClient
 
     from src.config import DB_NAME, MONGODB_URI
-    from src.fuel.restock_alerts import RestockConfig, alert_restocks
+    from src.fuel.restock_alerts import RestockConfig, alert_fuel_events, predict_watched_risks
+    from src.fuel.shortage_forecast import episodes
 
     client = MongoClient(MONGODB_URI)
     records = fetch_records()
@@ -251,5 +252,14 @@ if __name__ == "__main__":
     print(f"fuel_stations: {count} stations imported ({len(records)} records received)")
     print(f"brands: {branded}/{count} stations matched to a brand")
 
+    # L'historique des ruptures sert à la prévision : tenu à jour même sans
+    # alerte configurée, pour qu'un modèle activé plus tard ait son passé.
+    try:
+        opened, closed = episodes.record_live(db, imported_at)
+        print(f"fuel_shortages: {opened} rupture(s) en cours, {closed} close(s) à cet import")
+    except Exception as error:  # noqa: BLE001 — les prix sont importés, c'est l'essentiel
+        print(f"fuel_shortages: mise à jour impossible ({error!r})")
+
     if restock:
-        alert_restocks(db, restock, imported_at)
+        risks = predict_watched_risks(db, imported_at) if restock.risk_threshold is not None else None
+        alert_fuel_events(db, restock, imported_at, risks)

@@ -1,6 +1,14 @@
-"""Alerte de réapprovisionnement, **par utilisateur** : prévient chaque
-utilisateur, par un message sur son téléphone, quand un carburant qu'il
-surveille redevient disponible dans l'une de ses stations favorites.
+"""Alertes carburant, **par utilisateur** : préviennent chaque utilisateur,
+par un message sur son téléphone, de ce qui arrive à un carburant qu'il
+surveille dans l'une de ses stations favorites. Trois événements :
+
+- **réapprovisionnement** (`fuel_restock`) : le carburant redevient disponible ;
+- **rupture** (`fuel_shortage`) : il tombe en rupture ;
+- **risque de rupture** (`fuel_shortage_risk`) : le modèle de
+  `shortage_forecast` prévoit une rupture dans les 24 h avec une probabilité
+  d'au moins `FUEL_SHORTAGE_RISK_THRESHOLD` (0,5 par défaut). Au plus une
+  alerte par jour et par (station × carburant), et seulement si le modèle en
+  service a moins de 7 jours. Sans modèle, les deux autres alertes continuent.
 
 Qui reçoit quoi — trois conditions, toutes écrites par le backend :
 
@@ -35,7 +43,9 @@ quelques carburants par utilisateur).
 Définition retenue : un carburant est **réapprovisionné** s'il est disponible
 (`available: true`) à cet import et que son dernier état connu est « en
 rupture » (`available: false`), quel que soit le nombre d'imports écoulés
-entre les deux. Règles de mise à jour, après chaque import :
+entre les deux ; il est **en rupture** dans le cas inverse. L'état garde aussi
+`riskAlertedAt`, la date de la dernière alerte de risque. Règles de mise à
+jour, après chaque import :
 
 - carburant présent, disponible ou non → l'état enregistré devient le sien ;
 - station absente, carburant absent (non vendu, ou ni prix ni rupture) → rien
@@ -54,8 +64,11 @@ désactivée et l'import se comporte comme si elle n'existait pas :
   `http://192.168.1.10:8644/webhooks/fuel-restock` ;
 - `FUEL_RESTOCK_WEBHOOK_SECRET` : secret HMAC partagé avec la route.
 
-Un **webhook par destinataire** et par import, dont le corps porte le numéro
-dans `to` (E.164) et le message prêt à envoyer dans `summary`. La route Hermes
+Un **webhook par destinataire, par type d'événement** et par import, dont le
+corps porte le numéro dans `to` (E.164), le message prêt à envoyer dans
+`summary`, et le type dans `event_type` — une route Hermes filtre sur ce champ
+(`events`) : ajoutez-y `fuel_shortage` et `fuel_shortage_risk`, ou créez une
+route par type. La route Hermes
 correspondante, en `deliver_only` (aucun appel au modèle) :
 
     deliver: "sms"            # ou signal
@@ -76,10 +89,11 @@ La signature est ce qui empêche un tiers d'utiliser la route pour envoyer des
 messages à un numéro de son choix : elle est obligatoire.
 
 Un échec d'envoi ne fait jamais échouer l'import : les prix doivent être à jour
-même si l'agent est arrêté. Les carburants concernés restent alors « en
-rupture » dans l'état **de ce destinataire seulement**, et son alerte repart à
-l'import suivant — toutes les 30 minutes tant que l'envoi échoue, ce qui est
-préférable à une alerte perdue.
+même si l'agent est arrêté. L'état des triplets concernés reste alors celui
+d'avant (« en rupture » pour un réapprovisionnement, « disponible » pour une
+rupture, pas de `riskAlertedAt` pour un risque) dans l'état **de ce
+destinataire seulement**, et son alerte repart à l'import suivant — toutes les
+30 minutes tant que l'envoi échoue, ce qui est préférable à une alerte perdue.
 """
 import hashlib
 import hmac
@@ -87,7 +101,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -112,10 +126,19 @@ FUEL_ORDER = {code: i for i, code in enumerate(FUEL_LABELS)}
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
+# Seuil de l'alerte de risque, réglable par FUEL_SHORTAGE_RISK_THRESHOLD. À
+# 50 %, la validation d'octobre-novembre 2026 donnait : 56 % des alertes
+# suivies d'une rupture dans les 24 h, 45 % des ruptures annoncées à l'avance.
+# Plus haut, moins d'alertes mais plus sûres ; plus bas, l'inverse.
+DEFAULT_RISK_THRESHOLD = 0.5
+
+
 @dataclass(frozen=True)
 class RestockConfig:
     webhook_url: str
     webhook_secret: str
+    # None : alerte de risque désactivée (les deux autres restent actives).
+    risk_threshold: float | None = DEFAULT_RISK_THRESHOLD
 
     @classmethod
     def from_env(cls, environ) -> "RestockConfig | None":
@@ -135,7 +158,27 @@ class RestockConfig:
             # une requête non signée dès qu'un secret est configuré.
             print("restock: FUEL_RESTOCK_WEBHOOK_SECRET manquant, alerte désactivée")
             return None
-        return cls(webhook_url=url, webhook_secret=secret)
+        return cls(webhook_url=url, webhook_secret=secret,
+                   risk_threshold=_risk_threshold(environ.get("FUEL_SHORTAGE_RISK_THRESHOLD")))
+
+
+def _risk_threshold(raw: str | None) -> float | None:
+    """`off` désactive l'alerte de risque ; une valeur hors de ]0, 1[ garde
+    le défaut, avec un message, plutôt que d'alerter à tout propos (0) ou
+    jamais (1)."""
+    if raw is None or raw.strip() == "":
+        return DEFAULT_RISK_THRESHOLD
+    if raw.strip().lower() in ("off", "false", "none"):
+        return None
+    try:
+        value = float(raw.replace(",", "."))
+    except ValueError:
+        value = -1
+    if not 0 < value < 1:
+        print(f"shortage-risk: FUEL_SHORTAGE_RISK_THRESHOLD={raw!r} invalide (attendu entre 0 et 1 "
+              f"exclus, ou off), seuil par défaut {DEFAULT_RISK_THRESHOLD}")
+        return DEFAULT_RISK_THRESHOLD
+    return value
 
 
 @dataclass(frozen=True)
@@ -182,17 +225,59 @@ def state_id(user_id: str, station_id: str, fuel: str) -> str:
     return f"{user_id}:{station_id}:{fuel}"
 
 
-def detect_restocks(
-    subscriber: Subscriber, stations: dict[str, dict], states: dict[str, dict], seen_at: datetime
-) -> tuple[list[dict], list[dict]]:
+# Les trois événements, dans l'ordre où on les envoie. Chacun part dans son
+# propre webhook (`event_type` distinct), pour qu'une route Hermes puisse les
+# filtrer ou les acheminer différemment.
+RESTOCK, SHORTAGE, RISK = "restock", "shortage", "risk"
+EVENT_TYPES = {RESTOCK: "fuel_restock", SHORTAGE: "fuel_shortage", RISK: "fuel_shortage_risk"}
+
+# Une alerte de risque par (utilisateur × station × carburant) et par jour au
+# plus : une station souvent à sec resterait sinon « à risque » à chaque import,
+# soit 48 messages par jour.
+RISK_ALERT_COOLDOWN = timedelta(hours=24)
+
+
+def _event(station_id: str, station: dict, fuel: dict, **extra) -> dict:
+    return {
+        "stationId": station_id,
+        "brand": station.get("brand"),
+        "name": station.get("name"),
+        "address": station.get("address"),
+        "postcode": station.get("postcode"),
+        "city": station.get("city"),
+        "fuel": fuel["code"],
+        "price": fuel["price"],
+        "updatedAt": fuel["updatedAt"],
+        **extra,
+    }
+
+
+def detect_events(
+    subscriber: Subscriber,
+    stations: dict[str, dict],
+    states: dict[str, dict],
+    seen_at: datetime,
+    risks: dict[tuple[str, str], float] | None = None,
+    risk_threshold: float | None = None,
+) -> tuple[dict[str, list[dict]], dict[str, dict]]:
     """Compare les stations favorites d'un utilisateur au dernier état connu
     pour lui.
 
-    Renvoie ses réapprovisionnements — par station, puis dans l'ordre des
-    carburants — et les nouveaux états à enregistrer. Seuls les carburants
-    présents produisent un état : un absent laisse l'ancien en place.
+    Renvoie ses événements par type — par station, puis dans l'ordre des
+    carburants — et les nouveaux états à enregistrer, par `_id`. Seuls les
+    carburants présents produisent un état : un absent laisse l'ancien en place.
+
+    - **réapprovisionnement** : disponible, dernier état connu « en rupture » ;
+    - **rupture** : en rupture, dernier état connu « disponible » ;
+    - **risque** : disponible, risque prévu ≥ seuil, pas d'alerte de risque
+      depuis 24 h, et pas de réapprovisionnement à cet import (on vient
+      d'annoncer son retour : un second message dans la même minute brouille).
+
+    Un triplet vu pour la première fois n'alerte jamais : on ne sait pas d'où
+    il vient.
     """
-    restocks, updates = [], []
+    events: dict[str, list[dict]] = {RESTOCK: [], SHORTAGE: [], RISK: []}
+    updates: dict[str, dict] = {}
     for station_id in sorted(subscriber.station_ids):
         station = stations.get(station_id)
         if station is None:
@@ -203,36 +288,41 @@ def detect_restocks(
             key = state_id(subscriber.user_id, station_id, fuel["code"])
             known = states.get(key)
             was_short = known is not None and known["available"] is False
+            was_available = known is not None and known["available"] is True
+            risk_alerted_at = known.get("riskAlertedAt") if known else None
+
             if fuel["available"] and was_short:
-                restocks.append({
-                    "stationId": station_id,
-                    "brand": station.get("brand"),
-                    "name": station.get("name"),
-                    "address": station.get("address"),
-                    "postcode": station.get("postcode"),
-                    "city": station.get("city"),
-                    "fuel": fuel["code"],
-                    "price": fuel["price"],
-                    "updatedAt": fuel["updatedAt"],
-                    "shortageSince": known.get("shortageSince"),
-                })
+                events[RESTOCK].append(_event(station_id, station, fuel,
+                                              shortageSince=known.get("shortageSince")))
+            elif not fuel["available"] and was_available:
+                events[SHORTAGE].append(_event(station_id, station, fuel,
+                                               shortageSince=fuel.get("shortageSince")))
+            elif fuel["available"] and known is not None and risk_threshold is not None:
+                risk = (risks or {}).get((station_id, fuel["code"]))
+                cooled_down = risk_alerted_at is None or seen_at - risk_alerted_at >= RISK_ALERT_COOLDOWN
+                if risk is not None and risk >= risk_threshold and cooled_down:
+                    events[RISK].append(_event(station_id, station, fuel, risk=round(risk, 3)))
+                    risk_alerted_at = seen_at
+
             shortage_since = None
             if not fuel["available"]:
                 # Une rupture déclarée sans date garde celle déjà connue.
                 shortage_since = fuel.get("shortageSince") or (
                     known.get("shortageSince") if was_short else None
                 )
-            updates.append({
+            updates[key] = {
                 "_id": key,
                 "userId": subscriber.user_id,
                 "stationId": station_id,
                 "fuel": fuel["code"],
                 "available": fuel["available"],
                 "shortageSince": shortage_since,
+                "riskAlertedAt": risk_alerted_at,
                 "seenAt": seen_at,
-            })
-    restocks.sort(key=lambda r: (r["stationId"], FUEL_ORDER[r["fuel"]]))
-    return restocks, updates
+            }
+    for kind in events:
+        events[kind].sort(key=lambda r: (r["stationId"], FUEL_ORDER[r["fuel"]]))
+    return events, updates
 
 
 def _paris_tz():
@@ -250,6 +340,17 @@ def _local(value: datetime) -> str:
     return f"{local:%d/%m à %H:%M}{suffix}"
 
 
+def _station_line(r: dict) -> str:
+    who = r["brand"] or r["name"] or "Station"
+    where = ", ".join(p for p in (r["address"], f"{r['postcode']} {r['city']}".strip()) if p)
+    return f"• {FUEL_LABELS[r['fuel']]} — {who}, {where}"
+
+
+def _fuel_labels(events: list[dict]) -> str:
+    fuels = sorted({r["fuel"] for r in events}, key=FUEL_ORDER.__getitem__)
+    return ", ".join(FUEL_LABELS[code] for code in fuels)
+
+
 def format_summary(restocks: list[dict]) -> str:
     """Message prêt à envoyer tel quel (route Hermes en `deliver_only`).
 
@@ -258,18 +359,43 @@ def format_summary(restocks: list[dict]) -> str:
     part souvent par SMS.
     """
     stations = {r["stationId"] for r in restocks}
-    fuels = sorted({r["fuel"] for r in restocks}, key=FUEL_ORDER.__getitem__)
-    labels = ", ".join(FUEL_LABELS[code] for code in fuels)
-    lines = [f"⛽ {labels} de retour dans {len(stations)} station(s) favorite(s) :"]
+    lines = [f"⛽ {_fuel_labels(restocks)} de retour dans {len(stations)} station(s) favorite(s) :"]
     for r in restocks:
-        who = r["brand"] or r["name"] or "Station"
-        where = ", ".join(p for p in (r["address"], f"{r['postcode']} {r['city']}".strip()) if p)
         price = f"{r['price']:.3f} €".replace(".", ",")
-        line = f"• {FUEL_LABELS[r['fuel']]} — {who}, {where} — {price}"
+        line = f"{_station_line(r)} — {price}"
         if r["shortageSince"] is not None:
             line += f", en rupture depuis le {_local(r['shortageSince'])}"
         lines.append(line)
     return "\n".join(lines)
+
+
+def format_shortage_summary(shortages: list[dict]) -> str:
+    stations = {r["stationId"] for r in shortages}
+    lines = [f"⛔ Rupture de {_fuel_labels(shortages)} dans {len(stations)} station(s) favorite(s) :"]
+    for r in shortages:
+        line = _station_line(r)
+        if r["shortageSince"] is not None:
+            line += f" — depuis le {_local(r['shortageSince'])}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def format_risk_summary(risks: list[dict]) -> str:
+    """Le risque est une probabilité calibrée : « 60 % » veut dire qu'en
+    situation comparable, une rupture a suivi dans 6 cas sur 10. Le message le
+    dit en clair, sans promettre de certitude."""
+    stations = {r["stationId"] for r in risks}
+    lines = [f"⚠️ Risque de rupture de {_fuel_labels(risks)} dans les 24 h, "
+             f"{len(stations)} station(s) favorite(s) :"]
+    for r in risks:
+        lines.append(f"{_station_line(r)} — risque estimé {round(r['risk'] * 100)} %")
+    lines.append("Prévision statistique, pas une certitude : faites le plein si vous le pouvez.")
+    return "\n".join(lines)
+
+
+SUMMARIES = {RESTOCK: format_summary, SHORTAGE: format_shortage_summary, RISK: format_risk_summary}
+# Clé de la liste détaillée dans le corps du webhook.
+PAYLOAD_LISTS = {RESTOCK: "restocks", SHORTAGE: "shortages", RISK: "risks"}
 
 
 def _json_default(value):
@@ -287,12 +413,12 @@ def whatsapp_chat_id(phone: str) -> str:
     return f"{phone.removeprefix('+')}@s.whatsapp.net"
 
 
-def build_payload(subscriber: Subscriber, restocks: list[dict], imported_at: datetime) -> dict:
+def build_payload(subscriber: Subscriber, events: list[dict], imported_at: datetime, kind: str = RESTOCK) -> dict:
     """Corps du webhook. L'adresse e-mail de l'utilisateur n'y figure pas :
     l'agent n'a besoin que du numéro où envoyer le message."""
     return {
         # Champ lu par Hermes pour filtrer les routes par `events`.
-        "event_type": "fuel_restock",
+        "event_type": EVENT_TYPES[kind],
         "importedAt": imported_at,
         # Destinataire, au format E.164 — `deliver_extra.chat_id: "{to}"`
         # pour le SMS (Twilio) ou Signal.
@@ -302,9 +428,9 @@ def build_payload(subscriber: Subscriber, restocks: list[dict], imported_at: dat
         # `@s.whatsapp.net`) — `deliver_extra.chat_id: "{whatsappChatId}"`.
         "whatsappChatId": whatsapp_chat_id(subscriber.phone),
         "fuels": list(subscriber.fuels),
-        "count": len(restocks),
-        "summary": format_summary(restocks),
-        "restocks": restocks,
+        "count": len(events),
+        "summary": SUMMARIES[kind](events),
+        PAYLOAD_LISTS[kind]: events,
     }
 
 
@@ -313,16 +439,18 @@ def sign(secret: str, timestamp: int, body: bytes) -> str:
     return hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
 
 
-def request_id(subscriber: Subscriber, imported_at: datetime) -> str:
+def request_id(subscriber: Subscriber, imported_at: datetime, kind: str = RESTOCK) -> str:
     """Dérivé de l'import **et** du destinataire : Hermes ignore un
     identifiant déjà vu dans l'heure, donc un double envoi du même import ne
     notifie qu'une fois, sans pour autant confondre deux destinataires.
-    L'utilisateur y figure haché — l'en-tête finit dans les journaux de
+    Le type d'événement aussi : une rupture et un risque du même import sont
+    deux messages. L'utilisateur y figure haché — l'en-tête finit dans les journaux de
     l'agent. Le renvoi d'une alerte échouée, à l'import suivant, porte un
     nouvel identifiant : c'est voulu, Hermes ne doit pas le dédupliquer.
     """
     user = hashlib.sha256(subscriber.user_id.encode()).hexdigest()[:12]
-    return f"fuel-restock-{imported_at:%Y%m%dT%H%M%S}-{user}"
+    slug = EVENT_TYPES[kind].removeprefix("fuel_").replace("_", "-")
+    return f"fuel-{slug}-{imported_at:%Y%m%dT%H%M%S}-{user}"
 
 
 def send_webhook(url: str, secret: str, payload: dict, request_id: str) -> int:
@@ -350,52 +478,81 @@ def mask_phone(phone: str) -> str:
     return phone[:3] + "•" * max(len(phone) - 7, 0) + phone[-4:]
 
 
-def alert_restocks(db: Database, config: RestockConfig, imported_at: datetime) -> dict[str, list[dict]]:
+def watched_pairs(subs: list[Subscriber], stations: dict[str, dict]) -> list[tuple[str, str]]:
+    """(station, carburant) surveillés par au moins un utilisateur et
+    disponibles maintenant — les seuls dont on prévoit le risque."""
+    pairs = set()
+    for sub in subs:
+        for station_id in sub.station_ids:
+            for fuel in (stations.get(station_id) or {}).get("fuels", []):
+                if fuel["code"] in sub.fuels and fuel["available"]:
+                    pairs.add((station_id, fuel["code"]))
+    return sorted(pairs)
+
+
+def _revert(kind: str, events: list[dict], sub: Subscriber, updates: dict[str, dict], states: dict[str, dict]):
+    """Après un échec d'envoi : remet l'état de ces triplets tel qu'il était,
+    pour que l'alerte reparte au prochain import."""
+    for event in events:
+        key = state_id(sub.user_id, event["stationId"], event["fuel"])
+        if kind == RISK:
+            updates[key]["riskAlertedAt"] = (states.get(key) or {}).get("riskAlertedAt")
+        else:
+            # Réapprovisionnement : il reste « en rupture » ; rupture : il
+            # reste « disponible ». Dans les deux cas, l'ancien état.
+            updates.pop(key, None)
+
+
+def alert_fuel_events(
+    db: Database,
+    config: RestockConfig,
+    imported_at: datetime,
+    risks: dict[tuple[str, str], float] | None = None,
+) -> dict[str, dict[str, list[dict]]]:
     """Détecte, notifie chaque destinataire, puis met à jour
-    `fuel_watch_state`. Renvoie les réapprovisionnements détectés, par
-    utilisateur (seuls ceux qui en ont un).
+    `fuel_watch_state`. Renvoie les événements détectés, par utilisateur puis
+    par type (seuls les utilisateurs et les types non vides).
+
+    `risks` : risque de rupture à 24 h par (station, carburant), cf.
+    `shortage_forecast.predict` ; None (pas de modèle) → pas d'alerte de risque.
 
     À appeler une fois, après l'import. N'envoie rien à un utilisateur sans
-    réapprovisionnement : il n'est dérangé que pour un événement réel. Ne lève
-    jamais sur un échec d'envoi — cf. la docstring du module.
+    événement : il n'est dérangé que pour un fait nouveau. Ne lève jamais sur
+    un échec d'envoi — cf. la docstring du module.
     """
     collection = db["fuel_watch_state"]
     subs = subscribers(db)
-    station_ids = sorted({sid for sub in subs for sid in sub.station_ids})
-    projection = {"fuels": 1, "brand": 1, "name": 1, "address": 1, "city": 1, "postcode": 1}
-    stations = {
-        doc["_id"]: doc
-        for doc in db["fuel_stations"].find({"_id": {"$in": station_ids}}, projection)
-    }
+    stations = watched_stations(db, subs)
     states = {doc["_id"]: doc for doc in collection.find({})}
+    threshold = config.risk_threshold if risks is not None else None
 
     watched: set[str] = set()
     all_updates: list[dict] = []
-    detected: dict[str, list[dict]] = {}
+    detected: dict[str, dict[str, list[dict]]] = {}
     sent = failed = 0
     for sub in subs:
         watched |= sub.watched()
-        restocks, updates = detect_restocks(sub, stations, states, imported_at)
-        if restocks:
-            detected[sub.user_id] = restocks
-            payload = build_payload(sub, restocks, imported_at)
+        events, updates = detect_events(sub, stations, states, imported_at, risks, threshold)
+        for kind, kind_events in events.items():
+            if not kind_events:
+                continue
+            detected.setdefault(sub.user_id, {})[kind] = kind_events
+            payload = build_payload(sub, kind_events, imported_at, kind)
             try:
                 status = send_webhook(
-                    config.webhook_url, config.webhook_secret, payload, request_id(sub, imported_at)
+                    config.webhook_url, config.webhook_secret, payload, request_id(sub, imported_at, kind)
                 )
                 sent += 1
-                print(f"restock: alerte envoyée à {mask_phone(sub.phone)} (HTTP {status})")
+                print(f"{EVENT_TYPES[kind]}: alerte envoyée à {mask_phone(sub.phone)} (HTTP {status})")
             except Exception as error:  # noqa: BLE001 — l'import des prix prime sur l'alerte
                 failed += 1
-                print(f"restock: échec de l'envoi à {mask_phone(sub.phone)} ({error}), "
+                print(f"{EVENT_TYPES[kind]}: échec de l'envoi à {mask_phone(sub.phone)} ({error}), "
                       "nouvel essai au prochain import")
-                # Ces carburants restent « en rupture » pour lui : l'alerte repartira.
-                unsent = {state_id(sub.user_id, r["stationId"], r["fuel"]) for r in restocks}
-                updates = [u for u in updates if u["_id"] not in unsent]
-        all_updates.extend(updates)
+                _revert(kind, kind_events, sub, updates, states)
+        all_updates.extend(updates.values())
 
     stale = sorted(set(states) - watched)
-    print(f"restock: {len(subs)} destinataire(s), {len(watched)} couple(s) station × carburant "
+    print(f"alertes carburant: {len(subs)} destinataire(s), {len(watched)} couple(s) station × carburant "
           f"surveillé(s), {sent} alerte(s) envoyée(s), {failed} échec(s)")
 
     if all_updates:
@@ -405,3 +562,36 @@ def alert_restocks(db: Database, config: RestockConfig, imported_at: datetime) -
         # sans `userId`), qui ne correspondent plus à aucun triplet.
         collection.delete_many({"_id": {"$in": stale}})
     return detected
+
+
+def watched_stations(db: Database, subs: list[Subscriber]) -> dict[str, dict]:
+    station_ids = sorted({sid for sub in subs for sid in sub.station_ids})
+    projection = {"fuels": 1, "brand": 1, "name": 1, "address": 1, "city": 1, "postcode": 1}
+    return {
+        doc["_id"]: doc
+        for doc in db["fuel_stations"].find({"_id": {"$in": station_ids}}, projection)
+    }
+
+
+def predict_watched_risks(db: Database, imported_at: datetime) -> dict[tuple[str, str], float] | None:
+    """Risque à 24 h des couples surveillés, ou None sans modèle en service.
+
+    Ne lève jamais : une prévision ratée ne doit priver personne des alertes
+    de rupture et de réapprovisionnement, qui n'en dépendent pas.
+    """
+    try:
+        from src.fuel.shortage_forecast.model import load_model
+        from src.fuel.shortage_forecast.predict import predict_risks
+
+        model = load_model(db, imported_at)
+        if model is None:
+            print("shortage-risk: aucun modèle en service, pas d'alerte de risque")
+            return None
+        subs = subscribers(db)
+        risks = predict_risks(db, model, watched_pairs(subs, watched_stations(db, subs)), imported_at)
+        high = sum(1 for p in risks.values() if p >= DEFAULT_RISK_THRESHOLD)
+        print(f"shortage-risk: {len(risks)} couple(s) évalué(s), {high} à {DEFAULT_RISK_THRESHOLD:.0%} ou plus")
+        return risks
+    except Exception as error:  # noqa: BLE001
+        print(f"shortage-risk: prévision impossible ({error!r}), pas d'alerte de risque")
+        return None

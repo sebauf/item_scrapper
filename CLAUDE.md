@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Stack
 
 - **Scrapper** (`scrapper/`): Node.js + TypeScript, clean architecture (domain / application / infrastructure), [Crawlee](https://crawlee.dev/) with `PlaywrightCrawler`, MongoDB driver v6
-- **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`
-- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (every 30 min)
+- **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`, and trains a scikit-learn model forecasting fuel shortages 24 h ahead
+- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (every 30 min) and a daily shortage-model training DAG
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
 - **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4, Auth.js v5 (Google login, mandatory) — **no DB driver**; calls the backend API server-side (`BACKEND_URL`), signing each call with the user's identity
 - **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend, on behalf of one configured account (`MCP_USER_EMAIL`)
@@ -53,6 +53,7 @@ python -m src.maintenance.purge_dead_products   # purge only (deletes data)
 python -m src.refine.build_price_history        # refine only
 python -m src.scoring.score                     # score only
 python -m src.fuel.import_stations              # import fuel prices (calls data.economie.gouv.fr)
+python -m src.fuel.shortage_forecast.train      # train the 24 h shortage model (downloads the yearly archives, ~5 min)
 
 pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
 python -m pytest                      # unit tests — no MongoDB needed
@@ -219,7 +220,14 @@ the task runs in that same Pod.
 jitter (public API, no anti-bot), `max_active_runs=1` (two concurrent imports
 would delete each other's stations).
 
-Both DAGs build their container tasks through `airflow/dags/pipeline_tasks.py`
+`airflow/dags/fuel_shortage_model_dag.py` — `17 5 * * *` **Europe/Paris**,
+single task `train_shortage_model` (`python -m src.fuel.shortage_forecast.train`):
+after the ministry regenerates its yearly archive (~23:40), resyncs
+`fuel_shortages` on it and retrains the shortage model. 45 min timeout, one
+retry after 30 min. Independent of the import: a failure only stops the *risk*
+alert (and only once the model is 7 days old).
+
+All DAGs build their container tasks through `airflow/dags/pipeline_tasks.py`
 (listed in `.airflowignore`; importable because Airflow puts `dags_folder` on
 `sys.path`).
 
@@ -370,7 +378,8 @@ with `timezone=UTC`.
   truncated, the import keeps the brands already stored — prices still update.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
-- `pipeline/src/fuel/restock_alerts.py` — **restock alert, per user**, opt-in
+- `pipeline/src/fuel/restock_alerts.py` — **fuel alerts, per user**: restock,
+  shortage and shortage *risk* (see below for the latter two); opt-in
   (off unless `FUEL_RESTOCK_WEBHOOK_URL` is set; `FUEL_RESTOCK_WEBHOOK_SECRET`
   is mandatory with it — unsigned, the route would text any number). A user is
   watched only if they have **all three**: a phone (`user_profiles.phone`,
@@ -404,6 +413,48 @@ with `timezone=UTC`.
   state at « shortage », so their alert is retried on the next import (every
   30 min). In k8s these vars live in `secrets.env` (task Pods only read the
   Secret); in Docker, `pipeline_tasks.py` relays them from the Airflow env.
+  Two more events on the same webhook, same state doc, same recipients — each
+  sent as its **own** webhook with its own `event_type` (add them to the Hermes
+  route's `events`): **`fuel_shortage`** = a fuel now in shortage whose last
+  known state is available (mirror of the restock: first sighting / absent
+  fuel never alert; a failed send keeps the state « available » → retried);
+  **`fuel_shortage_risk`** = an available fuel whose forecast risk of a
+  shortage starting within 24 h is ≥ `FUEL_SHORTAGE_RISK_THRESHOLD` (default
+  0.5, `off` disables only this one), at most once per 24 h per triplet
+  (`riskAlertedAt` in `fuel_watch_state`), never in the same import as its
+  restock. No model in service (missing, > 7 days old, other features or other
+  scikit-learn version) → no risk alert, the other two keep working.
+- `pipeline/src/fuel/shortage_forecast/` — **the shortage model** (the
+  project's only ML; the earlier cross-product price model was removed in #7).
+  Target: « a shortage of this fuel starts at this station within 24 h »
+  (closed shortages < 1 h are noise, dropped on both sides). Training data =
+  the ministry's **yearly archives** (`donnees.roulez-eco.fr/opendata/annee/<y>`,
+  same declarations as the live feed, every price change and every shortage
+  with its end; **Paris local times**, converted to UTC; `definitive` and
+  > 30-day shortages dropped). Previous + current year (the current one is
+  regenerated nightly). One snapshot per (station × fuel sold) per day at a
+  random time, only while the fuel is available; negatives subsampled
+  (`DEFAULT_NEGATIVE_RATE`) and reweighted, so probabilities stay real.
+  Features (`features.py`, **one function for training and serving**, reading
+  only the past of `t`; tested for leakage and for archive ↔ Mongo parity):
+  the pair's shortages in 7/30/180 days, hours since the last one ended and
+  since the last price change, the station's other fuels in shortage, shares of
+  stations in shortage / starting one in the département and in France, Paris
+  hour and weekday, fuel, road/motorway. `HistGradientBoostingClassifier`,
+  examples weighted by age (e-folding 60 days), **Platt calibration** on the
+  last 21 days (the 2026 crisis multiplied the base rate ×17: uncalibrated, the
+  model said 87 % for 58 % real). **Temporal backtest**, never a random split:
+  train | 1 d | calibration 21 d | 1 d | test 28 d. Put in service **only if
+  it beats the naive baseline** (pair's 30-day shortage frequency) on both
+  average precision and Brier; otherwise the current model stays and the
+  refusal is stored (`_id: "last_rejected"`). Measured on the real archive
+  (test 06/10 → 03/11/2026, base rate 3.5 %/day): AUC 0.956, average
+  precision 0.51 vs 0.47 naive, Brier 0.0229 vs 0.0234; at 0.5, **55 % of
+  risk alerts are followed by a shortage, 42 % of shortages are announced**.
+  The model is a pickle in `fuel_shortage_models` (no PVC): whoever can write
+  that collection can run code in pipeline Pods. `scikit-learn` is pinned in
+  `requirements.txt` for that reason too (a pickle is only guaranteed readable
+  by the version that wrote it).
 - `backend/src/modules/fuel/` — reads `fuel_stations`, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
   sort requires `fuel`; `brand` = exact unified label, filtered inside `$geoNear`
@@ -444,7 +495,7 @@ with `timezone=UTC`.
 - `src/app/keywords/page.tsx` — tracked keywords, add/remove via Server Actions
 - `src/app/keyword/[slug]/page.tsx` — product grid, server-side filter/sort/paginate
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
-- `src/app/profile/page.tsx` + `src/components/ProfileForm.tsx` — phone number + watched fuels for the restock alert, and its status (`fuelAlerts.missing` from the backend); reached from the avatar in `UserMenu`
+- `src/app/profile/page.tsx` + `src/components/ProfileForm.tsx` — phone number + watched fuels for the fuel alerts (restock, shortage, 24 h risk), and its status (`fuelAlerts.missing` from the backend); reached from the avatar in `UserMenu`
 - `src/app/fuel/page.tsx` + `src/components/FuelExplorer.tsx` / `FuelMap.tsx` — fuel-price map; `src/lib/fuel.ts` holds its URL parsing and display rules
 - `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
@@ -496,7 +547,9 @@ keywords, favourites and tracked URLs, and nothing else.
 - `favorites` — one doc per (user, product); `userId`, `url`, `addedAt`; unique index `userId_url` (partial on `userId` existing). Written by the backend; `url` read by the purge
 - `favorite_stations` — one doc per (user, station); `userId`, `stationId` (official id), `addedAt`; unique index `userId_stationId`. Legacy docs keep `_id` = station id. Written only by the backend (star on the fuel map), read by the pipeline's restock alert (each user's own stations). Not purged when a station leaves the feed (it becomes useful again if the station comes back)
 - `user_profiles` — one doc per user, `_id` = user id (email); `phone` (E.164 or null), `alertFuels[]` (fuel codes), `updatedAt`. Written only by the backend (profile page, `PUT /api/v1/profile`), read by the restock alert (recipient + fuels)
-- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `seenAt`. Written only by the restock alert (`restock_alerts.py`), after each import
+- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`restock_alerts.py`), after each import
+- `fuel_shortages` — shortage history, one doc per episode, `_id = "<stationId>:<fuel>:<start ISO>"`; fields: `stationId`, `fuel`, `start`, `end` (null while ongoing), `source` (`live` | `archive`). Opened/closed by every fuel import (`episodes.record_live`, independent of the alert config), realigned nightly on the official archive (`sync_from_archive`: the archive wins over the period it covers, live episodes it doesn't know there are deleted), 200-day retention. Read by the risk forecast
+- `fuel_shortage_models` — `_id: "current"` = the model in service (`payload` pickle, `trainedAt`, `dataUntil`, `metrics.test` / `metrics.baseline`, `featureColumns`, `sklearnVersion`); `_id: "last_rejected"` = last refused training and why. Written only by `shortage_forecast.train`
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 
