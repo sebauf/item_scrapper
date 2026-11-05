@@ -33,6 +33,9 @@ export interface FuelStationRow {
   fuels: FuelPriceRow[];
 }
 
+/** Une station sans distance : lue par identifiant, pas autour d'un point. */
+export type StationRow = Omit<FuelStationRow, 'distanceKm'>;
+
 export interface BrandCount {
   brand: string;
   /** Stations de l'enseigne dans le rayon (et vendant le carburant demandé). */
@@ -62,4 +65,10 @@ export abstract class FuelStationReadModel {
 
   /** Vrai si la station figure dans le dernier import du flux. */
   abstract exists(stationId: string): Promise<boolean>;
+
+  /**
+   * Stations du dernier import parmi `stationIds`, dans un ordre quelconque.
+   * Un identifiant absent du flux est simplement absent du résultat.
+   */
+  abstract findByIds(stationIds: string[]): Promise<StationRow[]>;
 }

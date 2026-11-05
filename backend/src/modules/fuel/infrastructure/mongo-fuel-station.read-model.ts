@@ -7,6 +7,7 @@ import {
   FuelStationReadModel,
   FuelStationRow,
   NearbyStations,
+  StationRow,
 } from '../application/ports/fuel-station.read-model';
 import { nearBrandsPipeline, nearStationsPipeline } from './fuel-station.stages';
 
@@ -27,6 +28,14 @@ export interface FuelStationDocument {
 }
 
 export function toStationRow(doc: FuelStationDocument): FuelStationRow {
+  return {
+    ...toStation(doc),
+    // Au mètre près : au-delà, c'est du bruit pour un trajet en voiture.
+    distanceKm: Math.round(doc.distanceMeters ?? 0) / 1000,
+  };
+}
+
+export function toStation(doc: FuelStationDocument): StationRow {
   const [longitude, latitude] = doc.location.coordinates;
   return {
     id: doc._id,
@@ -38,8 +47,6 @@ export function toStationRow(doc: FuelStationDocument): FuelStationRow {
     roadType: doc.roadType ?? null,
     latitude,
     longitude,
-    // Au mètre près : au-delà, c'est du bruit pour un trajet en voiture.
-    distanceKm: Math.round(doc.distanceMeters ?? 0) / 1000,
     fuels: (doc.fuels ?? []).map((fuel) => ({
       code: fuel.code,
       price: fuel.price ?? null,
@@ -88,5 +95,14 @@ export class MongoFuelStationReadModel extends FuelStationReadModel {
       .collection<FuelStationDocument>('fuel_stations')
       .findOne({ _id: stationId }, { projection: { _id: 1 } });
     return doc !== null;
+  }
+
+  async findByIds(stationIds: string[]): Promise<StationRow[]> {
+    if (stationIds.length === 0) return [];
+    const docs = await this.db
+      .collection<FuelStationDocument>('fuel_stations')
+      .find({ _id: { $in: stationIds } })
+      .toArray();
+    return docs.map(toStation);
   }
 }

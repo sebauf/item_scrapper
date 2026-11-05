@@ -424,6 +424,13 @@ with `timezone=UTC`.
   (`riskAlertedAt` in `fuel_watch_state`), never in the same import as its
   restock. No model in service (missing, > 7 days old, other features or other
   scikit-learn version) → no risk alert, the other two keep working.
+  The risks come from `shortage_forecast/forecasts.py` (`publish_forecasts`),
+  run after **every** import whether alerts are configured or not: one
+  prediction for every (favourite station of any user × fuel **available**),
+  written to `fuel_shortage_forecasts` for the backend (the model is a Python
+  pickle, the backend only reads its output) and handed to the alert, which
+  picks the pairs it watches. No model → the collection is emptied; a failed
+  prediction leaves it untouched (the backend drops forecasts > 2 h old).
 - `pipeline/src/fuel/shortage_forecast/` — **the shortage model** (the
   project's only ML; the earlier cross-product price model was removed in #7).
   Target: « a shortage of this fuel starts at this station within 24 h »
@@ -468,6 +475,18 @@ with `timezone=UTC`.
   `GET /api/v1/fuel-stations/favorites`, `PUT` / `DELETE
   /api/v1/fuel-stations/favorites/:id` (idempotent, 204; `PUT` → 404 if the
   station is not in the feed, 400 if the id is not digits).
+- **« Mes stations »** — `GET /api/v1/fuel-stations/favorites/details`
+  (`ListFavoriteStationDetailsQuery`): the user's favourite stations, most
+  recent first, with prices, freshness and, per available fuel, a
+  `shortageOutlook` (`fuel/domain/shortage-forecast-policy.ts`): `risk`,
+  `level` (`low` < 0.15 ≤ `elevated` < 0.5 ≤ `likely`, 0.5 = the alert's
+  default), `computedAt`, `horizonEnd` = computedAt + 24 h. The model predicts
+  « a shortage starts within 24 h », not a date: the only honest date is the
+  end of that horizon (« rupture probable **avant** … »). `null` for a fuel
+  already in shortage, without a published forecast, or one older than
+  `FORECAST_MAX_AGE_HOURS` (2). A favourite whose station left the feed comes
+  back with `station: null`. Page: `frontend/src/app/fuel/favorites/page.tsx`
+  (linked from `/fuel`), dates shown in Europe/Paris (server renders in UTC).
 - **Freshness** (`fuel/domain/freshness-policy.ts`, `STALE_AFTER_HOURS = 72`) is
   judged on the station's own declaration date (`updatedAt`), never on our import
   date — and stale prices are **flagged, not hidden** (an old price may simply be
@@ -497,6 +516,7 @@ with `timezone=UTC`.
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
 - `src/app/profile/page.tsx` + `src/components/ProfileForm.tsx` — phone number + watched fuels for the fuel alerts (restock, shortage, 24 h risk), and its status (`fuelAlerts.missing` from the backend); reached from the avatar in `UserMenu`
 - `src/app/fuel/page.tsx` + `src/components/FuelExplorer.tsx` / `FuelMap.tsx` — fuel-price map; `src/lib/fuel.ts` holds its URL parsing and display rules
+- `src/app/fuel/favorites/page.tsx` + `src/components/FavoriteStationCard.tsx` — « Mes stations »: prices of the user's favourite stations + 24 h shortage forecast per fuel
 - `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
@@ -549,6 +569,7 @@ keywords, favourites and tracked URLs, and nothing else.
 - `user_profiles` — one doc per user, `_id` = user id (email); `phone` (E.164 or null), `alertFuels[]` (fuel codes), `updatedAt`. Written only by the backend (profile page, `PUT /api/v1/profile`), read by the restock alert (recipient + fuels)
 - `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`restock_alerts.py`), after each import
 - `fuel_shortages` — shortage history, one doc per episode, `_id = "<stationId>:<fuel>:<start ISO>"`; fields: `stationId`, `fuel`, `start`, `end` (null while ongoing), `source` (`live` | `archive`). Opened/closed by every fuel import (`episodes.record_live`, independent of the alert config), realigned nightly on the official archive (`sync_from_archive`: the archive wins over the period it covers, live episodes it doesn't know there are deleted), 200-day retention. Read by the risk forecast
+- `fuel_shortage_forecasts` — published 24 h shortage risk, one doc per (favourite station × available fuel), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `risk` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`shortage_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
 - `fuel_shortage_models` — `_id: "current"` = the model in service (`payload` pickle, `trainedAt`, `dataUntil`, `metrics.test` / `metrics.baseline`, `featureColumns`, `sklearnVersion`); `_id: "last_rejected"` = last refused training and why. Written only by `shortage_forecast.train`
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`

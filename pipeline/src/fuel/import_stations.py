@@ -232,8 +232,9 @@ if __name__ == "__main__":
     from pymongo import MongoClient
 
     from src.config import DB_NAME, MONGODB_URI
-    from src.fuel.restock_alerts import RestockConfig, alert_fuel_events, predict_watched_risks
+    from src.fuel.restock_alerts import RestockConfig, alert_fuel_events
     from src.fuel.shortage_forecast import episodes
+    from src.fuel.shortage_forecast.forecasts import publish_forecasts
 
     client = MongoClient(MONGODB_URI)
     records = fetch_records()
@@ -260,6 +261,10 @@ if __name__ == "__main__":
     except Exception as error:  # noqa: BLE001 — les prix sont importés, c'est l'essentiel
         print(f"fuel_shortages: mise à jour impossible ({error!r})")
 
+    # Risque de rupture à 24 h des stations favorites : publié pour la page
+    # « Mes stations », même sans alerte configurée, puis relu par l'alerte.
+    # Après `record_live` : la prévision lit les ruptures de cet import.
+    risks = publish_forecasts(db, imported_at)
+
     if restock:
-        risks = predict_watched_risks(db, imported_at) if restock.risk_threshold is not None else None
-        alert_fuel_events(db, restock, imported_at, risks)
+        alert_fuel_events(db, restock, imported_at, risks if restock.risk_threshold is not None else None)

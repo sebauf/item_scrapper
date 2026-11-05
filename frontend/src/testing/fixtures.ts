@@ -1,4 +1,12 @@
-import type { FuelPrice, FuelStation, ProductSummary, Profile } from '@/lib/api';
+import type {
+  FavoriteFuel,
+  FavoriteStationDetails,
+  FavoriteStationInfo,
+  FuelPrice,
+  FuelStation,
+  ProductSummary,
+  Profile,
+} from '@/lib/api';
 
 /**
  * Produit de référence pour les tests de rendu.
@@ -56,6 +64,39 @@ export function aFuelStation(overrides: Partial<FuelStation> = {}): FuelStation 
     fuels: [aFuelPrice()],
     isFavorite: false,
     ...overrides,
+  };
+}
+
+/** Carburant d'une station favorite, sans prévision par défaut. */
+export function aFavoriteFuel(overrides: Partial<FavoriteFuel> = {}): FavoriteFuel {
+  return { ...aFuelPrice(), shortageOutlook: null, ...overrides };
+}
+
+export function aFavoriteStation(
+  overrides: Partial<Omit<FavoriteStationDetails, 'station'>> & {
+    station?: Partial<FavoriteStationInfo> | null;
+  } = {},
+): FavoriteStationDetails {
+  const { station, ...rest } = overrides;
+  return {
+    id: '69003001',
+    addedAt: '2026-10-20T10:00:00.000Z',
+    station:
+      station === null
+        ? null
+        : {
+            brand: 'TotalEnergies',
+            name: 'TotalEnergies Lyon Félix Faure',
+            address: '12 avenue Félix Faure',
+            city: 'Lyon',
+            postcode: '69003',
+            roadType: 'R',
+            latitude: 45.75938,
+            longitude: 4.85491,
+            fuels: [aFavoriteFuel()],
+            ...station,
+          },
+    ...rest,
   };
 }
 

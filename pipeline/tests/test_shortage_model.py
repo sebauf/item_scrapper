@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.fuel import restock_alerts
 from src.fuel.import_stations import import_stations
+from src.fuel.shortage_forecast import forecasts
 from src.fuel.shortage_forecast import model as module
 from src.fuel.shortage_forecast.dataset import Dataset
 from src.fuel.shortage_forecast.features import FEATURE_COLUMNS
@@ -135,45 +135,87 @@ def test_sans_modele_rien(db):
     assert load_model(db, NOW) is None
 
 
-# --- prévision des stations surveillées -----------------------------------------
+# --- prévisions publiées (stations favorites) ------------------------------------
 
 
-def watched(db):
-    db["user_profiles"].insert_one({"_id": "alice@example.com", "phone": "+33612345678",
-                                    "alertFuels": ["gazole"]})
-    db["favorite_stations"].insert_one({"userId": "alice@example.com", "stationId": "1", "addedAt": NOW})
-    import_stations(db, [{"id": "1", "latitude": "4575938", "longitude": "485491", "cp": "69003",
-                          "adresse": "x", "ville": "Lyon", "gazole_prix": 1.9,
-                          "gazole_maj": "2026-10-26T07:00:00+00:00"}], now=NOW)
+def favorites(db):
+    """Alice a mis en favori la station 1 (gazole disponible, E10 en rupture),
+    Bob la station 2 ; la station 3 n'est favorite de personne, et la favorite
+    historique de la 4 n'a pas de propriétaire."""
+    db["favorite_stations"].insert_many([
+        {"userId": "alice@example.com", "stationId": "1", "addedAt": NOW},
+        {"userId": "bob@example.com", "stationId": "2", "addedAt": NOW},
+        {"_id": "4", "addedAt": NOW},
+    ])
+
+    def station(sid, **fuels):
+        return {"id": sid, "latitude": "4575938", "longitude": "485491", "cp": "69003",
+                "adresse": "x", "ville": "Lyon", **fuels}
+
+    import_stations(db, [
+        station("1", gazole_prix=1.9, gazole_maj="2026-10-26T07:00:00+00:00",
+                e10_rupture_type="temporaire", e10_rupture_debut="2026-10-26T06:00:00+00:00"),
+        station("2", sp98_prix=2.0, sp98_maj="2026-10-26T07:00:00+00:00"),
+        station("3", gazole_prix=1.8, gazole_maj="2026-10-26T07:00:00+00:00"),
+        station("4", gazole_prix=1.8, gazole_maj="2026-10-26T07:00:00+00:00"),
+    ], now=NOW)
 
 
-def test_prevoit_le_risque_des_couples_surveilles(db, trained):
-    watched(db)
+def test_couples_prevus_carburants_disponibles_des_favorites_de_tous(db):
+    favorites(db)
+
+    assert forecasts.favorite_pairs(db) == [("1", "gazole"), ("2", "sp98")]
+
+
+def test_publie_le_risque_des_favorites(db, trained):
+    favorites(db)
     save_model(db, trained, data_until=NOW, trained_at=NOW)
 
-    risks = restock_alerts.predict_watched_risks(db, NOW)
+    risks = forecasts.publish_forecasts(db, NOW)
 
-    assert list(risks) == [("1", "gazole")]
-    assert 0 <= risks[("1", "gazole")] <= 1
-
-
-def test_sans_modele_pas_de_prevision(db):
-    watched(db)
-
-    assert restock_alerts.predict_watched_risks(db, NOW) is None
+    assert sorted(risks) == [("1", "gazole"), ("2", "sp98")]
+    doc = db["fuel_shortage_forecasts"].find_one({"_id": "1:gazole"})
+    assert doc["stationId"] == "1" and doc["fuel"] == "gazole"
+    assert doc["computedAt"] == NOW and doc["horizonHours"] == 24
+    assert doc["risk"] == round(risks[("1", "gazole")], 3)
+    assert 0 <= doc["risk"] <= 1
 
 
-def test_une_prevision_qui_echoue_ne_leve_pas(db, trained, monkeypatch, capsys):
-    watched(db)
+def test_une_nouvelle_publication_remplace_l_ancienne(db, trained):
+    favorites(db)
     save_model(db, trained, data_until=NOW, trained_at=NOW)
+    forecasts.publish_forecasts(db, NOW)
+    db["favorite_stations"].delete_one({"userId": "bob@example.com"})
+
+    later = NOW + timedelta(minutes=30)
+    forecasts.publish_forecasts(db, later)
+
+    docs = list(db["fuel_shortage_forecasts"].find())
+    assert [d["_id"] for d in docs] == ["1:gazole"]
+    assert docs[0]["computedAt"] == later
+
+
+def test_sans_modele_les_previsions_sont_retirees(db):
+    favorites(db)
+    db["fuel_shortage_forecasts"].insert_one({"_id": "1:gazole", "risk": 0.9, "computedAt": NOW})
+
+    assert forecasts.publish_forecasts(db, NOW) is None
+    assert db["fuel_shortage_forecasts"].count_documents({}) == 0
+
+
+def test_une_prevision_qui_echoue_ne_leve_pas_et_ne_touche_a_rien(db, trained, monkeypatch, capsys):
+    favorites(db)
+    save_model(db, trained, data_until=NOW, trained_at=NOW)
+    db["fuel_shortage_forecasts"].insert_one({"_id": "1:gazole", "risk": 0.9, "computedAt": NOW})
 
     def broken(*args, **kwargs):
         raise RuntimeError("boom")
 
     monkeypatch.setattr("src.fuel.shortage_forecast.predict.compute_features", broken)
 
-    assert restock_alerts.predict_watched_risks(db, NOW) is None
+    assert forecasts.publish_forecasts(db, NOW) is None
     assert "prévision impossible" in capsys.readouterr().out
+    assert db["fuel_shortage_forecasts"].count_documents({}) == 1
 
 
 def test_les_constantes_de_decoupage_sont_coherentes():

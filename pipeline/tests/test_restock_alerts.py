@@ -628,15 +628,6 @@ def test_lit_le_seuil_de_risque(raw, expected):
     assert RestockConfig.from_env(environ).risk_threshold == expected
 
 
-def test_watched_pairs_ne_garde_que_les_carburants_surveilles_et_disponibles(db):
-    profile(db, fuels=("gazole", "e10"))
-    favorite(db, 1, 2)
-    import_stations(db, [record(1, e10_prix=1.8), in_shortage(2)], now=NOW)
-    subs = subscribers(db)
-
-    assert module.watched_pairs(subs, module.watched_stations(db, subs)) == [("1", "e10"), ("1", "gazole")]
-
-
 def test_les_identifiants_de_requete_distinguent_les_types():
     a = Subscriber(ALICE, ALICE_PHONE, ("gazole",), frozenset({"1"}))
 

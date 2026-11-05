@@ -88,7 +88,7 @@ function toView(station: FuelStationRow, now: Date, favoriteIds: Set<string>): F
   };
 }
 
-function toFuelView(fuel: FuelPriceRow, now: Date): FuelPriceView {
+export function toFuelView(fuel: FuelPriceRow, now: Date): FuelPriceView {
   return {
     code: fuel.code,
     price: fuel.price,
