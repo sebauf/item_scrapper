@@ -2,3 +2,7 @@ pymongo==4.10.1
 pandas==2.2.3
 numpy==2.4.6
 python-dotenv==1.0.1
+# Prévision des ruptures de carburant (src/fuel/shortage_forecast). Version
+# figée : le modèle est stocké sérialisé, et un pickle scikit-learn n'est
+# garanti relisible que par la version qui l'a écrit (cf. model.load_model).
+scikit-learn==1.9.1

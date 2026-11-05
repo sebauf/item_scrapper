@@ -42,7 +42,8 @@ export function ProfileForm({ profile }: { profile: Profile }) {
         {active ? (
           <p>
             <span className="font-semibold">Alertes actives.</span> Vous recevrez un message au{' '}
-            {profile.phone} quand un carburant surveillé revient dans{' '}
+            {profile.phone} quand un carburant surveillé tombe en rupture, risque de l’être dans
+            les 24 h, ou revient dans{' '}
             {stations > 1 ? `l’une de vos ${stations} stations favorites` : 'votre station favorite'}.
           </p>
         ) : (

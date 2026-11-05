@@ -20,7 +20,7 @@ from src.fuel.import_stations import import_stations
 from src.fuel.restock_alerts import (
     RestockConfig,
     Subscriber,
-    alert_restocks,
+    alert_fuel_events,
     format_summary,
     mask_phone,
     request_id,
@@ -112,8 +112,12 @@ def run(db, *imports):
     for i, records in enumerate(imports):
         now = NOW + i * STEP
         import_stations(db, records, now=now)
-        detected = alert_restocks(db, CONFIG, now)
+        detected = restocks_of(alert_fuel_events(db, CONFIG, now))
     return detected
+
+
+def restocks_of(detected):
+    return {user: events["restock"] for user, events in detected.items() if "restock" in events}
 
 
 @pytest.fixture
@@ -378,10 +382,10 @@ def test_signature_generic_v2():
 
 def test_envoie_un_webhook_signe_au_numero_de_l_utilisateur(alice, sent):
     import_stations(alice, [in_shortage(1)], now=NOW)
-    alert_restocks(alice, CONFIG, NOW)
+    alert_fuel_events(alice, CONFIG, NOW)
     import_stations(alice, [record(1)], now=LATER)
 
-    alert_restocks(alice, CONFIG, LATER)
+    alert_fuel_events(alice, CONFIG, LATER)
 
     assert len(sent) == 1
     request = sent[0]
@@ -418,11 +422,11 @@ def test_un_echec_d_envoi_garde_la_rupture_et_reessaie_au_prochain_import(alice,
         raise URLError("connection refused")
 
     import_stations(alice, [in_shortage(1)], now=NOW)
-    alert_restocks(alice, CONFIG, NOW)
+    alert_fuel_events(alice, CONFIG, NOW)
     import_stations(alice, [record(1)], now=LATER)
     monkeypatch.setattr(module, "urlopen", failing_urlopen)
 
-    assert len(alert_restocks(alice, CONFIG, LATER)[ALICE]) == 1
+    assert len(alert_fuel_events(alice, CONFIG, LATER)[ALICE]["restock"]) == 1
     out = capsys.readouterr().out
     assert "nouvel essai" in out
     assert ALICE_PHONE not in out  # numéro masqué dans les journaux
@@ -432,7 +436,7 @@ def test_un_echec_d_envoi_garde_la_rupture_et_reessaie_au_prochain_import(alice,
     monkeypatch.setattr(module, "urlopen", lambda request, timeout: calls.append(request) or FakeResponse())
     import_stations(alice, [record(1)], now=LATER + STEP)
 
-    assert len(alert_restocks(alice, CONFIG, LATER + STEP)[ALICE]) == 1
+    assert len(alert_fuel_events(alice, CONFIG, LATER + STEP)[ALICE]["restock"]) == 1
     assert len(calls) == 1
     assert alice["fuel_watch_state"].find_one({"_id": f"{ALICE}:1:gazole"})["available"] is True
 
@@ -443,7 +447,7 @@ def test_un_echec_pour_l_un_ne_reenvoie_pas_a_l_autre(db, monkeypatch):
     favorite(db, 1, user=ALICE)
     favorite(db, 1, user=BOB)
     import_stations(db, [in_shortage(1)], now=NOW)
-    alert_restocks(db, CONFIG, NOW)
+    alert_fuel_events(db, CONFIG, NOW)
 
     def bob_fails(request, timeout):
         if json.loads(request.data)["to"] == BOB_PHONE:
@@ -452,10 +456,10 @@ def test_un_echec_pour_l_un_ne_reenvoie_pas_a_l_autre(db, monkeypatch):
 
     monkeypatch.setattr(module, "urlopen", bob_fails)
     import_stations(db, [record(1)], now=LATER)
-    alert_restocks(db, CONFIG, LATER)
+    alert_fuel_events(db, CONFIG, LATER)
 
     import_stations(db, [record(1)], now=LATER + STEP)
-    retried = alert_restocks(db, CONFIG, LATER + STEP)
+    retried = alert_fuel_events(db, CONFIG, LATER + STEP)
 
     assert list(retried) == [BOB]
 
@@ -470,3 +474,174 @@ def test_masque_le_numero():
 ])
 def test_identifiant_de_discussion_whatsapp(phone, chat_id):
     assert whatsapp_chat_id(phone) == chat_id
+
+
+# --- alerte de rupture -------------------------------------------------------
+
+
+def events_of(db, records, now, risks=None, config=CONFIG):
+    import_stations(db, records, now=now)
+    return alert_fuel_events(db, config, now, risks)
+
+
+def test_alerte_quand_un_carburant_disponible_tombe_en_rupture(alice, sent):
+    events_of(alice, [record(1)], NOW)
+
+    detected = events_of(alice, [in_shortage(1)], NOW + STEP)
+
+    shortage = detected[ALICE]["shortage"]
+    assert [(r["stationId"], r["fuel"]) for r in shortage] == [("1", "gazole")]
+    assert shortage[0]["shortageSince"] == datetime(2026, 10, 24, 12, 30)
+    payload = payloads(sent)[-1]
+    assert payload["event_type"] == "fuel_shortage"
+    assert payload["shortages"][0]["stationId"] == "1"
+    assert payload["summary"].startswith("⛔ Rupture de Gazole dans 1 station(s) favorite(s) :")
+    assert "— depuis le 24/10 à" in payload["summary"]
+    headers = {k.lower(): v for k, v in sent[-1].header_items()}
+    assert headers["x-request-id"].startswith("fuel-shortage-")
+
+
+def test_pas_d_alerte_de_rupture_au_premier_passage_ni_quand_elle_continue(alice, sent):
+    events_of(alice, [in_shortage(1)], NOW)
+    events_of(alice, [in_shortage(1)], NOW + STEP)
+
+    assert sent == []
+
+
+def test_une_station_absente_du_flux_n_est_pas_une_rupture(alice, sent):
+    # Le carburant disparaît (ni prix, ni rupture) : on ne sait rien.
+    events_of(alice, [record(1, e10_prix=1.8)], NOW)
+    events_of(alice, [neither(1, e10_prix=1.8)], NOW + STEP)
+
+    assert sent == []
+
+
+def test_un_echec_d_envoi_de_rupture_reessaie_au_prochain_import(alice, monkeypatch):
+    events_of(alice, [record(1)], NOW)
+
+    def failing(request, timeout):
+        raise URLError("refusé")
+
+    monkeypatch.setattr(module, "urlopen", failing)
+    events_of(alice, [in_shortage(1)], NOW + STEP)
+    assert alice["fuel_watch_state"].find_one({"_id": f"{ALICE}:1:gazole"})["available"] is True
+
+    monkeypatch.setattr(module, "urlopen", lambda request, timeout: FakeResponse())
+    assert "shortage" in events_of(alice, [in_shortage(1)], NOW + 2 * STEP)[ALICE]
+    assert alice["fuel_watch_state"].find_one({"_id": f"{ALICE}:1:gazole"})["available"] is False
+
+
+# --- alerte de risque --------------------------------------------------------
+
+
+def test_alerte_de_risque_au_dessus_du_seuil(alice, sent):
+    events_of(alice, [record(1)], NOW)
+
+    detected = events_of(alice, [record(1)], NOW + STEP, risks={("1", "gazole"): 0.62})
+
+    risk = detected[ALICE]["risk"]
+    assert [(r["stationId"], r["fuel"], r["risk"]) for r in risk] == [("1", "gazole", 0.62)]
+    payload = payloads(sent)[-1]
+    assert payload["event_type"] == "fuel_shortage_risk"
+    assert payload["risks"][0]["risk"] == 0.62
+    assert "⚠️ Risque de rupture de Gazole dans les 24 h" in payload["summary"]
+    assert "risque estimé 62 %" in payload["summary"]
+    assert "pas une certitude" in payload["summary"]
+
+
+def test_pas_d_alerte_de_risque_sous_le_seuil_ou_sans_prevision(alice, sent):
+    events_of(alice, [record(1)], NOW)
+    events_of(alice, [record(1)], NOW + STEP, risks={("1", "gazole"): 0.49})
+    events_of(alice, [record(1)], NOW + 2 * STEP, risks=None)
+    events_of(alice, [record(1)], NOW + 3 * STEP, risks={("2", "gazole"): 0.99})
+
+    assert sent == []
+
+
+def test_une_alerte_de_risque_par_jour_au_plus(alice, sent):
+    risky = {("1", "gazole"): 0.8}
+    events_of(alice, [record(1)], NOW)
+    events_of(alice, [record(1)], NOW + STEP, risks=risky)
+    events_of(alice, [record(1)], NOW + 2 * STEP, risks=risky)
+    events_of(alice, [record(1)], NOW + STEP + timedelta(hours=23), risks=risky)
+    assert len(sent) == 1
+
+    events_of(alice, [record(1)], NOW + STEP + timedelta(hours=24), risks=risky)
+    assert len(sent) == 2
+
+
+def test_pas_de_risque_annonce_pour_un_carburant_deja_en_rupture(alice, sent):
+    events_of(alice, [in_shortage(1)], NOW)
+    events_of(alice, [in_shortage(1)], NOW + STEP, risks={("1", "gazole"): 0.9})
+
+    assert sent == []
+
+
+def test_pas_de_risque_annonce_dans_le_meme_message_qu_un_retour(alice, sent):
+    events_of(alice, [in_shortage(1)], NOW)
+
+    detected = events_of(alice, [record(1)], NOW + STEP, risks={("1", "gazole"): 0.9})
+
+    assert list(detected[ALICE]) == ["restock"]
+    assert [p["event_type"] for p in payloads(sent)] == ["fuel_restock"]
+
+
+def test_pas_de_risque_au_premier_passage(alice, sent):
+    events_of(alice, [record(1)], NOW, risks={("1", "gazole"): 0.9})
+
+    assert sent == []
+
+
+def test_un_echec_d_envoi_de_risque_reessaie_au_prochain_import(alice, monkeypatch):
+    events_of(alice, [record(1)], NOW)
+
+    def failing(request, timeout):
+        raise URLError("refusé")
+
+    monkeypatch.setattr(module, "urlopen", failing)
+    events_of(alice, [record(1)], NOW + STEP, risks={("1", "gazole"): 0.9})
+    assert alice["fuel_watch_state"].find_one({"_id": f"{ALICE}:1:gazole"})["riskAlertedAt"] is None
+
+    monkeypatch.setattr(module, "urlopen", lambda request, timeout: FakeResponse())
+    assert "risk" in events_of(alice, [record(1)], NOW + 2 * STEP, risks={("1", "gazole"): 0.9})[ALICE]
+
+
+def test_seuil_desactive_coupe_seulement_l_alerte_de_risque(alice, sent):
+    no_risk = RestockConfig(CONFIG.webhook_url, CONFIG.webhook_secret, risk_threshold=None)
+    events_of(alice, [record(1)], NOW, config=no_risk)
+    events_of(alice, [record(1)], NOW + STEP, risks={("1", "gazole"): 0.99}, config=no_risk)
+    assert sent == []
+
+    events_of(alice, [in_shortage(1)], NOW + 2 * STEP, config=no_risk)
+    assert [p["event_type"] for p in payloads(sent)] == ["fuel_shortage"]
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (None, 0.5), ("", 0.5), ("0.7", 0.7), ("0,3", 0.3), ("off", None), ("OFF", None),
+    ("0", 0.5), ("1", 0.5), ("abc", 0.5),
+])
+def test_lit_le_seuil_de_risque(raw, expected):
+    environ = {"FUEL_RESTOCK_WEBHOOK_URL": "http://h/x", "FUEL_RESTOCK_WEBHOOK_SECRET": "abc"}
+    if raw is not None:
+        environ["FUEL_SHORTAGE_RISK_THRESHOLD"] = raw
+
+    assert RestockConfig.from_env(environ).risk_threshold == expected
+
+
+def test_watched_pairs_ne_garde_que_les_carburants_surveilles_et_disponibles(db):
+    profile(db, fuels=("gazole", "e10"))
+    favorite(db, 1, 2)
+    import_stations(db, [record(1, e10_prix=1.8), in_shortage(2)], now=NOW)
+    subs = subscribers(db)
+
+    assert module.watched_pairs(subs, module.watched_stations(db, subs)) == [("1", "e10"), ("1", "gazole")]
+
+
+def test_les_identifiants_de_requete_distinguent_les_types():
+    a = Subscriber(ALICE, ALICE_PHONE, ("gazole",), frozenset({"1"}))
+
+    ids = {request_id(a, NOW, kind) for kind in ("restock", "shortage", "risk")}
+
+    assert len(ids) == 3
+    assert request_id(a, NOW).startswith("fuel-restock-")
+    assert request_id(a, NOW, "risk").startswith("fuel-shortage-risk-")
