@@ -3,6 +3,7 @@ import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing
 import { AddFavoriteStationCommand } from '../application/commands/add-favorite-station.command';
 import { RemoveFavoriteStationCommand } from '../application/commands/remove-favorite-station.command';
 import { FuelStationReadModel } from '../application/ports/fuel-station.read-model';
+import { RestockForecastReadModel } from '../application/ports/restock-forecast.read-model';
 import { ShortageForecastReadModel } from '../application/ports/shortage-forecast.read-model';
 import { ListFavoriteStationDetailsQuery } from '../application/queries/list-favorite-station-details.query';
 import { ListFavoriteStationsQuery } from '../application/queries/list-favorite-stations.query';
@@ -12,6 +13,7 @@ import {
   aFuelPrice,
   aFuelStation,
   FakeFuelStationReadModel,
+  FakeRestockForecastReadModel,
   FakeShortageForecastReadModel,
 } from '../testing/fakes';
 import { InMemoryFavoriteStationRepository } from '../testing/in-memory-favorite-station.repository';
@@ -46,12 +48,26 @@ describe('Fuel favorites — API', () => {
           ]),
         },
         {
+          provide: RestockForecastReadModel,
+          useValue: new FakeRestockForecastReadModel([
+            { stationId: '69003001', fuel: 'e10', probability: 0.71, computedAt: new Date() },
+          ]),
+        },
+        {
           provide: FuelStationReadModel,
           useValue: new FakeFuelStationReadModel({
             stations: [
               aFuelStation({
                 id: '69003001',
-                fuels: [aFuelPrice({ code: 'gazole', updatedAt: new Date() })],
+                fuels: [
+                  aFuelPrice({ code: 'gazole', updatedAt: new Date() }),
+                  aFuelPrice({
+                    code: 'e10',
+                    price: null,
+                    available: false,
+                    shortageSince: new Date(Date.now() - 3_600_000),
+                  }),
+                ],
               }),
             ],
             truncated: false,
@@ -150,7 +166,7 @@ describe('Fuel favorites — API', () => {
     expect(jsonOf<{ id: string }[]>(bobs).map((f) => f.id)).toEqual(['69003001']);
   });
 
-  it('GET details renvoie prix et prévision de rupture des favorites', async () => {
+  it('GET details renvoie prix, prévision de rupture et de réapprovisionnement des favorites', async () => {
     await start({ '69003001': new Date() });
 
     const response = await app.inject({
@@ -161,14 +177,33 @@ describe('Fuel favorites — API', () => {
 
     expect(response.statusCode).toBe(200);
     const body = jsonOf<{
-      stations: { id: string; station: { fuels: { code: string; shortageOutlook: { level: string } | null }[] } }[];
+      stations: {
+        id: string;
+        station: {
+          fuels: {
+            code: string;
+            shortageOutlook: { level: string } | null;
+            restockOutlook: { level: string } | null;
+          }[];
+        };
+      }[];
+      restockForecast: { likelyThreshold: number };
     }>(response);
     expect(body.stations).toHaveLength(1);
     expect(body.stations[0].id).toBe('69003001');
-    expect(body.stations[0].station.fuels[0]).toMatchObject({
-      code: 'gazole',
-      shortageOutlook: { level: 'likely' },
-    });
+    expect(body.stations[0].station.fuels).toEqual([
+      expect.objectContaining({
+        code: 'gazole',
+        shortageOutlook: expect.objectContaining({ level: 'likely' }),
+        restockOutlook: null,
+      }),
+      expect.objectContaining({
+        code: 'e10',
+        shortageOutlook: null,
+        restockOutlook: expect.objectContaining({ level: 'likely' }),
+      }),
+    ]);
+    expect(body.restockForecast.likelyThreshold).toBe(0.5);
   });
 
   it('GET details ne montre pas les favorites des autres', async () => {

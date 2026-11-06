@@ -17,4 +17,8 @@ Vue d'ensemble — le détail est dans la docstring de chaque module :
 - `predict`  : risque en direct d'une liste de couples (station × carburant) ;
 - `forecasts`: risque des stations favorites, publié après chaque import dans
   `fuel_shortage_forecasts` (lu par le backend) et relu par les alertes.
+
+Son pendant, la prévision des **réapprovisionnements** (une rupture en cours
+se termine-t-elle dans les 24 h ?), vit dans `src.fuel.restock_forecast` et
+réutilise l'historique, les variables et la mécanique d'entraînement d'ici.
 """

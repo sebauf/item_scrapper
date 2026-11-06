@@ -36,6 +36,12 @@ test, la méthode naïve « fréquence des ruptures du couple sur 30 jours ». U
 modèle qui ne fait pas mieux qu'une moyenne n'a rien à faire en production ;
 l'ancien reste alors en place.
 
+**Deux modèles, une mécanique.** Le même code entraîne le modèle de
+réapprovisionnement (`src.fuel.restock_forecast`) : seuls changent les
+variables, la méthode naïve à battre et la collection de stockage, réunis dans
+un `ModelSpec`. Le comportement par défaut (`SHORTAGE`) est celui du modèle de
+rupture.
+
 **Stockage** : le modèle sérialisé (pickle, ~1 Mo) va dans MongoDB
 (`fuel_shortage_models`, `_id: "current"`), avec ses métriques. Pas de volume
 persistant à monter : c'est ce qui avait fait retirer le précédent modèle du
@@ -46,6 +52,7 @@ entre autres (le NodePort `mongodb-external` ne doit servir que sur le LAN).
 """
 import io
 import pickle
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -106,30 +113,64 @@ class ShortageModel:
         return self.calibrator.predict_proba(_logit(raw)[:, None])[:, 1]
 
 
+def baseline(X: pd.DataFrame, prior: float | None = None) -> np.ndarray:
+    """Méthode naïve : la fréquence quotidienne des ruptures du couple sur
+    30 jours. C'est elle que le modèle doit battre. (`prior` : inutile ici,
+    cf. `ModelSpec.baseline`.)"""
+    return np.clip(X["sf_starts_30d"].to_numpy(dtype=float) / 30, 0, 1)
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """Ce qui distingue un modèle de l'autre ; tout le reste est partagé.
+
+    - `baseline(X, prior)` : la méthode naïve à battre, en probabilité ;
+      `prior` est le taux de base pondéré de l'entraînement, pour les
+      instantanés sur lesquels la méthode naïve n'a rien à dire ;
+    - `events` : le nom de l'événement prévu, pour les messages ;
+    - `log` : préfixe des lignes de journal.
+    """
+    collection: str
+    feature_columns: tuple[str, ...]
+    categorical_features: tuple[str, ...]
+    baseline: Callable[[pd.DataFrame, float], np.ndarray]
+    baseline_label: str
+    events: str
+    log: str
+
+
+SHORTAGE = ModelSpec(
+    collection=COLLECTION,
+    feature_columns=tuple(FEATURE_COLUMNS),
+    categorical_features=tuple(CATEGORICAL_FEATURES),
+    baseline=baseline,
+    baseline_label="la fréquence sur 30 jours",
+    events="ruptures",
+    log="shortage-risk",
+)
+
+
 def time_weights(t: pd.Series, reference: pd.Timestamp) -> np.ndarray:
     age_days = ((reference - t).dt.total_seconds() / 86400).to_numpy()
     return np.exp(-np.maximum(age_days, 0) / DECAY_DAYS)
 
 
-def fit(dataset: Dataset, train: np.ndarray, calibration: np.ndarray, reference: pd.Timestamp) -> ShortageModel:
+def fit(dataset: Dataset, train: np.ndarray, calibration: np.ndarray, reference: pd.Timestamp,
+        spec: ModelSpec = SHORTAGE) -> ShortageModel:
     """Entraîne sur `train`, calibre sur `calibration` (masques booléens)."""
     t = dataset.meta["t"]
     weight = dataset.weight * time_weights(t, reference)
+    columns = list(spec.feature_columns)
     estimator = HistGradientBoostingClassifier(
-        categorical_features=[c in CATEGORICAL_FEATURES for c in FEATURE_COLUMNS], **HYPERPARAMETERS
+        categorical_features=[c in spec.categorical_features for c in columns], **HYPERPARAMETERS
     )
-    estimator.fit(dataset.X[train], dataset.y[train], sample_weight=weight[train])
-    raw = estimator.predict_proba(dataset.X[calibration])[:, 1]
+    X = dataset.X[columns]
+    estimator.fit(X[train], dataset.y[train], sample_weight=weight[train])
+    raw = estimator.predict_proba(X[calibration])[:, 1]
     # C très grand : pas de régularisation, deux paramètres seulement.
     calibrator = LogisticRegression(C=1e6)
     calibrator.fit(_logit(raw)[:, None], dataset.y[calibration], sample_weight=dataset.weight[calibration])
-    return ShortageModel(estimator, calibrator)
-
-
-def baseline(X: pd.DataFrame) -> np.ndarray:
-    """Méthode naïve : la fréquence quotidienne des ruptures du couple sur
-    30 jours. C'est elle que le modèle doit battre."""
-    return np.clip(X["sf_starts_30d"].to_numpy(dtype=float) / 30, 0, 1)
+    return ShortageModel(estimator, calibrator, columns)
 
 
 def evaluate(y: np.ndarray, weight: np.ndarray, p: np.ndarray, threshold: float = REPORT_THRESHOLD) -> dict:
@@ -182,20 +223,25 @@ class TrainingResult:
     reason: str
 
 
-def train_and_validate(dataset: Dataset) -> TrainingResult:
+def train_and_validate(dataset: Dataset, spec: ModelSpec = SHORTAGE) -> TrainingResult:
     """Backtest, puis réentraînement sur toute la période si le modèle bat la
     méthode naïve."""
     t = dataset.meta["t"]
-    if dataset.y.sum() < MIN_POSITIVES:
-        return TrainingResult(None, {"positives": int(dataset.y.sum())}, False,
-                              f"moins de {MIN_POSITIVES} ruptures dans l'échantillon")
+    positives, negatives = int(dataset.y.sum()), int(len(dataset.y) - dataset.y.sum())
+    if positives < MIN_POSITIVES:
+        return TrainingResult(None, {"positives": positives}, False,
+                              f"moins de {MIN_POSITIVES} {spec.events} dans l'échantillon")
+    if negatives < MIN_POSITIVES:
+        return TrainingResult(None, {"positives": positives, "negatives": negatives}, False,
+                              f"moins de {MIN_POSITIVES} instantanés sans {spec.events} dans l'échantillon")
     end = t.max().ceil("s") + pd.Timedelta(seconds=1)
 
     train, calibration, test = split_masks(t, end, TEST_DAYS)
-    backtest = fit(dataset, train, calibration, reference=end - pd.Timedelta(days=TEST_DAYS))
+    backtest = fit(dataset, train, calibration, reference=end - pd.Timedelta(days=TEST_DAYS), spec=spec)
     y, w = dataset.y[test], dataset.weight[test]
+    prior = float(np.average(dataset.y[train], weights=dataset.weight[train]))
     model_metrics = evaluate(y, w, backtest.predict(dataset.X[test]))
-    baseline_metrics = evaluate(y, w, baseline(dataset.X[test]))
+    baseline_metrics = evaluate(y, w, spec.baseline(dataset.X[test], prior))
     metrics = {
         "test": model_metrics,
         "baseline": baseline_metrics,
@@ -207,34 +253,36 @@ def train_and_validate(dataset: Dataset) -> TrainingResult:
               and model_metrics["brier"] < baseline_metrics["brier"])
     if not better:
         return TrainingResult(None, metrics, False,
-                              "le modèle ne bat pas la fréquence sur 30 jours (précision moyenne et Brier)")
+                              f"le modèle ne bat pas {spec.baseline_label} (précision moyenne et Brier)")
 
     train, calibration, _ = split_masks(t, end, 0)
-    return TrainingResult(fit(dataset, train, calibration, reference=end), metrics, True, "ok")
+    return TrainingResult(fit(dataset, train, calibration, reference=end, spec=spec), metrics, True, "ok")
 
 
-def save_model(db: Database, result: TrainingResult, data_until: datetime, trained_at: datetime | None = None):
+def save_model(db: Database, result: TrainingResult, data_until: datetime, trained_at: datetime | None = None,
+               spec: ModelSpec = SHORTAGE):
     """Met le modèle en service, avec ses métriques et ses versions."""
     trained_at = trained_at or datetime.now(timezone.utc).replace(tzinfo=None)
     buffer = io.BytesIO()
     pickle.dump(result.model, buffer, protocol=pickle.HIGHEST_PROTOCOL)
-    db[COLLECTION].replace_one(
+    db[spec.collection].replace_one(
         {"_id": MODEL_ID},
         {
             "payload": Binary(buffer.getvalue()),
             "trainedAt": trained_at,
             "dataUntil": data_until,
             "metrics": result.metrics,
-            "featureColumns": list(FEATURE_COLUMNS),
+            "featureColumns": list(spec.feature_columns),
             "sklearnVersion": sklearn.__version__,
         },
         upsert=True,
     )
 
 
-def record_rejection(db: Database, result: TrainingResult, attempted_at: datetime):
+def record_rejection(db: Database, result: TrainingResult, attempted_at: datetime,
+                     spec: ModelSpec = SHORTAGE):
     """Garde la trace d'un entraînement refusé, sans toucher au modèle en service."""
-    db[COLLECTION].update_one(
+    db[spec.collection].update_one(
         {"_id": "last_rejected"},
         {"$set": {"attemptedAt": attempted_at, "reason": result.reason, "metrics": result.metrics}},
         upsert=True,
@@ -246,21 +294,21 @@ def record_rejection(db: Database, result: TrainingResult, attempted_at: datetim
 MAX_MODEL_AGE_DAYS = 7
 
 
-def load_model(db: Database, now: datetime) -> ShortageModel | None:
+def load_model(db: Database, now: datetime, spec: ModelSpec = SHORTAGE) -> ShortageModel | None:
     """Le modèle en service, ou None s'il manque, est périmé, ou ne
     correspond plus au code (variables, version de scikit-learn)."""
-    doc = db[COLLECTION].find_one({"_id": MODEL_ID})
+    doc = db[spec.collection].find_one({"_id": MODEL_ID})
     if doc is None:
         return None
     if now - doc["trainedAt"] > pd.Timedelta(days=MAX_MODEL_AGE_DAYS):
-        print(f"shortage-risk: modèle du {doc['trainedAt']:%d/%m} trop ancien, ignoré")
+        print(f"{spec.log}: modèle du {doc['trainedAt']:%d/%m} trop ancien, ignoré")
         return None
-    if doc.get("featureColumns") != list(FEATURE_COLUMNS):
-        print("shortage-risk: modèle entraîné sur d'autres variables, ignoré")
+    if doc.get("featureColumns") != list(spec.feature_columns):
+        print(f"{spec.log}: modèle entraîné sur d'autres variables, ignoré")
         return None
     # Un pickle scikit-learn n'est garanti relisible que par la même version.
     if doc.get("sklearnVersion") != sklearn.__version__:
-        print(f"shortage-risk: modèle scikit-learn {doc.get('sklearnVersion')} "
+        print(f"{spec.log}: modèle scikit-learn {doc.get('sklearnVersion')} "
               f"≠ {sklearn.__version__}, ignoré jusqu'au prochain entraînement")
         return None
     return pickle.loads(doc["payload"])

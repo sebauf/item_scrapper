@@ -69,7 +69,7 @@ export function aFuelStation(overrides: Partial<FuelStation> = {}): FuelStation 
 
 /** Carburant d'une station favorite, sans prévision par défaut. */
 export function aFavoriteFuel(overrides: Partial<FavoriteFuel> = {}): FavoriteFuel {
-  return { ...aFuelPrice(), shortageOutlook: null, ...overrides };
+  return { ...aFuelPrice(), shortageOutlook: null, restockOutlook: null, ...overrides };
 }
 
 export function aFavoriteStation(

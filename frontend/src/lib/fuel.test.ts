@@ -10,7 +10,9 @@ import {
   formatLiterPrice,
   formatRisk,
   googleMapsUrl,
+  latestComputedAt,
   outlookSentence,
+  restockSentence,
   parseFuelSearchParams,
   priceTiers,
   sortFuels,
@@ -241,6 +243,30 @@ describe('prévision de rupture', () => {
     );
     expect(outlookSentence({ ...outlook, level: 'low' }, now)).toBe(
       'Pas de rupture attendue d’ici demain à 12:30',
+    );
+  });
+
+  it('formule le retour comme une échéance, jamais comme une heure de livraison', () => {
+    const outlook = {
+      probability: 0.71,
+      level: 'likely' as const,
+      computedAt: '2026-11-05T11:30:00.000Z',
+      horizonEnd: '2026-11-06T11:30:00.000Z',
+    };
+    expect(restockSentence(outlook, now)).toBe('Retour probable avant demain à 12:30');
+    expect(restockSentence({ ...outlook, level: 'possible' }, now)).toBe(
+      'Retour possible d’ici demain à 12:30',
+    );
+    expect(restockSentence({ ...outlook, level: 'unlikely' }, now)).toBe(
+      'Retour peu probable d’ici demain à 12:30',
+    );
+  });
+
+  it('retient le calcul le plus récent des deux prévisions', () => {
+    expect(latestComputedAt(null, null)).toBeNull();
+    expect(latestComputedAt('2026-11-05T11:00:00.000Z', null)).toBe('2026-11-05T11:00:00.000Z');
+    expect(latestComputedAt('2026-11-05T11:00:00.000Z', '2026-11-05T11:30:00.000Z')).toBe(
+      '2026-11-05T11:30:00.000Z',
     );
   });
 

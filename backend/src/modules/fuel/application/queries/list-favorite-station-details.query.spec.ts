@@ -5,9 +5,11 @@ import {
   aFuelPrice,
   aFuelStation,
   FakeFuelStationReadModel,
+  FakeRestockForecastReadModel,
   FakeShortageForecastReadModel,
 } from '../../testing/fakes';
 import { InMemoryFavoriteStationRepository } from '../../testing/in-memory-favorite-station.repository';
+import { RestockForecastRow } from '../ports/restock-forecast.read-model';
 import { ShortageForecastRow } from '../ports/shortage-forecast.read-model';
 import { ListFavoriteStationDetailsQuery } from './list-favorite-station-details.query';
 
@@ -19,11 +21,13 @@ function query(
   favorites: Record<string, Date>,
   stations = [aFuelStation()],
   forecasts: ShortageForecastRow[] = [],
+  restocks: RestockForecastRow[] = [],
 ) {
   return new ListFavoriteStationDetailsQuery(
     new InMemoryFavoriteStationRepository(favorites),
     new FakeFuelStationReadModel({ stations, truncated: false, brands: [], lastImportAt: null }),
     new FakeShortageForecastReadModel(forecasts),
+    new FakeRestockForecastReadModel(restocks),
   );
 }
 
@@ -60,6 +64,7 @@ describe('ListFavoriteStationDetailsQuery', () => {
           computedAt: '2026-11-05T11:30:00.000Z',
           horizonEnd: '2026-11-06T11:30:00.000Z',
         },
+        restockOutlook: null,
       },
       // Pas de prévision publiée pour l'E10 : on ne dit rien plutôt que « faible ».
       expect.objectContaining({ code: 'e10', shortageOutlook: null }),
@@ -68,7 +73,50 @@ describe('ListFavoriteStationDetailsQuery', () => {
     expect(result.staleAfterHours).toBe(STALE_AFTER_HOURS);
   });
 
-  it('pas de prévision pour un carburant déjà en rupture', async () => {
+  it('prévision de réapprovisionnement pour un carburant en rupture, pas pour un disponible', async () => {
+    const station = aFuelStation({
+      id: '1',
+      fuels: [
+        aFuelPrice({ code: 'gazole' }),
+        aFuelPrice({
+          code: 'e10',
+          price: null,
+          available: false,
+          shortageSince: new Date('2026-11-05T09:00:00.000Z'),
+        }),
+      ],
+    });
+
+    const result = await query(
+      { '1': now },
+      [station],
+      [],
+      [
+        { stationId: '1', fuel: 'gazole', probability: 0.9, computedAt },
+        { stationId: '1', fuel: 'e10', probability: 0.34, computedAt },
+      ],
+    ).execute(alice, now);
+
+    const [gazole, e10] = result.stations[0].station?.fuels ?? [];
+    expect(gazole.restockOutlook).toBeNull();
+    expect(e10).toMatchObject({
+      shortageOutlook: null,
+      restockOutlook: {
+        probability: 0.34,
+        level: 'possible',
+        computedAt: '2026-11-05T11:30:00.000Z',
+        horizonEnd: '2026-11-06T11:30:00.000Z',
+      },
+    });
+    expect(result.restockForecast).toMatchObject({
+      possibleThreshold: 0.2,
+      likelyThreshold: 0.5,
+      computedAt: '2026-11-05T11:30:00.000Z',
+    });
+    expect(result.forecast.computedAt).toBeNull();
+  });
+
+  it('pas de prévision de rupture pour un carburant déjà en rupture', async () => {
     const station = aFuelStation({
       id: '1',
       fuels: [
@@ -125,5 +173,6 @@ describe('ListFavoriteStationDetailsQuery', () => {
 
     expect(result.stations).toEqual([]);
     expect(result.forecast).toMatchObject({ horizonHours: 24, likelyThreshold: 0.5, computedAt: null });
+    expect(result.restockForecast.computedAt).toBeNull();
   });
 });

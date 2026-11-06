@@ -54,9 +54,17 @@ def favorite_pairs(db: Database) -> list[tuple[str, str]]:
     return sorted(pairs)
 
 
-def write_forecasts(db: Database, risks: dict[tuple[str, str], float], computed_at: datetime) -> None:
-    """Remplace les prévisions publiées par `risks`."""
-    collection = db[COLLECTION]
+def write_forecasts(
+    db: Database,
+    risks: dict[tuple[str, str], float],
+    computed_at: datetime,
+    collection_name: str = COLLECTION,
+    field: str = "risk",
+) -> None:
+    """Remplace les prévisions publiées par `risks`. (`collection_name` et
+    `field` : la prévision de réapprovisionnement publie de la même façon,
+    ailleurs et sous un autre nom.)"""
+    collection = db[collection_name]
     if risks:
         collection.bulk_write([
             ReplaceOne(
@@ -66,7 +74,7 @@ def write_forecasts(db: Database, risks: dict[tuple[str, str], float], computed_
                     "fuel": fuel,
                     # Trois décimales : au-delà, c'est une précision que le
                     # modèle n'a pas.
-                    "risk": round(risk, 3),
+                    field: round(risk, 3),
                     "computedAt": computed_at,
                     "horizonHours": HORIZON_HOURS,
                 },

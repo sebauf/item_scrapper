@@ -1,4 +1,9 @@
-import type { FavoriteFuel, FavoriteStationDetails, ShortageRiskLevel } from '@/lib/api';
+import type {
+  FavoriteFuel,
+  FavoriteStationDetails,
+  RestockChanceLevel,
+  ShortageRiskLevel,
+} from '@/lib/api';
 import { timeAgo } from '@/lib/format';
 import {
   FUEL_LABELS,
@@ -6,6 +11,7 @@ import {
   formatRisk,
   googleMapsUrl,
   outlookSentence,
+  restockSentence,
   RISK_LEVEL_LABELS,
   sortFuels,
   stationLabel,
@@ -19,19 +25,34 @@ const LEVEL_CLASSES: Record<ShortageRiskLevel, string> = {
   likely: 'bg-danger-soft text-danger border-danger/30',
 };
 
-function RiskBadge({ level, children }: { level: ShortageRiskLevel; children: React.ReactNode }) {
+/** Un retour probable est une bonne nouvelle : vert ; peu probable, neutre. */
+const RESTOCK_CLASSES: Record<RestockChanceLevel, string> = {
+  likely: LEVEL_CLASSES.low,
+  possible: LEVEL_CLASSES.elevated,
+  unlikely: 'bg-surface-hover text-muted border-border',
+};
+
+function Badge({ classes, children }: { classes: string; children: React.ReactNode }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-medium ${LEVEL_CLASSES[level]}`}
+      className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-medium ${classes}`}
     >
       {children}
     </span>
   );
 }
 
-/** Une ligne par carburant : prix, déclaration, prévision. */
+function RiskBadge({ level, children }: { level: ShortageRiskLevel; children: React.ReactNode }) {
+  return <Badge classes={LEVEL_CLASSES[level]}>{children}</Badge>;
+}
+
+/**
+ * Une ligne par carburant : prix, déclaration, prévision — de rupture s'il
+ * est disponible, de réapprovisionnement s'il est en rupture.
+ */
 function FuelRow({ fuel, now }: { fuel: FavoriteFuel; now: Date }) {
   const outlook = fuel.shortageOutlook;
+  const restock = fuel.restockOutlook;
   return (
     <li className="grid grid-cols-[5.5rem_1fr] gap-x-3 gap-y-1 py-2.5 sm:grid-cols-[6rem_8rem_1fr] sm:items-center">
       <span className="font-medium text-foreground">{FUEL_LABELS[fuel.code]}</span>
@@ -57,10 +78,18 @@ function FuelRow({ fuel, now }: { fuel: FavoriteFuel; now: Date }) {
       {/* Sur mobile, la prévision passe sous le prix, alignée avec lui. */}
       <span className="col-start-2 text-sm sm:col-start-auto">
         {!fuel.available ? (
-          <span className="text-muted">
-            {fuel.shortageSince
-              ? `Rupture déclarée ${timeAgo(fuel.shortageSince)}`
-              : 'Rupture déclarée, date inconnue'}
+          <span className="flex flex-col gap-1">
+            <span className="text-muted">
+              {fuel.shortageSince
+                ? `Rupture déclarée ${timeAgo(fuel.shortageSince)}`
+                : 'Rupture déclarée, date inconnue'}
+            </span>
+            {restock && (
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Badge classes={RESTOCK_CLASSES[restock.level]}>{formatRisk(restock.probability)}</Badge>
+                <span className="text-foreground/80">{restockSentence(restock, now)}</span>
+              </span>
+            )}
           </span>
         ) : outlook ? (
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -76,8 +105,9 @@ function FuelRow({ fuel, now }: { fuel: FavoriteFuel; now: Date }) {
 }
 
 /**
- * Carte d'une station favorite : prix de chaque carburant et prévision de
- * rupture à 24 h. Composant serveur — seule l'étoile est interactive.
+ * Carte d'une station favorite : prix de chaque carburant et prévision à
+ * 24 h (rupture ou réapprovisionnement). Composant serveur — seule l'étoile
+ * est interactive.
  *
  * Retirer l'étoile ne fait pas disparaître la carte tout de suite : elle reste
  * jusqu'au prochain chargement, ce qui laisse le temps de se raviser.

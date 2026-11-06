@@ -66,6 +66,38 @@ describe('FavoriteStationCard', () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
+  it('un carburant en rupture affiche sa chance de retour dans les 24 h', () => {
+    render(
+      <FavoriteStationCard
+        now={now}
+        favorite={aFavoriteStation({
+          station: {
+            fuels: [
+              aFavoriteFuel({
+                price: null,
+                available: false,
+                shortageSince: '2026-11-05T09:00:00.000Z',
+                restockOutlook: {
+                  probability: 0.71,
+                  level: 'likely',
+                  computedAt: '2026-11-05T11:30:00.000Z',
+                  horizonEnd: '2026-11-06T11:30:00.000Z',
+                },
+              }),
+            ],
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('En rupture')).toBeInTheDocument();
+    expect(screen.getByText(/Rupture déclarée il y a/)).toBeInTheDocument();
+    expect(screen.getByText('71 %')).toBeInTheDocument();
+    expect(screen.getByText('Retour probable avant demain à 12:30')).toBeInTheDocument();
+    // Une bonne nouvelle n'est pas un risque : pas de badge d'alerte en tête.
+    expect(screen.queryByText('Rupture probable')).not.toBeInTheDocument();
+  });
+
   it('dit qu’il n’y a pas de prévision plutôt que d’afficher « faible »', () => {
     render(<FavoriteStationCard now={now} favorite={aFavoriteStation()} />);
 
