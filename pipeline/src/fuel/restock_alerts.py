@@ -48,8 +48,11 @@ entre les deux ; il est **en rupture** dans le cas inverse. L'état garde aussi
 jour, après chaque import :
 
 - carburant présent, disponible ou non → l'état enregistré devient le sien ;
-- station absente, carburant absent (non vendu, ou ni prix ni rupture) → rien
-  ne change : un état ambigu n'efface jamais le dernier état connu ;
+- station absente, carburant absent (non vendu) → rien ne change : un état
+  ambigu n'efface jamais le dernier état connu. Un carburant vendu qui passe à
+  « ni prix ni rupture » n'est plus absent : l'import le garde **en rupture
+  présumée** pendant 7 jours (cf. import_stations.py), il compte donc comme
+  une rupture ;
 - aucun état enregistré (triplet vu pour la première fois : station mise en
   favori, carburant coché, numéro renseigné) → on l'enregistre sans alerter :
   rien ne dit qu'il était en rupture ;

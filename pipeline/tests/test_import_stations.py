@@ -232,6 +232,162 @@ def test_un_export_osm_a_jour_remplace_l_enseigne(db):
     assert db["fuel_stations"].find_one({"_id": "1"})["brand"] == "Avia"
 
 
+# --- ruptures présumées : carburant disparu du flux ------------------------
+#
+# Le flux perd souvent la rupture d'un carburant : ni prix ni `rupture_type`,
+# le carburant n'apparaît plus. On le garde en rupture, sinon il sort de la
+# station et « Mes stations » n'a plus de prévision pour lui.
+
+E10_AVAILABLE = {"e10_prix": 1.799, "e10_maj": "2026-10-26T07:42:00+00:00"}
+
+
+def e10(db, station_id="1"):
+    doc = db["fuel_stations"].find_one({"_id": station_id})
+    return next((f for f in doc["fuels"] if f["code"] == "e10"), None)
+
+
+def test_un_carburant_disponible_qui_disparait_passe_en_rupture_a_cet_import(db):
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=NOW)
+
+    later = NOW + timedelta(minutes=30)
+    import_stations(db, [record(1)], now=later)
+
+    assert e10(db) == {
+        "code": "e10",
+        "price": None,
+        "updatedAt": datetime(2026, 10, 26, 7, 42),  # dernière déclaration, pas l'import
+        "available": False,
+        "shortageSince": later,
+    }
+
+
+def test_une_rupture_declaree_puis_omise_garde_sa_date_de_debut(db):
+    import_stations(db, [record(1, e10_rupture_type="temporaire",
+                               e10_rupture_debut="2026-10-26T09:00:00+00:00")], now=NOW)
+
+    import_stations(db, [record(1)], now=NOW + timedelta(hours=1))
+    import_stations(db, [record(1)], now=NOW + timedelta(hours=2))
+
+    assert e10(db)["available"] is False
+    assert e10(db)["shortageSince"] == datetime(2026, 10, 26, 9, 0)
+
+
+def test_l_episode_ouvert_de_fuel_shortages_date_la_rupture(db):
+    # Le cas signalé : le E10 n'a jamais été vu en rupture par l'import (il a
+    # disparu d'un coup), mais l'archive de la nuit connaît la rupture.
+    import_stations(db, [record(1)], now=NOW)
+    db["fuel_shortages"].insert_one({
+        "_id": "1:e10:2026-10-25T18:30:00", "stationId": "1", "fuel": "e10",
+        "start": datetime(2026, 10, 25, 18, 30), "end": None, "source": "archive",
+    })
+
+    import_stations(db, [record(1)], now=NOW + timedelta(minutes=30))
+
+    assert e10(db)["available"] is False
+    assert e10(db)["shortageSince"] == datetime(2026, 10, 25, 18, 30)
+    assert e10(db)["updatedAt"] == datetime(2026, 10, 25, 18, 30)
+
+
+def test_l_episode_ouvert_l_emporte_sur_la_date_de_disparition(db):
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=NOW)
+    db["fuel_shortages"].insert_one({
+        "_id": "1:e10:2026-10-26T11:50:00", "stationId": "1", "fuel": "e10",
+        "start": datetime(2026, 10, 26, 11, 50), "end": None, "source": "archive",
+    })
+
+    import_stations(db, [record(1)], now=NOW + timedelta(minutes=30))
+
+    assert e10(db)["shortageSince"] == datetime(2026, 10, 26, 11, 50)
+
+
+def test_un_episode_clos_ne_fait_rien_presumer(db):
+    import_stations(db, [record(1)], now=NOW)
+    db["fuel_shortages"].insert_one({
+        "_id": "1:e10:2026-10-25T18:30:00", "stationId": "1", "fuel": "e10",
+        "start": datetime(2026, 10, 25, 18, 30), "end": datetime(2026, 10, 26, 6, 0),
+        "source": "archive",
+    })
+
+    import_stations(db, [record(1)], now=NOW + timedelta(minutes=30))
+
+    assert e10(db) is None
+
+
+def test_le_flux_l_emporte_des_qu_il_parle_du_carburant(db):
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=NOW)
+    import_stations(db, [record(1)], now=NOW + timedelta(minutes=30))
+
+    import_stations(db, [record(1, e10_prix=1.85, e10_maj="2026-10-26T13:00:00+00:00")],
+                    now=NOW + timedelta(hours=1))
+
+    assert e10(db)["available"] is True
+    assert e10(db)["price"] == 1.85
+
+
+def test_une_rupture_definitive_n_est_jamais_presumee_temporaire(db):
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=NOW)
+
+    import_stations(db, [record(1, e10_rupture_type="definitive")], now=NOW + timedelta(minutes=30))
+
+    assert e10(db) is None
+
+
+def test_une_rupture_presumee_s_eteint_apres_sept_jours(db):
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=NOW)
+    import_stations(db, [record(1)], now=NOW + timedelta(minutes=30))
+
+    import_stations(db, [record(1)], now=NOW + timedelta(days=7, minutes=29))
+    assert e10(db) is not None
+
+    import_stations(db, [record(1)], now=NOW + timedelta(days=7, minutes=31))
+    assert e10(db) is None
+
+
+def test_une_rupture_sans_date_n_est_pas_prolongee(db):
+    # La dater de chaque import la rajeunirait indéfiniment.
+    import_stations(db, [record(1, e10_rupture_type="temporaire")], now=NOW)
+    assert e10(db)["shortageSince"] is None
+
+    import_stations(db, [record(1)], now=NOW + timedelta(minutes=30))
+
+    assert e10(db) is None
+
+
+def test_une_station_dont_tous_les_carburants_ont_disparu_reste_listee(db):
+    import_stations(db, [record(1), record(2)], now=NOW)
+
+    import_stations(db, [record(1), record(2, gazole_prix=None, gazole_maj=None)],
+                    now=NOW + timedelta(minutes=30))
+
+    doc = db["fuel_stations"].find_one({"_id": "2"})
+    assert [(f["code"], f["available"]) for f in doc["fuels"]] == [("gazole", False)]
+
+
+def test_une_rupture_presumee_ouvre_un_episode_et_se_ferme_au_retour(db):
+    from src.fuel.shortage_forecast import episodes
+
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=NOW)
+    gone = NOW + timedelta(minutes=30)
+    import_stations(db, [record(1)], now=gone)
+    assert episodes.record_live(db, gone) == (1, 0)
+
+    back = NOW + timedelta(hours=3)
+    import_stations(db, [record(1, **E10_AVAILABLE)], now=back)
+
+    assert episodes.record_live(db, back) == (0, 1)
+    episode = db["fuel_shortages"].find_one({"fuel": "e10"})
+    assert (episode["start"], episode["end"]) == (gone, back)
+
+
+def test_parse_station_n_utilise_la_presomption_qu_en_l_absence_du_carburant():
+    presumed = {"gazole": {"code": "gazole", "price": None, "updatedAt": NOW,
+                           "available": False, "shortageSince": NOW}}
+
+    station = parse_station(record(), NOW, presumed=presumed)
+
+    assert station["fuels"][0]["available"] is True
+
+
 # --- fetch_records ---------------------------------------------------------
 
 
