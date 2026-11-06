@@ -508,10 +508,20 @@ def test_pas_d_alerte_de_rupture_au_premier_passage_ni_quand_elle_continue(alice
     assert sent == []
 
 
-def test_une_station_absente_du_flux_n_est_pas_une_rupture(alice, sent):
-    # Le carburant disparaît (ni prix, ni rupture) : on ne sait rien.
+def test_un_carburant_disparu_du_flux_est_une_rupture_presumee(alice, sent):
+    # Ni prix, ni rupture : le flux a perdu la rupture (cas mesuré le
+    # 06/11/2026, cf. import_stations) — l'import la présume.
     events_of(alice, [record(1, e10_prix=1.8)], NOW)
-    events_of(alice, [neither(1, e10_prix=1.8)], NOW + STEP)
+
+    detected = events_of(alice, [neither(1, e10_prix=1.8)], NOW + STEP)
+
+    assert [(r["stationId"], r["fuel"]) for r in detected[ALICE]["shortage"]] == [("1", "gazole")]
+    assert detected[ALICE]["shortage"][0]["shortageSince"] == NOW + STEP
+
+
+def test_une_station_absente_du_flux_n_est_pas_une_rupture(alice, sent):
+    events_of(alice, [record(1), record(2)], NOW)
+    events_of(alice, [record(2)], NOW + STEP)
 
     assert sent == []
 

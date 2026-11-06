@@ -26,11 +26,26 @@ Trois notions distinctes, à ne pas confondre :
 - **fraîcheur** : `updatedAt`, la date de déclaration *par la station*. Ce
   n'est pas la date de l'import (`importedAt`), qui ne dit rien du prix.
 
+**Rupture présumée.** Le flux perd souvent la trace d'une rupture : la station
+retire le prix du carburant, et la rupture elle-même n'y figure pas — le
+carburant disparaît, simplement. Mesuré le 06/11/2026 : des 2 688 ruptures
+temporaires ouvertes du flux quotidien (qui, lui, les liste), 2 053 n'avaient
+**ni prix ni rupture** dans le flux instantané, qui ne contenait aucune balise
+`<rupture>`. Sans mémoire, le carburant sort de la station, et avec lui toute
+prévision (« Mes stations » n'affiche plus le E10 en rupture, ni sa chance de
+retour). Un carburant vendu qui disparaît du flux est donc gardé **en
+rupture** (cf. `presumed_shortages`), daté par, dans l'ordre : l'épisode ouvert
+de `fuel_shortages` (rupture déclarée, connue par l'archive officielle ou un
+import antérieur), la rupture déjà connue du document précédent, sinon
+l'import où il a disparu. Au-delà de `PRESUMED_SHORTAGE_MAX_DAYS`, on le
+lâche : une station qui cesse de vendre un carburant sans le déclarer ne doit
+pas l'afficher indéfiniment.
+
 L'enseigne (`brand`) et le nom (`name`) ne viennent pas du flux officiel, qui
 les ignore, mais d'OpenStreetMap (cf. brands.py).
 """
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -62,6 +77,11 @@ COORDINATE_SCALE = 100_000
 MIN_KEPT_RATIO = 0.5
 
 REQUEST_TIMEOUT_SECONDS = 120
+
+# Durée maximale d'une rupture présumée (carburant disparu du flux). Même borne
+# que le modèle de réapprovisionnement (`MAX_SHORTAGE_AGE_SECONDS`) : au-delà,
+# une rupture ouverte ne se distingue plus d'un carburant abandonné.
+PRESUMED_SHORTAGE_MAX_DAYS = 7
 
 
 def fetch_records(url: str = DATASET_URL) -> list[dict]:
@@ -140,12 +160,19 @@ def parse_fuel(record: dict, fuel: str) -> dict | None:
 
 
 def parse_station(
-    record: dict, imported_at: datetime, brands: dict[str, dict] | None = None
+    record: dict,
+    imported_at: datetime,
+    brands: dict[str, dict] | None = None,
+    presumed: dict[str, dict] | None = None,
 ) -> dict | None:
     """Document `fuel_stations`, ou None si la station est inexploitable.
 
     Inexploitable : sans identifiant, sans coordonnées (impossible à placer sur
     la carte, et `$geoNear` refuserait le document), ou sans aucun carburant.
+
+    `presumed` : carburant → rupture présumée (cf. `presumed_shortages`),
+    utilisée seulement si le flux ne dit **rien** de ce carburant. Une rupture
+    définitive déclarée l'emporte : la station a dit qu'elle arrêtait.
     """
     station_id = record.get("id")
     lat = _coordinate(record.get("latitude"), 90)
@@ -153,7 +180,14 @@ def parse_station(
     if station_id is None or lat is None or lng is None:
         return None
 
-    fuels = [fuel for fuel in (parse_fuel(record, code) for code in FUELS) if fuel is not None]
+    presumed = presumed or {}
+    fuels = []
+    for code in FUELS:
+        fuel = parse_fuel(record, code)
+        if fuel is None and code in presumed and record.get(f"{code}_rupture_type") != "definitive":
+            fuel = presumed[code]
+        if fuel is not None:
+            fuels.append(fuel)
     if not fuels:
         return None
 
@@ -173,6 +207,57 @@ def parse_station(
         "fuels": fuels,
         "importedAt": imported_at,
     }
+
+
+def presumed_shortages(db: Database, now: datetime) -> dict[str, dict[str, dict]]:
+    """Station → carburant → rupture présumée, pour les carburants que le flux
+    aurait omis. Lue **avant** que l'import ne remplace `fuel_stations`.
+
+    Candidats : les carburants du document précédent de chaque station et les
+    épisodes ouverts de `fuel_shortages`. `shortageSince`, par ordre de
+    confiance :
+
+    1. le début de l'épisode ouvert — déclaré par la station (l'archive de la
+       nuit le connaît même quand le flux instantané l'a perdu) ;
+    2. la rupture du document précédent, si elle était déjà en cours ;
+    3. l'instant de cet import, si le carburant était disponible au précédent :
+       il vient de disparaître, à 30 minutes près.
+
+    Une rupture précédente sans date est abandonnée : la dater de cet import
+    la rajeunirait à chaque passage, elle ne s'éteindrait jamais.
+    """
+    oldest = now - timedelta(days=PRESUMED_SHORTAGE_MAX_DAYS)
+    declared: dict[tuple[str, str], datetime] = {}
+    for episode in db["fuel_shortages"].find(
+        {"end": None, "start": {"$gte": oldest}}, {"stationId": 1, "fuel": 1, "start": 1}
+    ):
+        key = (episode["stationId"], episode["fuel"])
+        declared[key] = max(episode["start"], declared.get(key, episode["start"]))
+
+    previous: dict[tuple[str, str], dict] = {}
+    for station in db["fuel_stations"].find({}, {"fuels": 1}):
+        for fuel in station.get("fuels", []):
+            previous[(station["_id"], fuel["code"])] = fuel
+
+    presumed: dict[str, dict[str, dict]] = {}
+    for key in declared.keys() | previous.keys():
+        station_id, code = key
+        before = previous.get(key)
+        since = declared.get(key)
+        if since is None and before is not None:
+            since = now if before.get("available") else before.get("shortageSince")
+        if since is None or since < oldest:
+            continue
+        presumed.setdefault(station_id, {})[code] = {
+            "code": code,
+            "price": None,
+            # La dernière déclaration connue pour ce carburant : la fraîcheur
+            # reste celle de la station, jamais celle de notre import.
+            "updatedAt": (before or {}).get("updatedAt") or since,
+            "available": False,
+            "shortageSince": since,
+        }
+    return presumed
 
 
 class TruncatedFeedError(RuntimeError):
@@ -209,9 +294,15 @@ def import_stations(
     collection = db["fuel_stations"]
     if brands is None:
         brands = _known_brands(collection)
+    presumed = presumed_shortages(db, imported_at)
 
     stations = [
-        s for s in (parse_station(r, imported_at, brands) for r in records) if s is not None
+        s
+        for s in (
+            parse_station(r, imported_at, brands, presumed.get(str(r.get("id"))))
+            for r in records
+        )
+        if s is not None
     ]
 
     known = collection.count_documents({})

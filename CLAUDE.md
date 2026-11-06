@@ -369,6 +369,18 @@ with `timezone=UTC`.
   `TruncatedFeedError` and touches nothing. API coordinates are degrees × 100 000.
   A fuel is *sold* if it has a price or a temporary shortage (`rupture_type =
   definitive` drops it), *available* if priced with no shortage.
+  **Presumed shortage**: the feed often drops a shortage altogether — the
+  station removes the fuel's price and no `rupture_*` is published, the fuel
+  just vanishes (measured 06/11/2026: 2 053 of 2 688 open temporary shortages
+  of the daily feed had neither price nor shortage in the instant feed). A
+  fuel sold at the previous import (or with an open `fuel_shortages` episode)
+  that vanishes is kept **in shortage** (`presumed_shortages`), its
+  `shortageSince` taken from, in order: the open episode (declared start,
+  known from the nightly archive), the previous doc's shortage, else this
+  import. Dropped after `PRESUMED_SHORTAGE_MAX_DAYS` = 7 (same cap as the
+  restock model); a declared `definitive` shortage is never presumed
+  temporary. Without it, a favourite's fuel in shortage disappeared from « Mes
+  stations » with its restock forecast.
 - `pipeline/src/fuel/brands.py` — **brand (enseigne)**, absent from the official
   feed, comes from OpenStreetMap: OSM stations carry the official id in
   `ref:FR:prix-carburants`, so the match is by **exact id**, never by distance.
@@ -397,7 +409,8 @@ with `timezone=UTC`.
   sends are per user and one can fail while another succeeds. A **restock** =
   a fuel now `available: true` whose last known state is `available: false`,
   however many imports in between. Absent station / absent fuel never changes
-  the state; a first sighting (new favourite, fuel just ticked, phone just set)
+  the state (a fuel that vanished from the feed is not absent: it is a
+  presumed shortage, see above); a first sighting (new favourite, fuel just ticked, phone just set)
   is recorded without alerting; states no longer watched are deleted
   (including old `<stationId>:<fuel>` docs). Restocks trigger **one webhook
   per recipient** per import to `FUEL_RESTOCK_WEBHOOK_URL` (a Hermes agent
