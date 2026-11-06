@@ -3,6 +3,13 @@ import { UserId } from 'src/shared/domain/user-id';
 import { FavoriteStationRepository } from '../../domain/favorite-station.repository';
 import { STALE_AFTER_HOURS } from '../../domain/freshness-policy';
 import {
+  LIKELY_RESTOCK_THRESHOLD,
+  POSSIBLE_RESTOCK_THRESHOLD,
+  PublishedRestockForecast,
+  RestockChanceLevel,
+  restockOutlook,
+} from '../../domain/restock-forecast-policy';
+import {
   ELEVATED_SHORTAGE_THRESHOLD,
   FORECAST_HORIZON_HOURS,
   FORECAST_MAX_AGE_HOURS,
@@ -12,6 +19,7 @@ import {
   shortageOutlook,
 } from '../../domain/shortage-forecast-policy';
 import { FuelStationReadModel, StationRow } from '../ports/fuel-station.read-model';
+import { RestockForecastReadModel } from '../ports/restock-forecast.read-model';
 import { ShortageForecastReadModel } from '../ports/shortage-forecast.read-model';
 import { FuelPriceView, toFuelView } from './search-fuel-stations.query';
 
@@ -22,9 +30,18 @@ export interface ShortageOutlookView {
   horizonEnd: string;
 }
 
+export interface RestockOutlookView {
+  probability: number;
+  level: RestockChanceLevel;
+  computedAt: string;
+  horizonEnd: string;
+}
+
 export interface FavoriteFuelView extends FuelPriceView {
-  /** null : pas de prévision (cf. `shortageOutlook`). */
+  /** Carburant disponible — null : pas de prévision (cf. `shortageOutlook`). */
   shortageOutlook: ShortageOutlookView | null;
+  /** Carburant en rupture — null : pas de prévision (cf. `restockOutlook`). */
+  restockOutlook: RestockOutlookView | null;
 }
 
 export interface FavoriteStationDetailsView {
@@ -50,14 +67,23 @@ export interface FavoriteStationDetailsResult {
     /** Prévision retenue la plus récente, null si aucune. */
     computedAt: string | null;
   };
+  /** Idem pour la prévision de réapprovisionnement (carburants en rupture). */
+  restockForecast: {
+    horizonHours: number;
+    maxAgeHours: number;
+    possibleThreshold: number;
+    likelyThreshold: number;
+    computedAt: string | null;
+  };
 }
 
 /**
- * Les stations favorites de `owner` avec leurs prix et, pour chaque carburant
- * disponible, la prévision de rupture à 24 h — dans l'ordre de la liste des
- * favorites (la plus récemment ajoutée d'abord).
+ * Les stations favorites de `owner` avec leurs prix et, pour chaque carburant,
+ * une prévision à 24 h : de rupture s'il est disponible, de réapprovisionnement
+ * s'il est en rupture — dans l'ordre de la liste des favorites (la plus
+ * récemment ajoutée d'abord).
  *
- * Trois lectures indépendantes (favorites, stations, prévisions) assemblées
+ * Quatre lectures indépendantes (favorites, stations, deux prévisions) assemblées
  * ici : chacune tient en quelques documents, une jointure `$lookup` n'y
  * gagnerait rien et lierait deux collections écrites par le pipeline à une
  * collection écrite par le backend.
@@ -68,22 +94,28 @@ export class ListFavoriteStationDetailsQuery {
     private readonly favorites: FavoriteStationRepository,
     private readonly stations: FuelStationReadModel,
     private readonly forecasts: ShortageForecastReadModel,
+    private readonly restockForecasts: RestockForecastReadModel,
   ) {}
 
   async execute(owner: UserId, now: Date = new Date()): Promise<FavoriteStationDetailsResult> {
     const entries = await this.favorites.list(owner);
     const ids = entries.map((entry) => entry.stationId);
-    const [stations, forecasts] = await Promise.all([
+    const [stations, forecasts, restocks] = await Promise.all([
       this.stations.findByIds(ids),
       this.forecasts.findForStations(ids),
+      this.restockForecasts.findForStations(ids),
     ]);
 
     const stationById = new Map(stations.map((station) => [station.id, station]));
     const forecastByPair = new Map<string, PublishedForecast>(
       forecasts.map((f) => [pairKey(f.stationId, f.fuel), f]),
     );
+    const restockByPair = new Map<string, PublishedRestockForecast>(
+      restocks.map((f) => [pairKey(f.stationId, f.fuel), f]),
+    );
 
     let latest: Date | null = null;
+    let latestRestock: Date | null = null;
     const views = entries.map((entry): FavoriteStationDetailsView => {
       const station = stationById.get(entry.stationId);
       if (station === undefined) {
@@ -102,6 +134,15 @@ export class ListFavoriteStationDetailsQuery {
               now,
             );
             if (outlook && (latest === null || outlook.computedAt > latest)) latest = outlook.computedAt;
+            const restock = restockOutlook(
+              restockByPair.get(pairKey(id, fuel.code)) ?? null,
+              fuel.available,
+              fuel.shortageSince,
+              now,
+            );
+            if (restock && (latestRestock === null || restock.computedAt > latestRestock)) {
+              latestRestock = restock.computedAt;
+            }
             return {
               ...toFuelView(fuel, now),
               shortageOutlook: outlook && {
@@ -109,6 +150,12 @@ export class ListFavoriteStationDetailsQuery {
                 level: outlook.level,
                 computedAt: outlook.computedAt.toISOString(),
                 horizonEnd: outlook.horizonEnd.toISOString(),
+              },
+              restockOutlook: restock && {
+                probability: restock.probability,
+                level: restock.level,
+                computedAt: restock.computedAt.toISOString(),
+                horizonEnd: restock.horizonEnd.toISOString(),
               },
             };
           }),
@@ -125,6 +172,13 @@ export class ListFavoriteStationDetailsQuery {
         elevatedThreshold: ELEVATED_SHORTAGE_THRESHOLD,
         likelyThreshold: LIKELY_SHORTAGE_THRESHOLD,
         computedAt: (latest as Date | null)?.toISOString() ?? null,
+      },
+      restockForecast: {
+        horizonHours: FORECAST_HORIZON_HOURS,
+        maxAgeHours: FORECAST_MAX_AGE_HOURS,
+        possibleThreshold: POSSIBLE_RESTOCK_THRESHOLD,
+        likelyThreshold: LIKELY_RESTOCK_THRESHOLD,
+        computedAt: (latestRestock as Date | null)?.toISOString() ?? null,
       },
     };
   }

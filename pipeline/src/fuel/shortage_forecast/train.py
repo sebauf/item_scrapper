@@ -7,7 +7,12 @@
 2. resynchronise `fuel_shortages` sur l'archive (cf. episodes.py) ;
 3. tire les instantanés des `TRAINING_DAYS` derniers jours, entraîne, valide
    sur les quatre dernières semaines ;
-4. met le modèle en service s'il bat la méthode naïve, sinon garde l'ancien.
+4. met le modèle en service s'il bat la méthode naïve, sinon garde l'ancien ;
+5. entraîne de même le modèle de **réapprovisionnement**
+   (`src.fuel.restock_forecast.train`) sur le même historique — l'archive
+   n'est lue qu'une fois. Les deux modèles sont jugés et mis en service
+   indépendamment ; si le second lève, le premier est déjà enregistré et la
+   tâche échoue (visible dans Airflow, relancée 30 min plus tard).
 
 Compter environ 5 minutes et 2,5 Go de mémoire au pic (année de crise : près
 de 10 millions de changements de prix lus).
@@ -17,6 +22,7 @@ from datetime import datetime, timezone
 import pandas as pd
 from pymongo.database import Database
 
+from src.fuel.restock_forecast import train as restock_train
 from src.fuel.shortage_forecast import episodes
 from src.fuel.shortage_forecast.archive import Archive, fetch_archives
 from src.fuel.shortage_forecast.dataset import DEFAULT_NEGATIVE_RATE, build_dataset, history_from_archive
@@ -35,7 +41,8 @@ def _fmt(metrics: dict) -> str:
 
 
 def run(db: Database, archive: Archive, now: datetime) -> bool:
-    """Renvoie True si un nouveau modèle a été mis en service."""
+    """Renvoie True si un nouveau modèle **de rupture** a été mis en service
+    (celui de réapprovisionnement est entraîné ensuite, cf. étape 5)."""
     episodes.ensure_indexes(db)
     synced = episodes.sync_from_archive(db, archive, now)
     print(f"fuel_shortages: {synced} ruptures synchronisées sur l'archive "
@@ -50,16 +57,19 @@ def run(db: Database, archive: Archive, now: datetime) -> bool:
           f"du {start:%d/%m/%Y} au {history.as_of:%d/%m/%Y}")
 
     result = train_and_validate(dataset)
+    del dataset  # ~1 Go au pic : libéré avant le second modèle
     if "test" in result.metrics:
         print(f"test  modèle : {_fmt(result.metrics['test'])}")
         print(f"test  naïf   : {_fmt(result.metrics['baseline'])}")
-    if not result.accepted:
+    if result.accepted:
+        save_model(db, result, data_until=archive.generated_at, trained_at=now)
+        print("modèle mis en service")
+    else:
         print(f"modèle refusé : {result.reason} — le modèle en service est conservé")
         record_rejection(db, result, now)
-        return False
-    save_model(db, result, data_until=archive.generated_at, trained_at=now)
-    print("modèle mis en service")
-    return True
+
+    restock_train.run(db, history, archive.generated_at, now)
+    return result.accepted
 
 
 if __name__ == "__main__":

@@ -49,6 +49,8 @@ export type FavoriteStationInfo = Schemas['FavoriteStationInfoResponse'];
 export type FavoriteFuel = Schemas['FavoriteFuelResponse'];
 export type ShortageOutlook = Schemas['ShortageOutlookResponse'];
 export type ShortageRiskLevel = ShortageOutlook['level'];
+export type RestockOutlook = Schemas['RestockOutlookResponse'];
+export type RestockChanceLevel = RestockOutlook['level'];
 export type Profile = Schemas['ProfileResponse'];
 export type FuelAlertRequirement = Profile['fuelAlerts']['missing'][number];
 

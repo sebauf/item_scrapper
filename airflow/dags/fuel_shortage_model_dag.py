@@ -7,10 +7,14 @@ Une seule tâche, `train_shortage_model`, dans l'image du pipeline :
    (~60 Mo, régénérée par le ministère vers 23 h 40, heure de Paris) ;
 2. resynchronise `fuel_shortages` sur cette archive, qui fait foi ;
 3. entraîne, valide sur les quatre dernières semaines, et ne met le modèle en
-   service que s'il bat la méthode naïve (sinon l'ancien reste en place).
+   service que s'il bat la méthode naïve (sinon l'ancien reste en place) ;
+4. fait de même, sur le même historique, pour le modèle de
+   **réapprovisionnement** (cf. pipeline/src/fuel/restock_forecast) : ~1 min
+   de plus, l'archive n'étant lue qu'une fois.
 
 Le modèle sert ensuite à chaque import du DAG `fuel_prices_dag`, toutes les
-30 minutes : c'est là que partent les alertes de risque.
+30 minutes : c'est là que partent les alertes de risque, et que sont publiées
+les prévisions de rupture et de réapprovisionnement de « Mes stations ».
 
 Pourquoi chaque jour : le taux de rupture a été multiplié par 17 en quelques
 mois en 2026. Un modèle de la semaine dernière se tromperait d'échelle ; au-delà
@@ -41,7 +45,7 @@ default_args = {
 
 with DAG(
     dag_id="fuel_shortage_model_dag",
-    description="Archive officielle -> fuel_shortages -> modèle de rupture à 24 h",
+    description="Archive officielle -> fuel_shortages -> modèles de rupture et de réapprovisionnement à 24 h",
     default_args=default_args,
     schedule="17 5 * * *",
     start_date=pendulum.datetime(2026, 1, 1, tz="Europe/Paris"),

@@ -37,7 +37,8 @@ export class FuelFavoriteController {
 
   @Get('details')
   @ApiOperation({
-    summary: 'Stations favorites avec leurs prix et la prévision de rupture à 24 h de chaque carburant',
+    summary:
+      'Stations favorites avec leurs prix et, à 24 h, la prévision de rupture (carburant disponible) ou de réapprovisionnement (carburant en rupture)',
   })
   @ApiResponse({ status: 200, type: FavoriteStationDetailsListResponse })
   details(@CurrentUser() user: UserId): Promise<FavoriteStationDetailsListResponse> {

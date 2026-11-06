@@ -219,7 +219,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stations favorites avec leurs prix et la prévision de rupture à 24 h de chaque carburant */
+        /** Stations favorites avec leurs prix et, à 24 h, la prévision de rupture (carburant disponible) ou de réapprovisionnement (carburant en rupture) */
         get: operations["FuelFavoriteController_details"];
         put?: never;
         post?: never;
@@ -458,6 +458,22 @@ export interface components {
             /** @description Fin de l’horizon du modèle (computedAt + 24 h) : la rupture prévue commencerait avant cette date */
             horizonEnd: string;
         };
+        RestockOutlookResponse: {
+            /**
+             * @description Probabilité (0 à 1) que la rupture en cours se termine avant `horizonEnd`
+             * @example 0.71
+             */
+            probability: number;
+            /**
+             * @description unlikely < possibleThreshold ≤ possible < likelyThreshold ≤ likely
+             * @enum {string}
+             */
+            level: "unlikely" | "possible" | "likely";
+            /** @description Calcul de la prévision par le pipeline (ISO 8601) */
+            computedAt: string;
+            /** @description Fin de l’horizon du modèle (computedAt + 24 h) : le retour prévu aurait lieu avant cette date */
+            horizonEnd: string;
+        };
         FavoriteFuelResponse: {
             /** @enum {string} */
             code: "gazole" | "e10" | "sp98" | "sp95" | "e85" | "gplc";
@@ -476,6 +492,8 @@ export interface components {
             isStale: boolean;
             /** @description Prévision de rupture à 24 h — null si le carburant est déjà en rupture, sans modèle en service, ou prévision trop ancienne */
             shortageOutlook: components["schemas"]["ShortageOutlookResponse"] | null;
+            /** @description Prévision de réapprovisionnement à 24 h — null si le carburant est disponible, en rupture depuis plus de 7 jours, sans modèle en service, ou prévision trop ancienne */
+            restockOutlook: components["schemas"]["RestockOutlookResponse"] | null;
         };
         FavoriteStationInfoResponse: {
             /** @example TotalEnergies */
@@ -527,12 +545,31 @@ export interface components {
             /** @description Prévision retenue la plus récente */
             computedAt: string | null;
         };
+        RestockForecastRulesResponse: {
+            /**
+             * @description Horizon du modèle, en heures
+             * @example 24
+             */
+            horizonHours: number;
+            /**
+             * @description Âge au-delà duquel une prévision est écartée
+             * @example 2
+             */
+            maxAgeHours: number;
+            /** @example 0.2 */
+            possibleThreshold: number;
+            /** @example 0.5 */
+            likelyThreshold: number;
+            /** @description Prévision retenue la plus récente */
+            computedAt: string | null;
+        };
         FavoriteStationDetailsListResponse: {
             /** @description De la plus récemment ajoutée à la plus ancienne */
             stations: components["schemas"]["FavoriteStationDetailsResponse"][];
             /** @example 72 */
             staleAfterHours: number;
             forecast: components["schemas"]["ShortageForecastRulesResponse"];
+            restockForecast: components["schemas"]["RestockForecastRulesResponse"];
         };
         FuelPriceResponse: {
             /** @enum {string} */

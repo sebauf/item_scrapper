@@ -149,6 +149,29 @@ export class ShortageOutlookResponse {
   horizonEnd!: string;
 }
 
+export class RestockOutlookResponse {
+  @ApiProperty({
+    example: 0.71,
+    description: 'Probabilité (0 à 1) que la rupture en cours se termine avant `horizonEnd`',
+  })
+  probability!: number;
+
+  @ApiProperty({
+    enum: ['unlikely', 'possible', 'likely'],
+    description: 'unlikely < possibleThreshold ≤ possible < likelyThreshold ≤ likely',
+  })
+  level!: string;
+
+  @ApiProperty({ description: 'Calcul de la prévision par le pipeline (ISO 8601)' })
+  computedAt!: string;
+
+  @ApiProperty({
+    description:
+      'Fin de l’horizon du modèle (computedAt + 24 h) : le retour prévu aurait lieu avant cette date',
+  })
+  horizonEnd!: string;
+}
+
 export class FavoriteFuelResponse extends FuelPriceResponse {
   @ApiProperty({
     type: ShortageOutlookResponse,
@@ -157,6 +180,14 @@ export class FavoriteFuelResponse extends FuelPriceResponse {
       'Prévision de rupture à 24 h — null si le carburant est déjà en rupture, sans modèle en service, ou prévision trop ancienne',
   })
   shortageOutlook!: ShortageOutlookResponse | null;
+
+  @ApiProperty({
+    type: RestockOutlookResponse,
+    nullable: true,
+    description:
+      'Prévision de réapprovisionnement à 24 h — null si le carburant est disponible, en rupture depuis plus de 7 jours, sans modèle en service, ou prévision trop ancienne',
+  })
+  restockOutlook!: RestockOutlookResponse | null;
 }
 
 export class FavoriteStationInfoResponse {
@@ -220,6 +251,23 @@ export class ShortageForecastRulesResponse {
   computedAt!: string | null;
 }
 
+export class RestockForecastRulesResponse {
+  @ApiProperty({ example: 24, description: 'Horizon du modèle, en heures' })
+  horizonHours!: number;
+
+  @ApiProperty({ example: 2, description: 'Âge au-delà duquel une prévision est écartée' })
+  maxAgeHours!: number;
+
+  @ApiProperty({ example: 0.2 })
+  possibleThreshold!: number;
+
+  @ApiProperty({ example: 0.5 })
+  likelyThreshold!: number;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Prévision retenue la plus récente' })
+  computedAt!: string | null;
+}
+
 export class FavoriteStationDetailsListResponse {
   @ApiProperty({
     type: [FavoriteStationDetailsResponse],
@@ -232,4 +280,7 @@ export class FavoriteStationDetailsListResponse {
 
   @ApiProperty({ type: ShortageForecastRulesResponse })
   forecast!: ShortageForecastRulesResponse;
+
+  @ApiProperty({ type: RestockForecastRulesResponse })
+  restockForecast!: RestockForecastRulesResponse;
 }

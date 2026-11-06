@@ -54,6 +54,16 @@ export interface ShortageOutlook {
 
 const HOUR_MS = 3_600_000;
 
+/** Prévision assez récente pour être montrée (cf. `FORECAST_MAX_AGE_HOURS`). */
+export function isForecastFresh(computedAt: Date, now: Date): boolean {
+  return now.getTime() - computedAt.getTime() <= FORECAST_MAX_AGE_HOURS * HOUR_MS;
+}
+
+/** Fin de l'horizon du modèle : seule date qu'une prévision à 24 h autorise. */
+export function forecastHorizonEnd(computedAt: Date): Date {
+  return new Date(computedAt.getTime() + FORECAST_HORIZON_HOURS * HOUR_MS);
+}
+
 export function riskLevel(risk: number): ShortageRiskLevel {
   if (risk >= LIKELY_SHORTAGE_THRESHOLD) return 'likely';
   if (risk >= ELEVATED_SHORTAGE_THRESHOLD) return 'elevated';
@@ -74,11 +84,11 @@ export function shortageOutlook(
   now: Date,
 ): ShortageOutlook | null {
   if (forecast === null || !available) return null;
-  if (now.getTime() - forecast.computedAt.getTime() > FORECAST_MAX_AGE_HOURS * HOUR_MS) return null;
+  if (!isForecastFresh(forecast.computedAt, now)) return null;
   return {
     risk: forecast.risk,
     level: riskLevel(forecast.risk),
     computedAt: forecast.computedAt,
-    horizonEnd: new Date(forecast.computedAt.getTime() + FORECAST_HORIZON_HOURS * HOUR_MS),
+    horizonEnd: forecastHorizonEnd(forecast.computedAt),
   };
 }

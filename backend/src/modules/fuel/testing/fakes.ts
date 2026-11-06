@@ -6,6 +6,10 @@ import {
   StationRow,
 } from '../application/ports/fuel-station.read-model';
 import {
+  RestockForecastReadModel,
+  RestockForecastRow,
+} from '../application/ports/restock-forecast.read-model';
+import {
   ShortageForecastReadModel,
   ShortageForecastRow,
 } from '../application/ports/shortage-forecast.read-model';
@@ -83,6 +87,16 @@ export class FakeShortageForecastReadModel extends ShortageForecastReadModel {
   }
 
   findForStations(stationIds: string[]): Promise<ShortageForecastRow[]> {
+    return Promise.resolve(this.rows.filter((row) => stationIds.includes(row.stationId)));
+  }
+}
+
+export class FakeRestockForecastReadModel extends RestockForecastReadModel {
+  constructor(private readonly rows: RestockForecastRow[] = []) {
+    super();
+  }
+
+  findForStations(stationIds: string[]): Promise<RestockForecastRow[]> {
     return Promise.resolve(this.rows.filter((row) => stationIds.includes(row.stationId)));
   }
 }

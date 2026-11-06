@@ -1,14 +1,15 @@
 import Link from 'next/link';
 import { getFavoriteStationDetails } from '@/lib/api';
 import { timeAgo } from '@/lib/format';
-import { formatRisk } from '@/lib/fuel';
+import { formatRisk, latestComputedAt } from '@/lib/fuel';
 import { FavoriteStationCard } from '@/components/FavoriteStationCard';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FavoriteStationsPage() {
-  const { stations, forecast } = await getFavoriteStationDetails();
+  const { stations, forecast, restockForecast } = await getFavoriteStationDetails();
   const now = new Date();
+  const computedAt = latestComputedAt(forecast.computedAt, restockForecast.computedAt);
 
   return (
     <main className="max-w-4xl mx-auto px-4 py-6">
@@ -18,8 +19,9 @@ export default async function FavoriteStationsPage() {
       <div className="mb-4">
         <h1 className="text-2xl font-bold text-foreground">Mes stations</h1>
         <p className="text-sm text-muted mt-1">
-          Prix de vos stations favorites et risque de rupture de chaque carburant dans les{' '}
-          {forecast.horizonHours} prochaines heures.
+          Prix de vos stations favorites et, pour les {forecast.horizonHours} prochaines heures,
+          risque de rupture de chaque carburant disponible ou chance de retour de chaque carburant
+          en rupture.
         </p>
       </div>
 
@@ -40,8 +42,8 @@ export default async function FavoriteStationsPage() {
       ) : (
         <>
           <p className="mb-3 text-xs text-faint">
-            {forecast.computedAt
-              ? `Prévisions calculées ${timeAgo(forecast.computedAt)}, mises à jour toutes les 30 minutes.`
+            {computedAt
+              ? `Prévisions calculées ${timeAgo(computedAt)}, mises à jour toutes les 30 minutes.`
               : 'Aucune prévision disponible pour le moment : le modèle n’est pas en service ou n’a pas été recalculé récemment. Les prix restent à jour.'}
           </p>
 
@@ -83,8 +85,36 @@ export default async function FavoriteStationsPage() {
                 </li>
               </ul>
               <p>
-                Pas de prévision pour un carburant déjà en rupture (la question ne se pose plus), ni
-                quand le modèle n’a pas tourné depuis plus de {forecast.maxAgeHours} h.
+                Pas de prévision de rupture pour un carburant déjà en rupture (la question ne se pose
+                plus), ni quand le modèle n’a pas tourné depuis plus de {forecast.maxAgeHours} h.
+              </p>
+              <p className="pt-2 font-medium text-foreground">Et pour un carburant en rupture ?</p>
+              <p>
+                Un second modèle estime la probabilité que la rupture <strong>se termine</strong> —
+                que le carburant revienne à la pompe — avant l’heure indiquée, soit dans les{' '}
+                {restockForecast.horizonHours} h. Il s’appuie sur l’ancienneté de la rupture, la
+                durée habituelle des ruptures de la station, les retours récents de ses autres
+                carburants et des stations du département, le jour et l’heure (les livraisons se
+                font surtout en semaine).
+              </p>
+              <ul className="list-disc pl-5 space-y-1">
+                <li>
+                  <strong>Retour probable</strong> : {formatRisk(restockForecast.likelyThreshold)} ou
+                  plus. Mesuré sur les dernières semaines, deux prévisions sur trois à ce niveau sont
+                  suivies d’un retour dans les {restockForecast.horizonHours} h.
+                </li>
+                <li>
+                  <strong>Retour possible</strong> : de {formatRisk(restockForecast.possibleThreshold)}{' '}
+                  à {formatRisk(restockForecast.likelyThreshold)}.
+                </li>
+                <li>
+                  <strong>Retour peu probable</strong> : en dessous — moins d’une fois sur dix.
+                  Mieux vaut chercher une autre station.
+                </li>
+              </ul>
+              <p>
+                Pas de prévision de retour pour une rupture de plus de 7 jours : le modèle n’a pas
+                appris sur des ruptures aussi longues, et préfère se taire.
               </p>
             </div>
           </details>

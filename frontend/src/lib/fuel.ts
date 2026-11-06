@@ -4,6 +4,8 @@ import type {
   FuelCode,
   FuelPrice,
   FuelStation,
+  RestockChanceLevel,
+  RestockOutlook,
   ShortageOutlook,
   ShortageRiskLevel,
 } from './api';
@@ -326,6 +328,36 @@ export function outlookSentence(outlook: ShortageOutlook, now: Date = new Date()
     case 'low':
       return `Pas de rupture attendue d’ici ${deadline}`;
   }
+}
+
+export const RESTOCK_LEVEL_LABELS: Record<RestockChanceLevel, string> = {
+  unlikely: 'Retour peu probable',
+  possible: 'Retour possible',
+  likely: 'Retour probable',
+};
+
+/**
+ * Phrase d'une prévision de réapprovisionnement — même règle que
+ * `outlookSentence` : une échéance (« avant… »), jamais une heure de retour.
+ */
+export function restockSentence(outlook: RestockOutlook, now: Date = new Date()): string {
+  const deadline = formatDeadline(outlook.horizonEnd, now);
+  switch (outlook.level) {
+    case 'likely':
+      return `Retour probable avant ${deadline}`;
+    case 'possible':
+      return `Retour possible d’ici ${deadline}`;
+    case 'unlikely':
+      return `Retour peu probable d’ici ${deadline}`;
+  }
+}
+
+/** Calcul le plus récent parmi des dates ISO (ou null), null si aucune. */
+export function latestComputedAt(...dates: (string | null)[]): string | null {
+  return dates.reduce<string | null>(
+    (latest, date) => (date !== null && (latest === null || date > latest) ? date : latest),
+    null,
+  );
 }
 
 const LEVEL_RANK: Record<ShortageRiskLevel, number> = { low: 0, elevated: 1, likely: 2 };

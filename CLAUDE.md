@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Stack
 
 - **Scrapper** (`scrapper/`): Node.js + TypeScript, clean architecture (domain / application / infrastructure), [Crawlee](https://crawlee.dev/) with `PlaywrightCrawler`, MongoDB driver v6
-- **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`, and trains a scikit-learn model forecasting fuel shortages 24 h ahead
-- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (every 30 min) and a daily shortage-model training DAG
+- **Pipeline** (`pipeline/`): Python 3, pandas + numpy, reads `items_raw` → writes `price_history` + `deal_scores` in MongoDB; also imports the official fuel-price feed into `fuel_stations`, and trains two scikit-learn models forecasting, 24 h ahead, fuel shortages (available fuel) and restocks (fuel in shortage)
+- **Airflow** (`airflow/`): orchestrates the daily scrape → purge → refine → score pipeline, plus a separate fuel-price import DAG (every 30 min) and a daily training DAG for the shortage and restock models
 - **Backend** (`backend/`): NestJS 11 on Fastify, DDD + CQRS-lite, MongoDB driver v6 — the only applicative reader of the DB
 - **Frontend** (`frontend/`): Next.js 15, React 19, Tailwind CSS v4, Auth.js v5 (Google login, mandatory) — **no DB driver**; calls the backend API server-side (`BACKEND_URL`), signing each call with the user's identity
 - **MCP** (`mcp/`): MCP server (`@modelcontextprotocol/sdk`, Streamable HTTP) exposing the backend API as tools for an external LLM agent — **no DB driver**, calls the backend over HTTP like the frontend, on behalf of one configured account (`MCP_USER_EMAIL`)
@@ -53,7 +53,8 @@ python -m src.maintenance.purge_dead_products   # purge only (deletes data)
 python -m src.refine.build_price_history        # refine only
 python -m src.scoring.score                     # score only
 python -m src.fuel.import_stations              # import fuel prices (calls data.economie.gouv.fr)
-python -m src.fuel.shortage_forecast.train      # train the 24 h shortage model (downloads the yearly archives, ~5 min)
+python -m src.fuel.shortage_forecast.train      # train the 24 h shortage + restock models (downloads the yearly archives, ~6 min)
+python -m src.fuel.restock_forecast.train       # restock model only, by hand (downloads the archives, no fuel_shortages resync)
 
 pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
 python -m pytest                      # unit tests — no MongoDB needed
@@ -223,9 +224,10 @@ would delete each other's stations).
 `airflow/dags/fuel_shortage_model_dag.py` — `17 5 * * *` **Europe/Paris**,
 single task `train_shortage_model` (`python -m src.fuel.shortage_forecast.train`):
 after the ministry regenerates its yearly archive (~23:40), resyncs
-`fuel_shortages` on it and retrains the shortage model. 45 min timeout, one
-retry after 30 min. Independent of the import: a failure only stops the *risk*
-alert (and only once the model is 7 days old).
+`fuel_shortages` on it and retrains the shortage model, then the restock model
+on the same history (the archive is read once). 45 min timeout, one retry after
+30 min. Independent of the import: a failure only stops the *risk* alert and
+the forecasts of « Mes stations » (and only once a model is 7 days old).
 
 All DAGs build their container tasks through `airflow/dags/pipeline_tasks.py`
 (listed in `.airflowignore`; importable because Airflow puts `dags_folder` on
@@ -462,6 +464,36 @@ with `timezone=UTC`.
   that collection can run code in pipeline Pods. `scikit-learn` is pinned in
   `requirements.txt` for that reason too (a pickle is only guaranteed readable
   by the version that wrote it).
+  `shortage_forecast.model` is generic: a `ModelSpec` (collection, features,
+  naive baseline, log prefix) selects the model; `SHORTAGE` is the default.
+- `pipeline/src/fuel/restock_forecast/` — **the restock model**, the mirror of
+  the shortage one, reusing its `History`, its context features
+  (`compute_features`, + restock-only ones: `shortage_age_hours`, mean duration
+  and count of the pair's closed shortages over 180 days, other fuels of the
+  station / share of the département and of France back in the last 24 h),
+  and its whole training mechanism (`RESTOCK` spec, same backtest, Platt
+  calibration, guard). Target: « this ongoing shortage ends (fuel back at the
+  pump) within 24 h ». Snapshots: one random instant per day per shortage
+  episode, kept if inside it, from its start to its end, **capped at 7 days**
+  (`MAX_SHORTAGE_AGE_SECONDS` = `OPEN_ACTIVE_SECONDS`; beyond, an open shortage
+  can't be told from a station that stopped declaring); an open shortage gives
+  negatives only while the archive covers the next 24 h. No subsampling (base
+  rate ~39 %), weight 1. Naive baseline = memoryless duration:
+  `1 − exp(−24 / pair's mean shortage duration)`, else the training base rate.
+  Known bias: shortages closed < 1 h are dropped (as everywhere), so a
+  minutes-old shortage gets a slightly pessimistic forecast. Measured on the
+  real archive (test 07/10 → 04/11/2026, 65 k snapshots): AUC 0.787 vs 0.666
+  naive, average precision 0.695 vs 0.543, Brier 0.182 vs 0.223; calibrated
+  (predicted 57 % → observed 56 %, 85 % → 86 %), slightly optimistic on
+  shortages older than 3 days (30 % vs 22 %); at 0.5, 66 % precision, 62 %
+  recall. Weekday is by far the strongest feature (deliveries happen on
+  weekdays). Model in `fuel_restock_models` (same shape and same pickle
+  caveat as `fuel_shortage_models`). `forecasts.publish_restock_forecasts`
+  runs after every import, right after `publish_forecasts`: one prediction per
+  (favourite station of any user × fuel **in shortage for < 7 days** with a
+  known `shortageSince`), written to `fuel_restock_forecasts` (`probability`
+  field); same replace / empty-without-model / untouched-on-failure rules. No
+  alert uses it (display only).
 - `backend/src/modules/fuel/` — reads `fuel_stations`, `GET /api/v1/fuel-stations`
   (`lat`, `lng` required; `radiusKm` ≤ 30, `fuel`, `sort=distance|price`, price
   sort requires `fuel`; `brand` = exact unified label, filtered inside `$geoNear`
@@ -484,7 +516,14 @@ with `timezone=UTC`.
   « a shortage starts within 24 h », not a date: the only honest date is the
   end of that horizon (« rupture probable **avant** … »). `null` for a fuel
   already in shortage, without a published forecast, or one older than
-  `FORECAST_MAX_AGE_HOURS` (2). A favourite whose station left the feed comes
+  `FORECAST_MAX_AGE_HOURS` (2). Per fuel **in shortage**, a `restockOutlook`
+  (`fuel/domain/restock-forecast-policy.ts`, read from `fuel_restock_forecasts`):
+  `probability`, `level` (`unlikely` < 0.2 ≤ `possible` < 0.5 ≤ `likely`),
+  `computedAt`, `horizonEnd` (« retour probable **avant** … ») — `null` for an
+  available fuel, without a published forecast, too old, or computed **before**
+  the current `shortageSince` (it was about a previous shortage). The response
+  carries both rule sets: `forecast` (shortage) and `restockForecast`.
+  A favourite whose station left the feed comes
   back with `station: null`. Page: `frontend/src/app/fuel/favorites/page.tsx`
   (linked from `/fuel`), dates shown in Europe/Paris (server renders in UTC).
 - **Freshness** (`fuel/domain/freshness-policy.ts`, `STALE_AFTER_HOURS = 72`) is
@@ -516,7 +555,7 @@ with `timezone=UTC`.
 - `src/app/product/[id]/page.tsx` — product detail with price chart; `id` is the opaque id returned by the API
 - `src/app/profile/page.tsx` + `src/components/ProfileForm.tsx` — phone number + watched fuels for the fuel alerts (restock, shortage, 24 h risk), and its status (`fuelAlerts.missing` from the backend); reached from the avatar in `UserMenu`
 - `src/app/fuel/page.tsx` + `src/components/FuelExplorer.tsx` / `FuelMap.tsx` — fuel-price map; `src/lib/fuel.ts` holds its URL parsing and display rules
-- `src/app/fuel/favorites/page.tsx` + `src/components/FavoriteStationCard.tsx` — « Mes stations »: prices of the user's favourite stations + 24 h shortage forecast per fuel
+- `src/app/fuel/favorites/page.tsx` + `src/components/FavoriteStationCard.tsx` — « Mes stations »: prices of the user's favourite stations + 24 h forecast per fuel: shortage risk if available, restock chance if in shortage
 - `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
@@ -570,6 +609,8 @@ keywords, favourites and tracked URLs, and nothing else.
 - `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`restock_alerts.py`), after each import
 - `fuel_shortages` — shortage history, one doc per episode, `_id = "<stationId>:<fuel>:<start ISO>"`; fields: `stationId`, `fuel`, `start`, `end` (null while ongoing), `source` (`live` | `archive`). Opened/closed by every fuel import (`episodes.record_live`, independent of the alert config), realigned nightly on the official archive (`sync_from_archive`: the archive wins over the period it covers, live episodes it doesn't know there are deleted), 200-day retention. Read by the risk forecast
 - `fuel_shortage_forecasts` — published 24 h shortage risk, one doc per (favourite station × available fuel), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `risk` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`shortage_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
+- `fuel_restock_forecasts` — published 24 h restock chance, one doc per (favourite station × fuel in shortage for < 7 days), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `probability` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`restock_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
+- `fuel_restock_models` — same shape as `fuel_shortage_models`, for the restock model. Written only by the daily training task (`restock_forecast.train`)
 - `fuel_shortage_models` — `_id: "current"` = the model in service (`payload` pickle, `trainedAt`, `dataUntil`, `metrics.test` / `metrics.baseline`, `featureColumns`, `sklearnVersion`); `_id: "last_rejected"` = last refused training and why. Written only by `shortage_forecast.train`
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`

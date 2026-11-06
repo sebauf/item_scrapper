@@ -233,6 +233,7 @@ if __name__ == "__main__":
 
     from src.config import DB_NAME, MONGODB_URI
     from src.fuel.restock_alerts import RestockConfig, alert_fuel_events
+    from src.fuel.restock_forecast.forecasts import publish_restock_forecasts
     from src.fuel.shortage_forecast import episodes
     from src.fuel.shortage_forecast.forecasts import publish_forecasts
 
@@ -265,6 +266,9 @@ if __name__ == "__main__":
     # « Mes stations », même sans alerte configurée, puis relu par l'alerte.
     # Après `record_live` : la prévision lit les ruptures de cet import.
     risks = publish_forecasts(db, imported_at)
+    # Et, pour les carburants en rupture de ces stations, la chance qu'ils
+    # reviennent dans les 24 h (page « Mes stations » seulement).
+    publish_restock_forecasts(db, imported_at)
 
     if restock:
         alert_fuel_events(db, restock, imported_at, risks if restock.risk_threshold is not None else None)
