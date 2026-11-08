@@ -8,6 +8,14 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Price Tracker',
   description: 'Suivez les prix Amazon en temps réel',
+  // iOS ignore les icônes du manifeste : il lui faut son apple-touch-icon
+  // (opaque — il remplit la transparence en noir et arrondit lui-même).
+  icons: {
+    icon: [{ url: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' }],
+    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
+  // Ouverte depuis l'écran d'accueil d'un iPhone : plein écran, sous ce nom.
+  appleWebApp: { capable: true, title: 'Price Tracker', statusBarStyle: 'default' },
 };
 
 export const viewport: Viewport = {

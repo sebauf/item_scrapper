@@ -28,6 +28,10 @@ cd e2e      && npm ci && npm test        # ~1 min, télécharge mongod au premie
 - **Frontend** : aucune page sans session valide (cookie absent, altéré d'un
   caractère, chiffré par un autre secret, inventé, compte hors liste
   blanche) ; isolation des données entre Alice et Bob.
+- **PWA** : manifeste et icônes servis sans cookie (sinon l'installation sur
+  l'écran d'accueil échoue) ; ces exceptions ne rouvrent aucune page — chemins
+  voisins (`/manifest`, `/icons`) et remontées de dossier envoyées en HTTP brut
+  (`/icons/../fuel`, `%2e%2e`, `..%2f`).
 - **Server Actions** appelées en HTTP brut, avec des identifiants extraits du
   JavaScript public (comme le ferait un attaquant) : Bob ne peut ni retirer le
   mot-clé, ni le favori, ni la station d'Alice, même en ajoutant un argument
