@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { BackendClient, BackendError, buildQueryString } from './client.js';
+import { BackendClient, BackendError, buildFuelStationQueryString, buildQueryString } from './client.js';
 
 /** `fetch` de test : mémorise l'URL appelée et renvoie la réponse fournie. */
 function stubFetch(response: Response): { fetchImpl: typeof fetch; calls: string[] } {
@@ -42,6 +42,27 @@ describe('buildQueryString', () => {
 
   it('échappe la recherche plein texte', () => {
     assert.equal(buildQueryString({ q: 'lessive & co' }), '?q=lessive+%26+co');
+  });
+});
+
+describe('buildFuelStationQueryString', () => {
+  // Le backend refuse tout paramètre inconnu : lat/lng, pas latitude/longitude.
+  it('envoie toujours la position, sous les noms courts du backend', () => {
+    assert.equal(buildFuelStationQueryString({ latitude: 45.76, longitude: 4.84 }), '?lat=45.76&lng=4.84');
+  });
+
+  it("n'ajoute que les filtres renseignés, enseigne échappée", () => {
+    assert.equal(
+      buildFuelStationQueryString({
+        latitude: 45.76,
+        longitude: 4.84,
+        radiusKm: 5,
+        fuel: 'gazole',
+        sort: 'price',
+        brand: 'E.Leclerc & Co',
+      }),
+      '?lat=45.76&lng=4.84&radiusKm=5&fuel=gazole&sort=price&brand=E.Leclerc+%26+Co',
+    );
   });
 });
 

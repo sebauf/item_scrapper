@@ -33,7 +33,7 @@ types dérivent du contrat.
 
 ## Ce que voit l'agent
 
-Douze outils. Les noms, descriptions et schémas d'entrée sont ce que le modèle
+Seize outils. Les noms, descriptions et schémas d'entrée sont ce que le modèle
 lit pour décider quoi appeler — ils sont donc rédigés pour lui, pas pour un
 développeur.
 
@@ -51,13 +51,36 @@ développeur.
 | `list_favorites` | produits favoris + aperçu de leur évolution de prix | lecture seule |
 | `add_favorite` | met un produit en favori (garantit aussi son suivi) | écriture, idempotent |
 | `remove_favorite` | retire un favori (le suivi de prix continue) | écriture, idempotent |
+| `find_fuel_stations` | stations autour de coordonnées GPS, prix et ruptures, tri distance/prix | lecture seule |
+| `list_favorite_stations` | « Mes stations » : prix + prévision 24 h (rupture ou retour) par carburant | lecture seule |
+| `add_favorite_station` | ajoute une station favorite (surveillée par les alertes carburant) | écriture, idempotent |
+| `remove_favorite_station` | retire une station favorite | écriture, idempotent |
 
 Les annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) ne sont
 pas décoratives : un client MCP s'en sert pour décider s'il demande une
 confirmation. Un outil d'écriture annoncé en lecture seule serait un piège.
 `add_favorite`/`remove_favorite` sont annoncés `destructiveHint: false` — à la
 différence d'un `untrack_*`, retirer un favori n'arrête aucune collecte, ce
-n'est qu'un signet.
+n'est qu'un signet. Même raisonnement pour `remove_favorite_station` : la
+station ne quitte que les alertes de l'utilisateur, le flux officiel continue
+d'être importé.
+
+### Carburants
+
+- **Pas de géocodage** : `find_fuel_stations` prend `latitude` / `longitude`,
+  comme l'API. Le modèle connaît les coordonnées approximatives des villes, et
+  `list_favorite_stations` lui renvoie celles de chaque favorite.
+- **`limit`** (défaut 10, au plus 50) : le backend renvoie jusqu'à 200 stations,
+  taillé pour une carte. Le tri est déjà fait côté backend, l'outil ne garde que
+  la tête de liste et dit combien il en a omis.
+- **Heures de Paris** (`format-fuel.ts`) : le backend parle UTC, l'utilisateur
+  non. Une prévision est rendue « avant <fin de l'horizon> », jamais comme une
+  heure d'événement — le modèle prédit un événement *dans les 24 h*.
+- **ODbL** : les enseignes viennent d'OpenStreetMap ; la recherche cite la
+  source et les instructions demandent à l'agent de la citer à son tour.
+- Les bornes (rayon ≤ 30 km, id = chiffres) sont recopiées dans le schéma zod :
+  un argument hors bornes est refusé sans appel réseau. Le tri par prix sans
+  carburant reste une règle du backend, dont le 400 revient lisible à l'agent.
 
 À l'initialisation, le serveur envoie aussi des **instructions** (`server.ts`) :
 d'où viennent les données, à quelle fréquence elles changent, ce que « bonne
@@ -85,6 +108,7 @@ src/
 ├── http.ts            façade HTTP : /mcp, /health/live, /health/ready, auth bearer
 ├── server.ts          fabrique du serveur MCP + instructions envoyées au modèle
 ├── format.ts          DTO du backend → texte destiné au modèle
+├── format-fuel.ts     idem pour les carburants (heures de Paris, prévisions)
 ├── backend/
 │   ├── client.ts      client HTTP typé de l'API (timeout, erreurs)
 │   └── api-types.ts   généré depuis /openapi.json — ne pas éditer

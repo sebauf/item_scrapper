@@ -584,13 +584,22 @@ src/config.ts     McpConfig — env vars validated at startup (same idea as back
 src/http.ts       HTTP facade: /mcp (Streamable HTTP, stateless), /health/live, /health/ready
 src/server.ts     MCP server factory + the instructions sent to the model on initialize
 src/format.ts     backend DTOs → compact text for the model (never raw JSON)
+src/format-fuel.ts  fuel DTOs → text (Paris times, forecasts as « before <horizon end> »)
 src/backend/      typed HTTP client over the API + api-types.ts (**generated**, do not edit)
-src/tools/        tool definitions, split by bounded context (catalog / keywords)
+src/tools/        tool definitions, split by bounded context (catalog / keywords / product-tracking / favorites / fuel)
 ```
 
-Six tools: `get_dashboard`, `list_keywords`, `search_products`, `get_product`
-(read-only), `track_keyword`, `untrack_keyword` (write, `untrack` is annotated
-destructive — clients use those annotations to prompt for confirmation).
+Sixteen tools. Products: `get_dashboard`, `list_keywords`, `search_products`,
+`get_product`, `list_tracked_urls`, `list_favorites` (read-only),
+`track_keyword`, `track_product_url`, `untrack_keyword` / `untrack_product_url`
+(write, annotated destructive — clients use those annotations to prompt for
+confirmation), `add_favorite` / `remove_favorite` (write, idempotent). Fuel:
+`find_fuel_stations` (lat/lng — no geocoding; `limit` default 10, max 50,
+cut client-side from the backend's 200), `list_favorite_stations` (prices +
+24 h shortage / restock outlook), `add_favorite_station` /
+`remove_favorite_station` (idempotent `PUT` / `DELETE`; adding one enrols the
+station in the user's fuel alerts, so the instructions tell the agent to do it
+only on request).
 
 Tools return text, not JSON: the API payload is shaped for a GUI and would cost
 tokens for nothing. `format.ts` always keeps the opaque product `id`, the only
@@ -605,7 +614,7 @@ This is the only applicative component deliberately exposed outside the cluster.
 Towards the backend, it acts for **one** account (`MCP_USER_EMAIL`), signing
 the internal token with its own `MCP_BACKEND_AUTH_SECRET`, which the backend
 accepts for that account only: the tools read and modify that account's
-keywords, favourites and tracked URLs, and nothing else.
+keywords, favourites, tracked URLs and favourite stations, and nothing else.
 
 ### MongoDB
 
