@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { request } from 'node:http';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
@@ -63,6 +64,21 @@ function withLogs(message) {
 
 function page(path, cookie, base = stack.frontendUrl) {
   return fetch(base + path, { headers: cookie ? { cookie } : {}, redirect: 'manual' });
+}
+
+/** GET sans normalisation du chemin (contrairement à `fetch`), sans cookie. */
+function rawGet(base, path) {
+  const { hostname, port } = new URL(base);
+  return new Promise((resolve, reject) => {
+    request({ hostname, port, path, method: 'GET' }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location ?? '', body }));
+    })
+      .on('error', reject)
+      .end();
+  });
 }
 
 function api(path, { token, method = 'GET', body } = {}) {
@@ -211,6 +227,62 @@ describe('frontend : pas de page sans session valide', () => {
     const response = await page('/api/auth/session', tamper(cookies.alice));
     assert.equal(await response.text(), 'null');
   });
+});
+
+describe('frontend : la PWA s’installe sans session, sans rouvrir de page', () => {
+  // Le navigateur télécharge le manifeste et les icônes sans cookie : redirigés
+  // vers /login, l'installation échouerait sans message.
+  const INSTALL_FILES = {
+    '/manifest.webmanifest': /^application\/manifest\+json/,
+    '/icons/icon-192.png': /^image\/png/,
+    '/icons/icon-512.png': /^image\/png/,
+    '/icons/maskable-192.png': /^image\/png/,
+    '/icons/maskable-512.png': /^image\/png/,
+    '/icons/apple-touch-icon.png': /^image\/png/,
+  };
+
+  it('sert le manifeste et les icônes sans cookie', async () => {
+    for (const [path, type] of Object.entries(INSTALL_FILES)) {
+      const response = await page(path);
+      assert.equal(response.status, 200, withLogs(`${path} → ${response.status}`));
+      assert.match(response.headers.get('content-type'), type, path);
+    }
+  });
+
+  it('chaque icône du manifeste est servie', async () => {
+    const manifest = await (await page('/manifest.webmanifest')).json();
+    assert.ok(manifest.icons.length > 0);
+    for (const { src } of manifest.icons) {
+      assert.equal((await page(src)).status, 200, src);
+    }
+  });
+
+  it('la page de connexion annonce le manifeste et l’icône iOS', async () => {
+    const html = await (await page('/login')).text();
+    assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest"/);
+    assert.match(html, /<link rel="apple-touch-icon" href="\/icons\/apple-touch-icon\.png"/);
+  });
+
+  // Les exceptions du matcher sont des préfixes : vérifier qu'aucun chemin
+  // voisin, ni une remontée de dossier, n'atteint une page sans session.
+  // Envoyés en HTTP brut : `fetch` résoudrait lui-même `..` et `%2e%2e`
+  // (règle WHATWG URL) et ne testerait que `/fuel`.
+  for (const path of [
+    '/manifest',
+    '/icons',
+    '/icons/../fuel',
+    '/icons/%2e%2e/fuel',
+    '/icons/..%2ffuel',
+    '/manifest.webmanifest/../fuel',
+  ]) {
+    it(`ne sert aucune page sans session pour ${path}`, async () => {
+      const { status, location, body } = await rawGet(stack.frontendUrl, path);
+      assert.ok([307, 308, 400, 404].includes(status), `${path} → ${status}`);
+      if (status === 307) assert.match(location, /\/login\?callbackUrl=/);
+      else if (status === 308) assert.equal((await rawGet(stack.frontendUrl, location)).status, 307, `${path} → ${location}`);
+      else assert.doesNotMatch(body, /Mes stations|>Carburants<\/h1>/);
+    });
+  }
 });
 
 describe('frontend : chacun ne voit que ses propres données', () => {
