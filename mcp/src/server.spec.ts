@@ -6,6 +6,8 @@ import { BackendClient } from './backend/client.js';
 import { createMcpServer } from './server.js';
 import {
   aDashboard,
+  aFavoriteStationDetailsList,
+  aFuelStationSearch,
   aProductDetail,
   aScoredProduct,
   aTrackedUrlSummary,
@@ -57,7 +59,7 @@ function textOf(result: unknown): string {
 }
 
 describe('serveur MCP', () => {
-  it('expose les douze outils attendus', async () => {
+  it('expose les seize outils attendus', async () => {
     const { client } = await connect({});
 
     const { tools } = await client.listTools();
@@ -66,12 +68,16 @@ describe('serveur MCP', () => {
       tools.map((tool) => tool.name).sort(),
       [
         'add_favorite',
+        'add_favorite_station',
+        'find_fuel_stations',
         'get_dashboard',
         'get_product',
+        'list_favorite_stations',
         'list_favorites',
         'list_keywords',
         'list_tracked_urls',
         'remove_favorite',
+        'remove_favorite_station',
         'search_products',
         'track_keyword',
         'track_product_url',
@@ -94,6 +100,8 @@ describe('serveur MCP', () => {
     assert.equal(byName.get('untrack_keyword')?.destructiveHint, true);
     assert.equal(byName.get('track_product_url')?.readOnlyHint, false);
     assert.equal(byName.get('untrack_product_url')?.destructiveHint, true);
+    assert.equal(byName.get('find_fuel_stations')?.readOnlyHint, true);
+    assert.equal(byName.get('list_favorite_stations')?.readOnlyHint, true);
   });
 
   // add_favorite / remove_favorite sont idempotents et non destructifs :
@@ -104,7 +112,7 @@ describe('serveur MCP', () => {
     const { tools } = await client.listTools();
     const byName = new Map(tools.map((tool) => [tool.name, tool.annotations]));
 
-    for (const name of ['add_favorite', 'remove_favorite']) {
+    for (const name of ['add_favorite', 'remove_favorite', 'add_favorite_station', 'remove_favorite_station']) {
       assert.equal(byName.get(name)?.readOnlyHint, false);
       assert.equal(byName.get(name)?.destructiveHint, false);
       assert.equal(byName.get(name)?.idempotentHint, true);
@@ -243,6 +251,95 @@ describe('serveur MCP', () => {
 
     assert.deepEqual(calls, ['DELETE /api/v1/favorites/abc']);
     assert.match(textOf(result), /retiré des favoris/);
+  });
+
+  it('traduit une recherche de stations en paramètres du backend', async () => {
+    const { client, calls } = await connect({ '/api/v1/fuel-stations': { body: aFuelStationSearch() } });
+
+    const result = await client.callTool({
+      name: 'find_fuel_stations',
+      arguments: { latitude: 45.76, longitude: 4.84, radiusKm: 5, fuel: 'gazole', sort: 'price' },
+    });
+
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(calls, [
+      'GET /api/v1/fuel-stations?lat=45.76&lng=4.84&radiusKm=5&fuel=gazole&sort=price',
+    ]);
+    assert.match(textOf(result), /dans un rayon de 5 km vendant du Gazole/);
+  });
+
+  it('refuse un rayon au-delà du plafond du backend sans appel réseau', async () => {
+    const { client, calls } = await connect({});
+
+    const result = await client.callTool({
+      name: 'find_fuel_stations',
+      arguments: { latitude: 45.76, longitude: 4.84, radiusKm: 31 },
+    });
+
+    assert.equal(result.isError, true);
+    assert.deepEqual(calls, []);
+  });
+
+  // Le tri par prix sans carburant est une règle du backend : son 400 doit
+  // revenir lisible, pour que l'agent corrige son appel.
+  it('rapporte le refus du backend pour un tri par prix sans carburant', async () => {
+    const { client } = await connect({
+      '/api/v1/fuel-stations': {
+        status: 400,
+        body: { code: 'INVALID_STATION_SEARCH', message: 'Le tri « price » exige un carburant (« fuel »).' },
+      },
+    });
+
+    const result = await client.callTool({
+      name: 'find_fuel_stations',
+      arguments: { latitude: 45.76, longitude: 4.84, sort: 'price' },
+    });
+
+    assert.equal(result.isError, true);
+    assert.match(textOf(result), /400 \[INVALID_STATION_SEARCH\].*exige un carburant/);
+  });
+
+  it('liste les stations favorites avec leurs prévisions', async () => {
+    const { client, calls } = await connect({
+      '/api/v1/fuel-stations/favorites/details': { body: aFavoriteStationDetailsList() },
+    });
+
+    const result = await client.callTool({ name: 'list_favorite_stations', arguments: {} });
+
+    assert.deepEqual(calls, ['GET /api/v1/fuel-stations/favorites/details']);
+    assert.match(textOf(result), /risque de rupture avant/);
+  });
+
+  it('ajoute une station favorite par PUT', async () => {
+    const { client, calls } = await connect({
+      '/api/v1/fuel-stations/favorites/69003001': { status: 204, body: undefined },
+    });
+
+    const result = await client.callTool({ name: 'add_favorite_station', arguments: { id: '69003001' } });
+
+    assert.deepEqual(calls, ['PUT /api/v1/fuel-stations/favorites/69003001']);
+    assert.match(textOf(result), /ajoutée aux favorites/);
+  });
+
+  it('retire une station favorite', async () => {
+    const { client, calls } = await connect({
+      '/api/v1/fuel-stations/favorites/69003001': { status: 204, body: undefined },
+    });
+
+    const result = await client.callTool({ name: 'remove_favorite_station', arguments: { id: '69003001' } });
+
+    assert.deepEqual(calls, ['DELETE /api/v1/fuel-stations/favorites/69003001']);
+    assert.match(textOf(result), /retirée des favorites/);
+  });
+
+  // Un identifiant non numérique ne doit pas devenir un chemin d'URL arbitraire.
+  it('refuse un identifiant de station non numérique sans appel réseau', async () => {
+    const { client, calls } = await connect({});
+
+    const result = await client.callTool({ name: 'add_favorite_station', arguments: { id: '../keywords' } });
+
+    assert.equal(result.isError, true);
+    assert.deepEqual(calls, []);
   });
 
   // Une erreur métier doit revenir comme un résultat d'outil en échec : l'agent

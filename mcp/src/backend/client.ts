@@ -21,6 +21,13 @@ export type ProductSearchResult = Schemas['ProductSearchResponse'];
 export type KeywordDeals = Schemas['KeywordDealsResponse'];
 export type Dashboard = Schemas['DashboardResponse'];
 export type TrackedUrlSummary = Schemas['TrackedUrlSummaryResponse'];
+export type FuelCode = Schemas['FuelPriceResponse']['code'];
+export type FuelPrice = Schemas['FuelPriceResponse'];
+export type FuelStation = Schemas['FuelStationResponse'];
+export type FuelStationSearchResult = Schemas['FuelStationSearchResponse'];
+export type FavoriteFuel = Schemas['FavoriteFuelResponse'];
+export type FavoriteStationDetails = Schemas['FavoriteStationDetailsResponse'];
+export type FavoriteStationDetailsList = Schemas['FavoriteStationDetailsListResponse'];
 
 /** Filtres de `/keywords/{keyword}/products`, déjà normalisés par l'outil MCP. */
 export interface ProductSearchParams {
@@ -30,6 +37,16 @@ export interface ProductSearchParams {
   maxPrice?: number;
   sort?: 'deals' | 'price_asc' | 'price_desc' | 'discount';
   page?: number;
+}
+
+/** Paramètres de `/fuel-stations`, déjà validés par l'outil MCP. */
+export interface FuelStationSearchParams {
+  latitude: number;
+  longitude: number;
+  radiusKm?: number;
+  fuel?: FuelCode;
+  sort?: 'distance' | 'price';
+  brand?: string;
 }
 
 export class BackendError extends Error {
@@ -136,6 +153,29 @@ export class BackendClient {
     await this.request<void>(`/favorites/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  searchFuelStations(params: FuelStationSearchParams): Promise<FuelStationSearchResult> {
+    return this.request<FuelStationSearchResult>(
+      `/fuel-stations${buildFuelStationQueryString(params)}`,
+    );
+  }
+
+  listFavoriteStationDetails(): Promise<FavoriteStationDetailsList> {
+    return this.request<FavoriteStationDetailsList>('/fuel-stations/favorites/details');
+  }
+
+  /** `PUT` idempotent : 204 que la station soit déjà favorite ou non. */
+  async addFavoriteStation(stationId: string): Promise<void> {
+    await this.request<void>(`/fuel-stations/favorites/${encodeURIComponent(stationId)}`, {
+      method: 'PUT',
+    });
+  }
+
+  async removeFavoriteStation(stationId: string): Promise<void> {
+    await this.request<void>(`/fuel-stations/favorites/${encodeURIComponent(stationId)}`, {
+      method: 'DELETE',
+    });
+  }
+
   /** Sonde de disponibilité utilisée par `/health/ready`. */
   async isBackendReady(): Promise<boolean> {
     try {
@@ -207,4 +247,19 @@ export function buildQueryString(params: ProductSearchParams): string {
   if (params.page !== undefined && params.page > 1) query.set('page', String(params.page));
   const serialised = query.toString();
   return serialised ? `?${serialised}` : '';
+}
+
+/**
+ * Mêmes règles que `buildQueryString` : seuls les paramètres renseignés
+ * partent, sous les noms courts du backend (`lat`, `lng`).
+ */
+export function buildFuelStationQueryString(params: FuelStationSearchParams): string {
+  const query = new URLSearchParams();
+  query.set('lat', String(params.latitude));
+  query.set('lng', String(params.longitude));
+  if (params.radiusKm !== undefined) query.set('radiusKm', String(params.radiusKm));
+  if (params.fuel) query.set('fuel', params.fuel);
+  if (params.sort) query.set('sort', params.sort);
+  if (params.brand) query.set('brand', params.brand);
+  return `?${query.toString()}`;
 }
