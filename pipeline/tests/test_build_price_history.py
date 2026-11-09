@@ -127,9 +127,11 @@ class TestIdentiteArticle:
         "ean": "3014260610807",
         "brand": "Ariel",
         "mpn": "8001841234567",
-        "quantity": {"amount": 1.5, "unit": "L"},
-        "packSize": None,
-        "doses": 60,
+        "packSize": 2,
+        "quantity": {"amount": 3.0, "unit": "L"},
+        "unitQuantity": {"amount": 1.5, "unit": "L"},
+        "doses": 120,
+        "unitDoses": 60,
     }
 
     def test_identite_remontee_sur_le_document(self, db):
@@ -140,8 +142,11 @@ class TestIdentiteArticle:
         assert doc["ean"] == "3014260610807"
         assert doc["brand"] == "Ariel"
         assert doc["mpn"] == "8001841234567"
-        assert doc["quantity"] == {"amount": 1.5, "unit": "L"}
-        assert doc["doses"] == 60
+        assert doc["packSize"] == 2
+        assert doc["quantity"] == {"amount": 3.0, "unit": "L"}
+        assert doc["unitQuantity"] == {"amount": 1.5, "unit": "L"}
+        assert doc["doses"] == 120
+        assert doc["unitDoses"] == 60
 
     def test_un_releve_degrade_n_efface_pas_l_identite(self, db):
         """Le cœur de la règle : Amazon rend parfois une page sans sa section
@@ -149,14 +154,18 @@ class TestIdentiteArticle:
         disparaîtrait — et avec lui sa seule clé de rapprochement."""
         db["items_raw"].insert_many([
             raw_item("u1", D, 10.0, **self.IDENTITY),
-            raw_item("u1", D + timedelta(days=1), 9.0, ean=None, brand=None, quantity=None),
+            raw_item(
+                "u1", D + timedelta(days=1), 9.0,
+                ean=None, brand=None, packSize=None, quantity=None, unitQuantity=None,
+            ),
         ])
         build_price_history(db)
 
         doc = db["price_history"].find_one({"_id": "u1"})
         assert doc["ean"] == "3014260610807"
         assert doc["brand"] == "Ariel"
-        assert doc["quantity"] == {"amount": 1.5, "unit": "L"}
+        assert doc["packSize"] == 2
+        assert doc["unitQuantity"] == {"amount": 1.5, "unit": "L"}
 
     def test_une_identite_corrigee_remplace_la_precedente(self, db):
         """« Dernière non nulle » et non « première » : si Amazon corrige la
@@ -178,6 +187,9 @@ class TestIdentiteArticle:
         build_price_history(db)
 
         doc = db["price_history"].find_one({"_id": "u1"})
-        for field in ("ean", "brand", "mpn", "quantity", "packSize", "doses"):
+        for field in (
+            "ean", "brand", "mpn",
+            "packSize", "quantity", "unitQuantity", "doses", "unitDoses",
+        ):
             assert field in doc, f"{field} absent du document"
             assert doc[field] is None

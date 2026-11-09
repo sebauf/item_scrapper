@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAmazonDetails, splitDetailBullet } from './AmazonIdentityParser.js';
+import { parseAmazonDetails, readItemCount, splitDetailBullet } from './AmazonIdentityParser.js';
 
 /**
  * Les puces reproduisent le balisage réel d'Amazon, marques directionnelles
@@ -64,6 +64,38 @@ describe('AmazonIdentityParser', () => {
     });
   });
 
+  describe('nombre d’articles', () => {
+    it('lit « Nombre d’articles », marques invisibles comprises', () => {
+      const entry = splitDetailBullet('Nombre d’articles‏ : ‎2')!;
+      assert.equal(parseAmazonDetails([entry]).packSize, 2);
+    });
+
+    it('accepte l’entier écrit en flottant ou suivi de son unité', () => {
+      assert.equal(readItemCount('1.0'), 1);
+      assert.equal(readItemCount('3,0'), 3);
+      assert.equal(readItemCount('6 unités'), 6);
+    });
+
+    it('écarte une contenance publiée à la place d’un nombre', () => {
+      assert.equal(readItemCount('1500.0 millilitre'), null);
+      assert.equal(readItemCount('1,5'), null);
+      assert.equal(readItemCount('0'), null);
+    });
+
+    it('ignore « Nombre d’unités », qui porte souvent une contenance', () => {
+      const identity = parseAmazonDetails([{ label: 'Nombre d’unités', value: '3' }]);
+      assert.equal(identity.packSize, null);
+    });
+
+    it('refuse de choisir entre deux déclarations différentes', () => {
+      const identity = parseAmazonDetails([
+        { label: 'Nombre d’articles', value: '1' },
+        { label: "Nombre d'articles", value: '2' },
+      ]);
+      assert.equal(identity.packSize, null);
+    });
+  });
+
   describe('refus', () => {
     it('refuse de choisir quand la fiche porte plusieurs EAN', () => {
       // Cas réel des lots : Amazon liste les codes de chaque référence.
@@ -104,6 +136,7 @@ describe('AmazonIdentityParser', () => {
         mpn: null,
         asin: null,
         ambiguousEan: false,
+        packSize: null,
       });
     });
   });

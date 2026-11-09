@@ -155,7 +155,7 @@ export function createAmazonProductHandler(
       eanSource: identity.eanSource,
     });
 
-    // Les deux refus d'identité sont journalisés : ce sont eux qu'il faudra
+    // Les refus d'identité sont journalisés : ce sont eux qu'il faudra
     // surveiller si le taux d'extraction se dégrade après une refonte
     // d'Amazon. Ils ne bloquent rien — la fiche est enregistrée sans
     // identifiant, et la cascade de rapprochement sait faire avec.
@@ -166,6 +166,20 @@ export function createAmazonProductHandler(
       log.warning('Contenances multiples dans le titre : contenance non retenue', {
         url: request.url,
         title,
+      });
+    }
+    if (identity.quantity.dosesAmbiguous) {
+      log.warning('Doses indécidables (unité ou lot ?) : doses non retenues', {
+        url: request.url,
+        title,
+      });
+    }
+    if (identity.pack.issue !== null) {
+      log.warning('Nombre d\'unités du titre et de la fiche en désaccord', {
+        url: request.url,
+        issue: identity.pack.issue,
+        titlePackSize: identity.quantity.packSize,
+        declaredPackSize: identity.packSize,
       });
     }
 
@@ -183,9 +197,11 @@ export function createAmazonProductHandler(
       ean: identity.ean,
       brand: identity.brand,
       mpn: identity.mpn,
-      quantity: identity.quantity.quantity,
-      packSize: identity.quantity.packSize,
-      doses: identity.quantity.doses,
+      quantity: identity.pack.quantity,
+      unitQuantity: identity.pack.unitQuantity,
+      packSize: identity.pack.packSize,
+      doses: identity.pack.doses,
+      unitDoses: identity.pack.unitDoses,
     });
 
     const currentAsin = request.url.match(PRODUCT_ASIN_RE)?.[1] ?? null;

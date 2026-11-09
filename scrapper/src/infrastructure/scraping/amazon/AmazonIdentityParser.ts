@@ -35,6 +35,11 @@ export interface AmazonIdentity {
   asin: string | null;
   /** Plusieurs codes-barres distincts sur la fiche : identité indécidable. */
   ambiguousEan: boolean;
+  /**
+   * Nombre d'unités déclaré par la caractéristique « Nombre d'articles »,
+   * `null` s'il est absent, illisible ou déclaré deux fois différemment.
+   */
+  packSize: number | null;
 }
 
 export const EMPTY_IDENTITY: AmazonIdentity = {
@@ -43,12 +48,20 @@ export const EMPTY_IDENTITY: AmazonIdentity = {
   mpn: null,
   asin: null,
   ambiguousEan: false,
+  packSize: null,
 };
 
 /** Marques directionnelles et séparateurs invisibles semés par Amazon. */
 const BIDI_MARKS = /[​-‏؜‪-‮⁦-⁩﻿]/g;
 
 const ASIN_RE = /\b([A-Z0-9]{10})\b/;
+
+/**
+ * « 3 », « 3,0 », « 3.0 », « 3 unités » — Amazon affiche parfois l'entier en
+ * flottant. Toute autre forme (« 1500.0 millilitre ») est écartée : ce n'est
+ * plus un nombre d'articles.
+ */
+const ITEM_COUNT_RE = /^(\d+)(?:[.,]0+)?(?:\s*(?:unites?|articles?|pieces?))?$/i;
 
 function clean(raw: string): string {
   return raw.replace(BIDI_MARKS, '').replace(/\s+/g, ' ').trim();
@@ -83,6 +96,15 @@ export function splitDetailBullet(raw: string): DetailEntry | null {
   return { label, value };
 }
 
+/** Nombre d'articles, ou `null` si la valeur n'en est pas un. */
+export function readItemCount(value: string): number | null {
+  const folded = clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const match = ITEM_COUNT_RE.exec(folded);
+  if (!match) return null;
+  const count = Number(match[1]);
+  return Number.isInteger(count) && count > 0 ? count : null;
+}
+
 /**
  * Tous les GTIN valides d'une valeur, dédoublonnés.
  *
@@ -107,6 +129,10 @@ const LABEL_MATCHERS = {
   // Libellé exact : « Référence fabricant » et « Numéro de pièce du
   // fabricant » contiennent le mot sans désigner la marque.
   manufacturer: (label: string) => /^fabricant$/.test(label),
+  // « Nombre d'articles » seulement. « Nombre d'unités » est écarté à dessein :
+  // Amazon y publie souvent une contenance (« 1500.0 millilitre ») qui sert à
+  // son prix unitaire, pas un nombre d'articles.
+  itemCount: (label: string) => /^nombre d.articles$/.test(label),
   mpn: (label: string) =>
     /numero du modele/.test(label) ||
     /reference fabricant/.test(label) ||
@@ -125,6 +151,7 @@ export function parseAmazonDetails(entries: readonly DetailEntry[]): AmazonIdent
   let manufacturer: string | null = null;
   let mpn: string | null = null;
   let asin: string | null = null;
+  const itemCounts = new Set<number | null>();
 
   for (const entry of entries) {
     const label = normalizeLabel(entry.label);
@@ -134,6 +161,7 @@ export function parseAmazonDetails(entries: readonly DetailEntry[]): AmazonIdent
     if (LABEL_MATCHERS.ean(label)) readGtins(value).forEach((code) => eanCodes.add(code));
     else if (LABEL_MATCHERS.upc(label)) readGtins(value).forEach((code) => upcCodes.add(code));
     else if (LABEL_MATCHERS.asin(label) && asin === null) asin = ASIN_RE.exec(value)?.[1] ?? null;
+    else if (LABEL_MATCHERS.itemCount(label)) itemCounts.add(readItemCount(value));
     // La référence passe avant la marque et le fabricant : son libellé les
     // contient souvent, l'ordre inverse la classerait au mauvais endroit.
     else if (LABEL_MATCHERS.mpn(label) && mpn === null) mpn = value;
@@ -154,5 +182,8 @@ export function parseAmazonDetails(entries: readonly DetailEntry[]): AmazonIdent
     mpn,
     asin,
     ambiguousEan,
+    // Même règle que l'EAN : deux déclarations différentes, ou une illisible,
+    // et l'on ne choisit pas.
+    packSize: itemCounts.size === 1 ? [...itemCounts][0] : null,
   };
 }

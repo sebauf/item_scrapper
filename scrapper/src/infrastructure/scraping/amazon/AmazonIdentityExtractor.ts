@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 import { mergeJsonLdProducts, parseJsonLdProducts, type JsonLdProduct } from '../shared/JsonLdParser.js';
 import { parseQuantity, type ParsedQuantity } from '../shared/QuantityParser.js';
+import { reconcilePack, type PackIdentity } from '../shared/PackReconciler.js';
 import {
   EMPTY_IDENTITY,
   parseAmazonDetails,
@@ -28,7 +29,10 @@ export interface ExtractedIdentity extends AmazonIdentity {
   jsonLd: JsonLdProduct | null;
   /** Nombre de blocs `application/ld+json` présents, publiant un produit ou non. */
   jsonLdScriptCount: number;
+  /** Ce que le titre seul dit du conditionnement — conservé pour la mesure. */
   quantity: ParsedQuantity;
+  /** Conditionnement retenu : titre croisé avec « Nombre d'articles ». */
+  pack: PackIdentity;
   /** D'où vient l'EAN finalement retenu — mesure clé du spike. */
   eanSource: 'json-ld' | 'details' | null;
 }
@@ -84,6 +88,7 @@ export async function extractAmazonIdentity(page: Page, title: string): Promise<
   const jsonLd = mergeJsonLdProducts(parseJsonLdProducts(scripts));
   const details = entries.length > 0 ? parseAmazonDetails(entries) : EMPTY_IDENTITY;
 
+  const quantity = parseQuantity(title);
   const ean = jsonLd?.gtin ?? details.ean;
   const eanSource = jsonLd?.gtin ? 'json-ld' : details.ean ? 'details' : null;
 
@@ -94,8 +99,10 @@ export async function extractAmazonIdentity(page: Page, title: string): Promise<
     mpn: details.mpn ?? jsonLd?.mpn ?? null,
     asin: details.asin,
     ambiguousEan: details.ambiguousEan,
+    packSize: details.packSize,
     jsonLd,
     jsonLdScriptCount: scripts.length,
-    quantity: parseQuantity(title),
+    quantity,
+    pack: reconcilePack(quantity, details.packSize),
   };
 }

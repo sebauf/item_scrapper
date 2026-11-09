@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { PlaywrightCrawler } from 'crawlee';
 import { MongoClient } from 'mongodb';
 import { extractAmazonIdentity, type ExtractedIdentity } from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
+import { EMPTY_PARSED_QUANTITY } from '../infrastructure/scraping/shared/QuantityParser.js';
+import { EMPTY_PACK } from '../infrastructure/scraping/shared/PackReconciler.js';
 
 /**
  * Harnais de mesure du spike « extraction d'identité Amazon ».
@@ -46,6 +48,11 @@ interface Observation {
   quantityUnit: string | null;
   quantityAmbiguous: boolean;
   doses: number | null;
+  dosesAmbiguous: boolean;
+  titlePackSize: number | null;
+  declaredPackSize: number | null;
+  packSize: number | null;
+  packIssue: string | null;
 }
 
 function readArg(name: string): string | null {
@@ -107,7 +114,12 @@ function toObservation(url: string, title: string, identity: ExtractedIdentity):
     quantityAmount: identity.quantity.quantity?.amount ?? null,
     quantityUnit: identity.quantity.quantity?.unit ?? null,
     quantityAmbiguous: identity.quantity.ambiguous,
-    doses: identity.quantity.doses,
+    doses: identity.pack.doses,
+    dosesAmbiguous: identity.quantity.dosesAmbiguous,
+    titlePackSize: identity.quantity.packSize,
+    declaredPackSize: identity.packSize,
+    packSize: identity.pack.packSize,
+    packIssue: identity.pack.issue,
   };
 }
 
@@ -135,6 +147,12 @@ function report(observations: readonly Observation[]): void {
     ['Contenance normalisée depuis le titre', count((r) => r.quantityAmount !== null)],
     ['  écartée car titre ambigu', count((r) => r.quantityAmbiguous)],
     ['Nombre de doses / lavages', count((r) => r.doses !== null)],
+    ['  écarté car unité ou lot indécidable', count((r) => r.dosesAmbiguous)],
+    ['Lot écrit dans le titre', count((r) => r.titlePackSize !== null)],
+    ['« Nombre d\'articles » déclaré par la fiche', count((r) => r.declaredPackSize !== null)],
+    ['Nombre d\'unités établi', count((r) => r.packSize !== null)],
+    ['  désaccord titre / fiche', count((r) => r.packIssue === 'pack-conflict')],
+    ['  lot déclaré, contenance unitaire inconnue', count((r) => r.packIssue === 'per-unit-undetermined')],
   ];
 
   const blocked = observations.length - n;
@@ -145,8 +163,12 @@ function report(observations: readonly Observation[]): void {
   }
 
   const identifiable = count((r) => r.ean !== null);
+  // La clé stricte est (EAN, nombre d'unités) : un EAN seul ne distingue pas
+  // une bouteille d'un lot de deux constitué par le vendeur.
+  const strict = count((r) => r.ean !== null && r.packSize !== null);
   const comparable = count((r) => r.ean !== null || (r.brand !== null && r.quantityAmount !== null));
   console.log(`\nRapprochement déterministe possible (EAN)      : ${percent(identifiable, n)}`);
+  console.log(`Comparaison stricte possible (EAN + lot établi): ${percent(strict, n)}`);
   console.log(`Rapprochement possible EAN ou marque+contenance: ${percent(comparable, n)}`);
   if (blocked > 0) {
     console.log(
@@ -216,16 +238,11 @@ async function main(): Promise<void> {
           mpn: null,
           asin: null,
           ambiguousEan: false,
+          packSize: null,
           jsonLd: null,
           jsonLdScriptCount: 0,
-          quantity: {
-            quantity: null,
-            packSize: null,
-            perPack: null,
-            doses: null,
-            ambiguous: false,
-            raw: null,
-          },
+          quantity: EMPTY_PARSED_QUANTITY,
+          pack: EMPTY_PACK,
         }),
       );
     },

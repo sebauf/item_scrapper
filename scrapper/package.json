@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx \"src/**/*.spec.ts\"",
     "migrate:legacy-data": "tsx src/scripts/migrateLegacyData.ts",
+    "migrate:reparse-quantities": "tsx src/scripts/reparseQuantities.ts",
     "spike:jsonld": "tsx src/scripts/spikeJsonLd.ts"
   },
   "dependencies": {

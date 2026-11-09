@@ -238,8 +238,14 @@ Pour chaque paire candidate (offre_A, offre_B) :
 
   ① Décision humaine enregistrée ?          → on la respecte, point final.
                                               (elle prime toujours)
-  ② EAN_A et EAN_B présents et égaux ?      → EXACT     (confiance 1.00)
+  ② EAN_A = EAN_B
+     ET packSize_A = packSize_B (établis)
+     ET aucune contradiction sur les
+        grandeurs unitaires                  → EXACT     (confiance 1.00)
                                               auto-accepté
+     (EAN égaux, lots différents             → MÊME ARTICLE, AUTRE LOT :
+                                              prix par unité seulement,
+                                              jamais « strict »)
   ③ marque égale
      ET contenance normalisée égale (±1 %)
      ET (similarité titre ≥ seuil
@@ -249,6 +255,16 @@ Pour chaque paire candidate (offre_A, offre_B) :
                                               → jamais affiché comme
                                                 comparaison stricte
 ```
+
+**L'EAN seul ne suffit pas — ajout postérieur à l'étude.** Un EAN désigne
+l'unité fabriquée (la bouteille). Un lot constitué par le *vendeur* (« lot de
+2 » Amazon, Marketplace, certains drives) reprend en général l'EAN de cette
+bouteille ; seul un lot fabriqué par la marque (banderolé, « +20 % gratuit »)
+reçoit son propre code. Comparer sur l'EAN seul afficherait donc « deux fois
+plus cher » une offre qui contient deux fois plus. La clé stricte est
+`(ean, packSize)`, et `packSize` n'est retenu qu'établi : `1` sur déclaration
+de la fiche, jamais parce que le titre se tait (cf. `scrapper/README.md`,
+section *Identité*).
 
 **Règle de strictesse — la plus importante de l'étude :** seuls les
 rapprochements `EXACT` et les `PROBABLE` **validés humainement** alimentent
@@ -336,11 +352,12 @@ Aucune migration destructrice. Deux collections à créer :
 
 ```js
 {
-  _id: "<canonicalId>",           // EAN si connu, sinon hash(marque|contenance|libellé)
+  _id: "<canonicalId>",           // "<EAN>x<packSize>" si connus, sinon hash(marque|contenance|libellé)
   ean: "3014260610807" | null,
   brand: "Ariel",
   label: "Lessive liquide Original",
-  quantity: { amount: 1.5, unit: "L" },
+  packSize: 1,
+  unitQuantity: { amount: 1.5, unit: "L" },
   offers: [
     { url: "https://www.amazon.fr/dp/B0…/", shop: "amazon",
       confidence: 1.0,  method: "ean",   decidedBy: "auto" },
