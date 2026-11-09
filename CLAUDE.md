@@ -148,7 +148,8 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/application/SeedKeywordsUseCase.ts` — seeds missing keywords into DB
 - `src/infrastructure/scraping/amazon/AmazonCrawler.ts` — configures `PlaywrightCrawler`, routes search vs product pages
 - `src/infrastructure/scraping/amazon/AmazonSearchHandler.ts` — enqueues product URLs from search results
-- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page
+- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page; checks availability **before** the price
+- `src/infrastructure/scraping/amazon/AmazonOfferParser.ts` — offer rules (pur) : « Actuellement indisponible » → `markUnavailable`, no price recorded; price read **only** inside the product's own price blocks (`#apex_desktop`, `#corePriceDisplay_desktop_feature_div`…), never from a page-wide `.a-price` — on an unavailable page that is the price of a *replacement* article. Prices on the page but none in those blocks → saved with `price: null` and a warning (third-party sellers only, or selectors outdated by a redesign)
 - `src/infrastructure/scraping/amazon/PriceParser.ts` — normalises Amazon price strings
 - `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin }` (pur)
 - `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright + ordre de la cascade d'identité
@@ -202,7 +203,7 @@ Scoring logic (no trained model, no cross-product comparison):
 - Requires `MIN_OBSERVATIONS = 5` prior prices **kept by the filter** inside the 30-day window (`n_inliers`); products with fewer are skipped
 - `trendDirection` must flag a move **the day it happens**. Two signals, in order: (1) *same-day move* — today's price outside the product's usual range (`features.usual_price_range`: the Hampel band of the prior 30 days, never narrower than ±5 %, wider for volatile products) → `down` / `up`; (2) otherwise the *trajectory* — Theil–Sen slope (median of pairwise slopes, `score.theil_sen_slope`) over the whole price history, relative to its median price, threshold ±0.5 %/day. Least squares caught same-day moves only through the last point's leverage — the same leverage that let one misread price in the history flip the trend
 - Stale/unreliable scores are deleted from `deal_scores` after each run
-- Products flagged `unavailable` in `price_history` (page redirected away on last visit) are skipped outright, whatever their price freshness
+- Products flagged `unavailable` in `price_history` (page redirected away, or « Actuellement indisponible », on last visit) are skipped outright, whatever their price freshness
 
 ### Airflow DAGs
 
@@ -625,7 +626,7 @@ keywords, favourites, tracked URLs and favourite stations, and nothing else.
 
 - DB: `scrapper`
 - `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`, plus l'identité de l'article : `ean` (GTIN-13 vérifié), `brand`, `mpn`, et le conditionnement — `packSize` (nombre d'unités ; `1` seulement si la fiche le déclare, `null` = non établi), `quantity` / `doses` (totaux de l'offre, `{ amount, unit }` en L ou kg pour la contenance), `unitQuantity` / `unitDoses` (par unité) — tous nullables, une fiche ne publiant pas toujours son code-barres. Un lot constitué par le vendeur reprend l'EAN de l'unité : la clé de comparaison stricte est `(ean, packSize)`, jamais l'EAN seul
-- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `packSize`, `quantity`, `unitQuantity`, `doses`, `unitDoses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
+- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `packSize`, `quantity`, `unitQuantity`, `doses`, `unitDoses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away or announces « Actuellement indisponible » (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `brand` (unified OSM brand or null), `name` (OSM station name or null), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
 - `keywords` — one doc per scraped term; `keyword` (unique), `enabled` (read by the scrapper, derived from `subscribers`), `subscribers[]` (emails of the users tracking it). Written by the backend (and seeded by the scrapper on an empty collection)

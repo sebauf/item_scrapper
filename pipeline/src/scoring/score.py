@@ -39,7 +39,8 @@ product would keep showing its last (possibly days-old) price as today's
 deal.
 
 A product the scrapper has explicitly flagged `unavailable` (its product
-page redirected away on the last visit) is skipped outright, regardless of
+page redirected away, or announced « Actuellement indisponible », on the
+last visit) is skipped outright, regardless of
 how recent its last price is: that flag is a stronger, direct signal than
 staleness-by-age, and would otherwise keep resurfacing as a deal for up to
 STALE_AFTER_DAYS after being confirmed gone. Its price_history is left
