@@ -53,9 +53,9 @@ export interface ParsedQuantity {
    * donc pas dire « vendu à l'unité » : le titre se tait, c'est tout.
    */
   packSize: number | null;
-  /** Doses totales de l'offre (lavages, capsules, tablettes…). */
+  /** Doses ou pièces totales de l'offre (lavages, capsules, brossettes, filtres…). */
   doses: number | null;
-  /** Doses d'une unité du lot. */
+  /** Doses ou pièces d'une unité du lot. */
   unitDoses: number | null;
   /** Contenances incompatibles, ou lot écrit de deux façons contradictoires. */
   ambiguous: boolean;
@@ -121,9 +121,19 @@ const MULTIPLIED_RE = new RegExp(String.raw`${COUNT_PREFIX}\s*[x×*]\s*${VOLUME}
 /** « 1 L x 3 », « 1,36L (x6) » — le multiplicateur suit. */
 const MULTIPLIED_SUFFIX_RE = new RegExp(String.raw`${VOLUME}${TIMES}${COUNT_SUFFIX}`, 'i');
 
-const DOSE_UNITS = String.raw`(?:lavages?|doses?|capsules?|tablettes?|pastilles?|sachets?|lingettes?)\b`;
+/**
+ * Doses et **pièces** consommables : ce qu'une unité contient quand elle ne
+ * se mesure ni en litres ni en kilos. Un blister Oral-B de 8 brossettes est
+ * *une* unité (un EAN) qui contient 8 pièces — exactement comme une boîte de
+ * 40 capsules. Le lot, lui, est un nombre d'unités, pas de pièces.
+ *
+ * Les mots génériques (« unités », « pièces », « articles ») sont exclus à
+ * dessein : « lot de 2 unités » désigne des bouteilles sur une lessive et des
+ * brossettes sur un blister — trop ambigu pour une lecture stricte.
+ */
+const DOSE_UNITS = String.raw`(?:lavages?|doses?|capsules?|tablettes?|pastilles?|sachets?|lingettes?|brossettes?|t[êe]tes?|filtres?|cartouches?|recharges?)\b`;
 
-/** « 60 lavages », « 48 doses », « 30 capsules ». */
+/** « 60 lavages », « 48 doses », « 30 capsules », « 8 brossettes ». */
 const DOSES_RE = new RegExp(String.raw`(\d+)\s*${DOSE_UNITS}`, 'gi');
 
 /** « 3 x 40 tablettes », « 3x38 lavages » — un lot de boîtes, pas une boîte. */
@@ -132,8 +142,16 @@ const MULTIPLIED_DOSES_RE = new RegExp(String.raw`${COUNT_PREFIX}\s*[x×*]\s*(\d
 /** « 40 capsules x 3 ». */
 const MULTIPLIED_DOSES_SUFFIX_RE = new RegExp(String.raw`(\d+)\s*${DOSE_UNITS}${TIMES}${COUNT_SUFFIX}`, 'i');
 
-/** « lot de 3 », « pack de 2 », « paquet de 6 ». */
-const PACK_RE = /(?:lot|pack|paquet|set)\s+de\s+(\d+)\b/i;
+/**
+ * « lot de 3 », « pack de 2 », « paquet de 6 ».
+ *
+ * Sauf quand le nombre est suivi d'un nom de dose ou de pièce : « Pack de 4
+ * brossettes », « Lot de 3 cartouches » décrivent le contenu d'*un* paquet
+ * (le conditionnement du fabricant, qui a son propre EAN), pas quatre ou
+ * trois unités. Si c'était en réalité un lot constitué par le vendeur, le
+ * nombre d'unités resterait non établi — faux négatif, jamais faux positif.
+ */
+const PACK_RE = new RegExp(String.raw`(?:lot|pack|paquet|set)\s+de\s+(\d+)\b(?!\s*${DOSE_UNITS})`, 'i');
 
 function toNumber(raw: string): number {
   return Number(raw.replace(',', '.'));

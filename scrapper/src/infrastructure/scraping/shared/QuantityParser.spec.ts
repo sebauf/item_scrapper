@@ -200,6 +200,53 @@ describe('QuantityParser', () => {
     });
   });
 
+  describe('pièces — brossettes, filtres, cartouches', () => {
+    it('compte les brossettes d’un blister comme des pièces, pas comme un lot', () => {
+      const parsed = parseQuantity('Oral-B CrossAction Brossettes De Rechange, 8 Brossettes');
+      assert.equal(parsed.unitDoses, 8);
+      assert.equal(parsed.doses, 8);
+      assert.equal(parsed.packSize, null);
+    });
+
+    it('lit « Pack de 4 brossettes » comme le contenu d’un paquet', () => {
+      const parsed = parseQuantity('Oral-B Pro CrossAction Pack de 4 Brossettes');
+      assert.equal(parsed.packSize, null);
+      assert.equal(parsed.unitDoses, 4);
+      assert.equal(parsed.dosesAmbiguous, false);
+    });
+
+    it('lit les filtres et cartouches, singulier ou pluriel', () => {
+      assert.equal(parseQuantity('BRITA Cartouches Filtrantes MAXTRA PRO All-in-1 - Pack de 6 filtres').unitDoses, 6);
+      assert.equal(parseQuantity('Brita Maxtra+ 3 cartouches').unitDoses, 3);
+      assert.equal(parseQuantity('Recharge 1 filtre').unitDoses, 1);
+    });
+
+    it('reconnaît « têtes » avec ou sans accent, en majuscules', () => {
+      assert.equal(parseQuantity('Oral-B 10 Têtes de brosse').unitDoses, 10);
+      assert.equal(parseQuantity('ORAL-B 10 TÊTES DE BROSSE').unitDoses, 10);
+      assert.equal(parseQuantity('Oral-B 10 tetes de brosse').unitDoses, 10);
+    });
+
+    it('un lot de paquets reste un lot : « 2 x 4 brossettes »', () => {
+      const parsed = parseQuantity('Oral-B CrossAction 2 x 4 brossettes');
+      assert.equal(parsed.packSize, 2);
+      assert.equal(parsed.unitDoses, 4);
+      assert.equal(parsed.doses, 8);
+    });
+
+    it('un « lot de N » suivi d’autre chose qu’une pièce reste un lot', () => {
+      const parsed = parseQuantity('Brita Maxtra Pro 6 filtres - Lot de 2');
+      assert.equal(parsed.packSize, 2);
+      // Un nombre de pièces unique sur un lot : par paquet ou en tout ? Refusé.
+      assert.equal(parsed.dosesAmbiguous, true);
+    });
+
+    it('n’interprète pas les mots génériques « unités » ou « pièces »', () => {
+      const parsed = parseQuantity('Oral-B Brossettes, 10 unités');
+      assert.equal(parsed.unitDoses, null);
+    });
+  });
+
   describe('refus — la strictesse passe avant la couverture', () => {
     it('refuse un lot hétérogène plutôt que de choisir une contenance', () => {
       const parsed = parseQuantity('Coffret Lessive 1 L + Adoucissant 750 ml');
