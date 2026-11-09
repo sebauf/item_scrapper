@@ -45,10 +45,24 @@ export interface Product {
   brand: string | null;
   /** Référence fabricant, second identifiant quand l'EAN manque. */
   mpn: string | null;
-  /** Contenance totale, multiplicateur de lot appliqué. */
-  quantity: Quantity | null;
-  /** Nombre d'unités du lot (« lot de 3 »), `null` si vendu à l'unité. */
+  //
+  // Conditionnement. Un EAN désigne l'unité fabriquée (la bouteille) ; un lot
+  // constitué par le vendeur reprend souvent ce même EAN. Deux offres ne sont
+  // donc identiques que si elles ont même EAN **et** même `packSize` — d'où
+  // la séparation entre grandeurs par unité (l'article) et totales (l'offre).
+
+  /**
+   * Nombre d'unités vendues ensemble. `1` = vendu à l'unité, déclaré par la
+   * fiche ; `null` = non établi (titre muet et fiche muette, ou désaccord).
+   * Un titre sans « lot de » ne suffit pas à écrire `1`.
+   */
   packSize: number | null;
-  /** Nombre de lavages / doses / capsules annoncé. */
+  /** Contenance totale de l'offre, multiplicateur de lot appliqué. */
+  quantity: Quantity | null;
+  /** Contenance d'une unité du lot. */
+  unitQuantity: Quantity | null;
+  /** Nombre total de lavages / doses / capsules de l'offre. */
   doses: number | null;
+  /** Nombre de lavages / doses / capsules d'une unité du lot. */
+  unitDoses: number | null;
 }

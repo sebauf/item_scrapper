@@ -251,31 +251,54 @@ distinguer « inconnu » de « pas encore relevé ».
 
 ## 8. Mesurer la couverture sur le corpus réel
 
-Une fois quelques scrapes passés, le chiffre décisif se lit sans harnais :
+Une fois quelques scrapes passés, le chiffre décisif se lit **dans la base**,
+sans harnais et sans une seule requête de plus vers Amazon :
 
-```js
-// mongosh, base `scrapper`
-db.price_history.aggregate([
-  { $match: { shop: 'amazon', unavailable: { $ne: true } } },
-  { $group: {
-      _id: null,
-      produits:    { $sum: 1 },
-      avecEan:     { $sum: { $cond: [{ $ne: ['$ean', null] }, 1, 0] } },
-      avecMarque:  { $sum: { $cond: [{ $ne: ['$brand', null] }, 1, 0] } },
-      avecContenance: { $sum: { $cond: [{ $ne: ['$quantity', null] }, 1, 0] } },
-  } },
-  { $project: {
-      produits: 1,
-      tauxEan:        { $round: [{ $multiply: [{ $divide: ['$avecEan', '$produits'] }, 100] }, 1] },
-      tauxMarque:     { $round: [{ $multiply: [{ $divide: ['$avecMarque', '$produits'] }, 100] }, 1] },
-      tauxContenance: { $round: [{ $multiply: [{ $divide: ['$avecContenance', '$produits'] }, 100] }, 1] },
-  } },
-])
+```bash
+cd pipeline
+MONGODB_URI=mongodb://<hôte>:<port> python -m src.reports.identity_coverage
+python -m src.reports.identity_coverage --all     # inclut les fiches non relues
+python -m src.reports.identity_coverage --json    # pour archiver la mesure
 ```
 
-`tauxEan` se lit avec la grille du §5. Le harnais `npm run spike:jsonld` reste
-utile pour un point précis que la base ne dit pas : **d'où** vient l'EAN
-(JSON-LD ou caractéristiques), donc si l'attente du §2 se vérifie.
+Dans le cluster, depuis l'image du pipeline (publiée sur `main`), avec les
+mêmes variables que les tâches Airflow :
 
-Attendre au moins deux ou trois scrapes avant de conclure : sur un seul run,
-les pages bloquées par Amazon tirent artificiellement le taux vers le bas.
+```bash
+IMAGE=ghcr.io/<owner>/<repo>-pipeline:main
+kubectl -n price-tracker run identity-report --rm -i --restart=Never \
+  --image="$IMAGE" --image-pull-policy=Always \
+  --overrides='{"spec":{"imagePullSecrets":[{"name":"ghcr-pull-secret"}],
+    "containers":[{"name":"identity-report","image":"'"$IMAGE"'",
+    "command":["python","-m","src.reports.identity_coverage"],
+    "envFrom":[{"secretRef":{"name":"price-tracker-secrets"}}]}]}}'
+```
+
+Le rapport (`pipeline/src/reports/identity_coverage.py`, lecture seule)
+applique la règle de fraîcheur des écrans — seules comptent les offres relues
+au dernier passage — et donne :
+
+- la couverture de chaque champ d'identité, dont le **nombre d'unités établi** ;
+- la répartition en trois classes qui partitionnent le catalogue :
+  ① **clé stricte (EAN + nombre d'unités)**, ② sans EAN mais marque + lot +
+  mesure unitaire (rapprochable *après validation humaine* : c'est la charge
+  de curation), ③ non comparable ;
+- le verdict de la grille du §5, appliquée à ① et non plus à l'EAN seul ;
+- le détail par mot-clé ;
+- les **EAN portés par plusieurs fiches Amazon** avec des nombres d'unités
+  différents, exemples à l'appui — la preuve, chez une seule enseigne, qu'un
+  rapprochement sur l'EAN seul confondrait une bouteille et un lot.
+
+> La requête mongosh qui figurait ici mesurait l'EAN seul. Elle surestime ce
+> qui est comparable strictement : un EAN sans nombre d'unités établi peut
+> désigner un lot constitué par le vendeur (cf. `scrapper/README.md`,
+> section *Identité*). Le rapport la remplace.
+
+Le harnais `npm run spike:jsonld` reste utile pour ce que la base ne dit pas :
+**d'où** vient l'EAN (JSON-LD ou caractéristiques) et si « Nombre d'articles »
+est publié — il visite des fiches, la base non.
+
+Attendre au moins deux ou trois scrapes **après le déploiement** de la lecture
+du nombre d'unités (et la migration `migrate:reparse-quantities`) avant de
+conclure : sur un seul run, les pages bloquées tirent le taux vers le bas, et
+les relevés antérieurs n'ont pas de « Nombre d'articles ».

@@ -155,9 +155,30 @@ facultatifs** : une fiche ne publie pas toujours son code-barres.
 | `ean` | `string \| null` | GTIN-13, vérifié par sa clé de contrôle ; `null` si absent, invalide **ou ambigu** |
 | `brand` | `string \| null` | |
 | `mpn` | `string \| null` | référence fabricant — second identifiant quand l'EAN manque |
-| `quantity` | `{ amount, unit } \| null` | contenance totale ramenée au litre ou au kilo, multiplicateur de lot appliqué |
-| `packSize` | `number \| null` | « lot de 3 », « 3 × 1 L » ; `null` si vendu à l'unité |
-| `doses` | `number \| null` | nombre de lavages / doses / capsules |
+| `packSize` | `number \| null` | nombre d'unités vendues ensemble ; `1` = vendu à l'unité **déclaré par la fiche** ; `null` = non établi |
+| `quantity` | `{ amount, unit } \| null` | contenance **totale** de l'offre, ramenée au litre ou au kilo |
+| `unitQuantity` | `{ amount, unit } \| null` | contenance d'**une** unité du lot |
+| `doses` | `number \| null` | nombre **total** de lavages / doses / capsules |
+| `unitDoses` | `number \| null` | lavages / doses / capsules d'**une** unité |
+
+**Pourquoi le lot compte autant que l'EAN.** Un EAN désigne l'unité que
+fabrique la marque — la bouteille. Un lot constitué par le vendeur (« lot de
+2 » Amazon, Marketplace) reprend en général l'EAN de cette bouteille : deux
+offres de même EAN ne sont identiques que si elles ont **le même `packSize`**.
+D'où la séparation des grandeurs par unité (l'article) et totales (l'offre).
+
+Le nombre d'unités croise deux sources (`shared/PackReconciler.ts`) : le titre
+(« lot de 3 », « 3 x 1 L », « 3 x 40 tablettes », « 1,36L (x6) ») et la
+caractéristique « Nombre d'articles ». « Nombre d'unités » est ignoré : Amazon
+y publie souvent une contenance. Un titre muet ne suffit pas à écrire `1` ; un
+désaccord entre les deux sources annule le lot et les totaux mais garde les
+grandeurs unitaires, vraies dans les deux lectures ; un lot déclaré que le
+titre tait laisse la contenance inconnue (une ou trois bouteilles ?).
+
+Sur un lot, un nombre de doses **unique** est refusé : les titres réels
+l'écrivent tantôt par unité (« Le Chat 2L 40 lavages - Lot de 2 »), tantôt
+pour le lot (« Persil 3 x 1L (60 lavages) »). Passent seulement « 3 x 40
+tablettes » et la paire cohérente « 40 lavages … soit 80 lavages ».
 
 Le parti pris est de **refuser plutôt que de deviner**, champ par champ : une
 fiche portant plusieurs EAN (cas des lots) ressort sans code-barres, un titre
@@ -202,8 +223,15 @@ Hors du flux nominal, à lancer à la main :
 
 ```bash
 npm run migrate:legacy-data          # devises symboliques → ISO, images en haute résolution
+npm run migrate:reparse-quantities -- --dry-run   # puis sans --dry-run : relit le conditionnement des anciens relevés
 npm run spike:jsonld -- --limit=30   # mesure ce qu'Amazon expose : JSON-LD, EAN, contenance
 ```
+
+`migrate:reparse-quantities` est **à lancer une fois** après le déploiement de
+la séparation unité / total, avant le `build_price_history` suivant : celui-ci
+retient la dernière valeur d'identité *non nulle*, si bien qu'un ancien
+`doses` que le parseur refuse désormais (`null`) ne serait jamais remplacé.
+Idempotent — il ne touche que les relevés sans `unitQuantity`.
 
 `spike:jsonld` ne modifie aucune collection : il lit `price_history` pour tirer
 un échantillon, visite les fiches et écrit un relevé JSON local.

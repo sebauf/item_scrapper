@@ -55,6 +55,7 @@ python -m src.scoring.score                     # score only
 python -m src.fuel.import_stations              # import fuel prices (calls data.economie.gouv.fr)
 python -m src.fuel.shortage_forecast.train      # train the 24 h shortage + restock models (downloads the yearly archives, ~6 min)
 python -m src.fuel.restock_forecast.train       # restock model only, by hand (downloads the archives, no fuel_shortages resync)
+python -m src.reports.identity_coverage         # read-only: share of offers comparable strictly (EAN + pack size), no scraping
 
 pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
 python -m pytest                      # unit tests — no MongoDB needed
@@ -152,7 +153,8 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/infrastructure/scraping/amazon/PriceParser.ts` — normalises Amazon price strings
 - `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin }` (pur)
 - `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright + ordre de la cascade d'identité
-- `src/infrastructure/scraping/shared/` — parseurs agnostiques de la boutique : `Gtin` (clé de contrôle GTIN), `JsonLdParser`, `QuantityParser` (contenance ramenée au litre/kilo)
+- `src/infrastructure/scraping/shared/` — parseurs agnostiques de la boutique : `Gtin` (clé de contrôle GTIN), `JsonLdParser`, `QuantityParser` (contenance et doses du titre, par unité et totales), `PackReconciler` (nombre d'unités : titre croisé avec la fiche)
+- `src/scripts/reparseQuantities.ts` — migration ponctuelle (`npm run migrate:reparse-quantities`) : relit le conditionnement des relevés antérieurs à `unitQuantity`
 - `src/scripts/spikeJsonLd.ts` — harnais de mesure de la couverture d'identité, n'écrit rien en base
 - `src/infrastructure/persistence/mongodb/MongoProductRepository.ts` — upserts products by URL + day
 - `src/infrastructure/persistence/mongodb/MongoKeywordRepository.ts` — CRUD for keywords
@@ -168,6 +170,7 @@ pipeline/src/
   refine/build_price_history.py  — aggregates items_raw → price_history
   scoring/features.py       — extracts per-product time-series rows (baseline_price_30d, n_inliers, usual_low_30d / usual_high_30d, n_observations)
   scoring/score.py          — scores latest price vs own 30-day rolling average → deal_scores
+  reports/identity_coverage.py — read-only report: identity coverage of the fresh catalogue, strict key (ean, packSize), EANs shared by offers with different pack sizes
 ```
 
 Data flow: `items_raw` → `purge_dead_products` (deletions only) → `build_price_history` → `price_history` collection (one doc per URL, array of daily snapshots) → `score` → `deal_scores` collection.
@@ -622,8 +625,8 @@ keywords, favourites, tracked URLs and favourite stations, and nothing else.
 ### MongoDB
 
 - DB: `scrapper`
-- `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`, plus l'identité de l'article : `ean` (GTIN-13 vérifié), `brand`, `mpn`, `quantity` (`{ amount, unit }` en L ou kg), `packSize`, `doses` — tous nullables, une fiche ne publiant pas toujours son code-barres
-- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `quantity`, `packSize`, `doses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away or announces « Actuellement indisponible » (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
+- `items_raw` — raw scrape output; documents have `url`, `keyword`, `shop`, `title`, `price`, `crossedOutPrice`, `unitPrice`, `images`, `deliveryDate`, `day`, `scrapedAt`, plus l'identité de l'article : `ean` (GTIN-13 vérifié), `brand`, `mpn`, et le conditionnement — `packSize` (nombre d'unités ; `1` seulement si la fiche le déclare, `null` = non établi), `quantity` / `doses` (totaux de l'offre, `{ amount, unit }` en L ou kg pour la contenance), `unitQuantity` / `unitDoses` (par unité) — tous nullables, une fiche ne publiant pas toujours son code-barres. Un lot constitué par le vendeur reprend l'EAN de l'unité : la clé de comparaison stricte est `(ean, packSize)`, jamais l'EAN seul
+- `price_history` — one doc per URL, keyed by `_id = url`; fields: `keyword`, `shop`, `title`, `images`, `firstSeen`, `lastSeen`, `history[]`, `updatedAt`, les champs d'identité remontés d'`items_raw` (`ean`, `brand`, `mpn`, `packSize`, `quantity`, `unitQuantity`, `doses`, `unitDoses`), plus `unavailable` / `unavailableSince` set by the scrapper when a product page redirects away or announces « Actuellement indisponible » (never deletes the doc or its history — the product may come back into stock; the flag is cleared on the next successful scrape)
 - `deal_scores` — one doc per URL, keyed by `_id = url`; fields: `score`, `predictedPrice`, `actualPrice`, `currency`, `trendDirection`, `computedAt`
 - `fuel_stations` — one doc per fuel station, keyed by `_id` = official station id; fields: `location` (GeoJSON Point, **[lng, lat]**), `brand` (unified OSM brand or null), `name` (OSM station name or null), `address`, `city`, `postcode`, `roadType` (`R` road / `A` motorway / null), `fuels[]` (`code` ∈ gazole/e10/sp98/sp95/e85/gplc, `price`, `updatedAt` = station's declaration, `available`, `shortageSince`), `importedAt`. Written only by the fuel import
 - `keywords` — one doc per scraped term; `keyword` (unique), `enabled` (read by the scrapper, derived from `subscribers`), `subscribers[]` (emails of the users tracking it). Written by the backend (and seeded by the scrapper on an empty collection)

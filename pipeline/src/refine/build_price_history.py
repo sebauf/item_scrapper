@@ -22,7 +22,22 @@ from pymongo.database import Database
 # D'où la règle retenue : **dernière valeur non nulle** plutôt que dernière
 # valeur. Un seul scrape dégradé effacerait sinon l'identité d'un produit, et
 # avec elle sa seule clé de rapprochement inter-enseignes.
-IDENTITY_FIELDS = ("ean", "brand", "mpn", "quantity", "packSize", "doses")
+#
+# Le conditionnement est séparé en grandeurs **par unité** (l'article :
+# `unitQuantity`, `unitDoses`) et **totales** (l'offre : `quantity`, `doses`),
+# reliées par `packSize`. Un EAN désigne l'unité ; un lot constitué par le
+# vendeur le reprend souvent. La clé de comparaison stricte est donc
+# (ean, packSize), jamais l'EAN seul.
+IDENTITY_FIELDS = (
+    "ean",
+    "brand",
+    "mpn",
+    "packSize",
+    "quantity",
+    "unitQuantity",
+    "doses",
+    "unitDoses",
+)
 
 _CANDIDATES_SUFFIX = "__candidates"
 
