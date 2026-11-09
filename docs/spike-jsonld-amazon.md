@@ -287,7 +287,18 @@ au dernier passage — et donne :
 - le détail par mot-clé ;
 - les **EAN portés par plusieurs fiches Amazon** avec des nombres d'unités
   différents, exemples à l'appui — la preuve, chez une seule enseigne, qu'un
-  rapprochement sur l'EAN seul confondrait une bouteille et un lot.
+  rapprochement sur l'EAN seul confondrait une bouteille et un lot ;
+- les **traces d'extraction** du dernier passage (`items_raw.identityDiagnostics`) :
+  source de chaque EAN, part des fiches dont les caractéristiques ont été lues,
+  fiches qui affichaient « EAN » sans qu'il soit lu, conteneurs et libellés
+  rencontrés. Sous 50 % de caractéristiques lues, ou sans trace, le rapport
+  rend **« non concluant »** au lieu d'un verdict.
+
+> **Première mesure réelle (11/2026)** : 845 offres, EAN 10,5 %, marque
+> 10,5 % — les mêmes fiches —, référence fabricant 0 %. La signature d'une
+> section de caractéristiques jamais lue (tout venait du JSON-LD), pas d'un
+> Amazon qui ne publierait pas l'EAN. C'est ce constat qui a motivé les
+> traces d'extraction : sans elles, le rapport concluait « insuffisant ».
 
 > La requête mongosh qui figurait ici mesurait l'EAN seul. Elle surestime ce
 > qui est comparable strictement : un EAN sans nombre d'unités établi peut

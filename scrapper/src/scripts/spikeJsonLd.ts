@@ -3,7 +3,11 @@ import { writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { PlaywrightCrawler } from 'crawlee';
 import { MongoClient } from 'mongodb';
-import { extractAmazonIdentity, type ExtractedIdentity } from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
+import {
+  EMPTY_DIAGNOSTICS,
+  extractAmazonIdentity,
+  type ExtractedIdentity,
+} from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
 import { EMPTY_PARSED_QUANTITY } from '../infrastructure/scraping/shared/QuantityParser.js';
 import { EMPTY_PACK } from '../infrastructure/scraping/shared/PackReconciler.js';
 
@@ -53,6 +57,9 @@ interface Observation {
   declaredPackSize: number | null;
   packSize: number | null;
   packIssue: string | null;
+  detailEntries: number;
+  mentionsEan: boolean;
+  detailContainers: string[];
 }
 
 function readArg(name: string): string | null {
@@ -120,6 +127,9 @@ function toObservation(url: string, title: string, identity: ExtractedIdentity):
     declaredPackSize: identity.packSize,
     packSize: identity.pack.packSize,
     packIssue: identity.pack.issue,
+    detailEntries: identity.diagnostics.detailEntries,
+    mentionsEan: identity.diagnostics.mentionsEan,
+    detailContainers: identity.diagnostics.detailContainers,
   };
 }
 
@@ -138,6 +148,9 @@ function report(observations: readonly Observation[]): void {
     ['  dont au moins un bloc JSON-LD', count((r) => r.jsonLdScriptCount > 0)],
     ['  dont un nœud JSON-LD de type Product', count((r) => r.jsonLdHasProduct)],
     ['  dont un GTIN dans le JSON-LD', count((r) => r.jsonLdGtin !== null)],
+    ['Caractéristiques lues (≥ 1 ligne)', count((r) => r.detailEntries > 0)],
+    ['  aucune lue alors que la page affiche « EAN »', count((r) => r.detailEntries === 0 && r.mentionsEan)],
+    ['  aucune lue, aucun conteneur connu présent', count((r) => r.detailEntries === 0 && r.detailContainers.length === 0)],
     ['EAN vérifié, toutes sources', count((r) => r.ean !== null)],
     ['  provenant du JSON-LD', count((r) => r.eanSource === 'json-ld')],
     ['  provenant des caractéristiques', count((r) => r.eanSource === 'details')],
@@ -243,6 +256,7 @@ async function main(): Promise<void> {
           jsonLdScriptCount: 0,
           quantity: EMPTY_PARSED_QUANTITY,
           pack: EMPTY_PACK,
+          diagnostics: EMPTY_DIAGNOSTICS,
         }),
       );
     },

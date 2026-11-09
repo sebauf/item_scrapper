@@ -21,6 +21,34 @@ export interface Quantity {
   unit: 'L' | 'kg';
 }
 
+/**
+ * Comment l'identité a été lue sur la fiche — pas ce qu'est l'article, mais
+ * ce que le scrapper a vu. Sans ces traces, une couverture d'EAN faible ne
+ * dit pas si l'enseigne ne publie pas le code-barres ou si le scrapper ne
+ * sait plus le lire : deux causes aux remèdes opposés (chercher l'identité
+ * ailleurs, ou réparer un sélecteur). Écrit dans `items_raw` seulement.
+ */
+export interface IdentityDiagnostics {
+  /** Source de l'EAN retenu, `null` si aucun. */
+  eanSource: 'json-ld' | 'details' | null;
+  /** La page publie un nœud JSON-LD de type `Product`. */
+  jsonLdProduct: boolean;
+  /** Lignes lues dans la section de caractéristiques (0 = rien lu). */
+  detailEntries: number;
+  /** Libellés lus, normalisés (sans accents, minuscules), dédoublonnés. */
+  detailLabels: string[];
+  /** Conteneurs de caractéristiques connus présents dans la page. */
+  detailContainers: string[];
+  /** Le texte visible ou replié de la page contient « EAN ». */
+  mentionsEan: boolean;
+  /** Le texte de la page contient « Nombre d'articles ». */
+  mentionsItemCount: boolean;
+  /** Nombre d'articles déclaré par la fiche, avant croisement avec le titre. */
+  declaredPackSize: number | null;
+  /** Désaccord titre / fiche sur le conditionnement, s'il y en a un. */
+  packIssue: string | null;
+}
+
 export interface Product {
   url: string;
   title: string;
@@ -65,4 +93,7 @@ export interface Product {
   doses: number | null;
   /** Nombre de lavages / doses / capsules d'une unité du lot. */
   unitDoses: number | null;
+
+  /** Traces de l'extraction d'identité, `null` si la boutique n'en produit pas. */
+  identityDiagnostics: IdentityDiagnostics | null;
 }
