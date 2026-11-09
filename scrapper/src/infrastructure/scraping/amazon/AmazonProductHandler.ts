@@ -4,6 +4,7 @@ import type { IProductRepository } from '../../../domain/product/IProductReposit
 import { parsePrice, parseUnitPrice } from './PriceParser.js';
 import { toHighResImageUrls } from './ImageUrlParser.js';
 import { extractAmazonIdentity } from './AmazonIdentityExtractor.js';
+import { AVAILABILITY_SELECTOR, OWN_PRICE_SELECTORS, isUnavailable } from './AmazonOfferParser.js';
 
 const SCROLL_MIN_PX = 400;
 const SCROLL_RANDOM_RANGE_PX = 300;
@@ -28,14 +29,35 @@ async function extractTitle(page: Page): Promise<string> {
   return page.$eval('#productTitle', (el) => el.textContent?.trim() ?? '').catch(() => '');
 }
 
+async function extractAvailabilityText(page: Page): Promise<string | null> {
+  const texts = await page
+    .$$eval(AVAILABILITY_SELECTOR, (els) => els.map((el) => el.textContent ?? ''))
+    .catch(() => [] as string[]);
+  const joined = texts.join(' ').replace(/\s+/g, ' ').trim();
+  return joined || null;
+}
+
+/**
+ * Prix de l'article lui-même, cherché uniquement dans ses blocs de prix
+ * (cf. `OWN_PRICE_SELECTORS`). Jamais de repli sur un `.a-price` quelconque
+ * de la page : sur une fiche sans offre, ce serait le prix d'un remplaçant.
+ */
 async function extractPriceText(page: Page): Promise<string | null> {
+  for (const selector of OWN_PRICE_SELECTORS) {
+    const text = await page
+      .$eval(selector, (el) => el.textContent?.trim() ?? null)
+      .catch(() => null);
+    if (text) return text;
+  }
+  return null;
+}
+
+/** Vrai si la page affiche au moins un prix, où qu'il soit. */
+async function hasAnyPrice(page: Page): Promise<boolean> {
   return page
-    .$eval('.apex-pricetopay-value .a-offscreen', (el) => el.textContent?.trim() ?? null)
-    .catch(() =>
-      page
-        .$eval('.a-price .a-offscreen', (el) => el.textContent?.trim() ?? null)
-        .catch(() => null),
-    );
+    .$('.a-price .a-offscreen')
+    .then((el) => el !== null)
+    .catch(() => false);
 }
 
 async function extractCrossedOutPriceText(page: Page): Promise<string | null> {
@@ -108,6 +130,26 @@ async function extractVariantUrls(page: Page, currentAsin: string | null): Promi
   return asins.map((asin) => `https://www.amazon.fr/dp/${asin}/`);
 }
 
+/**
+ * Les déclinaisons (taille, parfum…) sont lues dans le sélecteur de
+ * variantes, jamais dans les carrousels : un article indisponible peut avoir
+ * des déclinaisons en stock, mais ses remplaçants ne sont pas ses variantes.
+ */
+async function enqueueVariants(
+  page: Page,
+  currentAsin: string | null,
+  keyword: string | undefined,
+  url: string,
+  enqueueLinks: PlaywrightCrawlingContext['enqueueLinks'],
+  log: PlaywrightCrawlingContext['log'],
+): Promise<void> {
+  const variantUrls = await extractVariantUrls(page, currentAsin);
+  if (variantUrls.length > 0) {
+    log.info(`Found ${variantUrls.length} variant(s)`, { url, variantUrls });
+    await enqueueLinks({ urls: variantUrls, userData: { keyword } });
+  }
+}
+
 function isBlockPage(url: string): boolean {
   return BLOCK_PATH_FRAGMENTS.some((fragment) => url.includes(fragment));
 }
@@ -142,9 +184,29 @@ export function createAmazonProductHandler(
       return;
     }
 
+    const currentAsin = request.url.match(PRODUCT_ASIN_RE)?.[1] ?? null;
+
+    // La disponibilité se juge avant le prix : une fiche « Actuellement
+    // indisponible » affiche des articles de remplacement avec leurs prix,
+    // et aucun d'eux n'est le prix de cet article. Même traitement qu'une
+    // fiche redirigée — plus scorée, historique conservé, drapeau levé au
+    // prochain passage réussi.
+    const availabilityText = await extractAvailabilityText(page);
+    if (isUnavailable(availabilityText)) {
+      log.info('Product currently unavailable, marking unavailable (no price recorded)', {
+        url: request.url,
+        availability: availabilityText,
+      });
+      await productRepository.markUnavailable(request.url);
+      await enqueueVariants(page, currentAsin, keyword, request.url, enqueueLinks, log);
+      return;
+    }
+
     const priceText = await extractPriceText(page);
     const crossedOutPriceText = await extractCrossedOutPriceText(page);
-    const unitPriceRaw = await extractUnitPriceRaw(page);
+    // Un prix unitaire sans prix principal ne peut être que celui d'un autre
+    // article : il suit le sort du prix.
+    const unitPriceRaw = priceText ? await extractUnitPriceRaw(page) : null;
     const deliveryDate = await extractDeliveryDate(page);
     const images = await extractImages(page);
     const identity = await extractAmazonIdentity(page, title);
@@ -154,6 +216,17 @@ export function createAmazonProductHandler(
       ean: identity.ean,
       eanSource: identity.eanSource,
     });
+
+    // Garde-fou contre une refonte d'Amazon : si la page montre des prix mais
+    // qu'aucun n'est dans les blocs de l'article, soit l'article n'a pas
+    // d'offre principale (vendu par des tiers), soit nos sélecteurs sont
+    // devenus obsolètes. Un taux élevé de ce message signale le second cas.
+    if (!priceText && (await hasAnyPrice(page))) {
+      log.warning("Prices on the page, none in the product's own price block: price not recorded", {
+        url: request.url,
+        availability: availabilityText,
+      });
+    }
 
     // Les deux refus d'identité sont journalisés : ce sont eux qu'il faudra
     // surveiller si le taux d'extraction se dégrade après une refonte
@@ -188,11 +261,6 @@ export function createAmazonProductHandler(
       doses: identity.quantity.doses,
     });
 
-    const currentAsin = request.url.match(PRODUCT_ASIN_RE)?.[1] ?? null;
-    const variantUrls = await extractVariantUrls(page, currentAsin);
-    if (variantUrls.length > 0) {
-      log.info(`Found ${variantUrls.length} variant(s)`, { url: request.url, variantUrls });
-      await enqueueLinks({ urls: variantUrls, userData: { keyword } });
-    }
+    await enqueueVariants(page, currentAsin, keyword, request.url, enqueueLinks, log);
   };
 }
