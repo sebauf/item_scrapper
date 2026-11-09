@@ -55,6 +55,7 @@ python -m src.scoring.score                     # score only
 python -m src.fuel.import_stations              # import fuel prices (calls data.economie.gouv.fr)
 python -m src.fuel.shortage_forecast.train      # train the 24 h shortage + restock models (downloads the yearly archives, ~6 min)
 python -m src.fuel.restock_forecast.train       # restock model only, by hand (downloads the archives, no fuel_shortages resync)
+python -m src.reports.identity_coverage         # read-only: share of offers comparable strictly (EAN + pack size), no scraping
 
 pip install -r requirements-dev.txt   # test deps (pytest + mongomock)
 python -m pytest                      # unit tests — no MongoDB needed
@@ -168,6 +169,7 @@ pipeline/src/
   refine/build_price_history.py  — aggregates items_raw → price_history
   scoring/features.py       — extracts per-product time-series rows (baseline_price_30d, n_inliers, usual_low_30d / usual_high_30d, n_observations)
   scoring/score.py          — scores latest price vs own 30-day rolling average → deal_scores
+  reports/identity_coverage.py — read-only report: identity coverage of the fresh catalogue, strict key (ean, packSize), EANs shared by offers with different pack sizes
 ```
 
 Data flow: `items_raw` → `purge_dead_products` (deletions only) → `build_price_history` → `price_history` collection (one doc per URL, array of daily snapshots) → `score` → `deal_scores` collection.
