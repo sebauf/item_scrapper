@@ -19,6 +19,14 @@ appliquée à cette clé stricte :
 - < 25 % : l'identité doit venir du concurrent, ou la comparaison stricte est
   à abandonner sur ces catégories — jamais en abaissant les seuils.
 
+Le rapport lit aussi, dans `items_raw`, les **traces d'extraction** du dernier
+passage (`identityDiagnostics`) : d'où vient chaque EAN, combien de lignes de
+caractéristiques ont été lues, si la page affichait « EAN » sans qu'on le
+lise. Une couverture faible a deux causes aux remèdes opposés — l'enseigne ne
+publie pas l'identité, ou le scrapper ne sait plus la lire — et seules ces
+traces les distinguent. Quand la lecture est visiblement en panne, le rapport
+**refuse de rendre un verdict** plutôt que d'en rendre un faux.
+
 Usage :
     python -m src.reports.identity_coverage                # Amazon, catalogue frais
     python -m src.reports.identity_coverage --all          # y compris non relus
@@ -28,7 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 
 from pymongo.database import Database
@@ -46,6 +54,13 @@ FIELDS = (
     "doses",
     "unitDoses",
 )
+
+# En deçà de cette part de fiches dont les caractéristiques ont été lues, la
+# couverture d'EAN mesure la panne du scrapper, pas ce que publie l'enseigne.
+MIN_DETAILS_READ_PCT = 50.0
+# Pas de jugement sur la lecture avec moins de fiches diagnostiquées.
+MIN_DIAGNOSED_PAGES = 10
+TOP_LABELS = 20
 
 STRICT_RESOLVED = 60.0
 STRICT_PARTIAL = 25.0
@@ -222,7 +237,151 @@ def summarize(offers: list[dict]) -> CoverageSummary:
     )
 
 
-def format_report(summary: CoverageSummary, shop: str, fresh_only: bool) -> str:
+def load_scrape_diagnostics(db: Database, shop: str = "amazon") -> list[dict]:
+    """Traces d'extraction des relevés du dernier passage de `shop`."""
+    collection = db["items_raw"]
+    latest = collection.find_one({"shop": shop}, sort=[("day", -1)], projection={"day": 1})
+    if latest is None or latest.get("day") is None:
+        return []
+    return list(
+        collection.find({"shop": shop, "day": latest["day"]}, {"identityDiagnostics": 1})
+    )
+
+
+@dataclass
+class ExtractionDiagnostics:
+    pages: int
+    diagnosed: int
+    ean_sources: dict[str, int]
+    details_read: int
+    unread_but_ean_visible: int
+    unread_no_known_container: int
+    json_ld_product: int
+    item_count_visible: int
+    declared_pack: int
+    pack_issues: dict[str, int]
+    containers: dict[str, int]
+    top_labels: list[tuple[str, int]]
+
+
+def summarize_diagnostics(rows: list[dict]) -> ExtractionDiagnostics:
+    traces = [row["identityDiagnostics"] for row in rows if row.get("identityDiagnostics")]
+    unread = [t for t in traces if not t.get("detailEntries")]
+    labels: Counter[str] = Counter()
+    containers: Counter[str] = Counter()
+    for trace in traces:
+        labels.update(trace.get("detailLabels") or [])
+        containers.update(trace.get("detailContainers") or [])
+
+    sources = Counter(t.get("eanSource") or "aucune" for t in traces)
+    issues = Counter(t["packIssue"] for t in traces if t.get("packIssue"))
+    return ExtractionDiagnostics(
+        pages=len(rows),
+        diagnosed=len(traces),
+        ean_sources={name: sources.get(name, 0) for name in ("details", "json-ld", "aucune")},
+        details_read=len(traces) - len(unread),
+        unread_but_ean_visible=sum(1 for t in unread if t.get("mentionsEan")),
+        unread_no_known_container=sum(1 for t in unread if not t.get("detailContainers")),
+        json_ld_product=sum(1 for t in traces if t.get("jsonLdProduct")),
+        item_count_visible=sum(1 for t in traces if t.get("mentionsItemCount")),
+        declared_pack=sum(1 for t in traces if t.get("declaredPackSize") is not None),
+        pack_issues=dict(issues),
+        containers=dict(containers.most_common()),
+        top_labels=labels.most_common(TOP_LABELS),
+    )
+
+
+@dataclass
+class Report:
+    coverage: CoverageSummary
+    diagnostics: ExtractionDiagnostics
+    verdict: str
+    conclusive: bool
+    warnings: list[str]
+
+
+def assess(coverage: CoverageSummary, diagnostics: ExtractionDiagnostics) -> Report:
+    """Verdict final : celui de la grille, sauf si les données le rendent faux.
+
+    Chaque avertissement nomme une cause et son remède. Les deux premiers
+    rendent le verdict non concluant : ils disent que la mesure porte sur un
+    défaut de collecte, pas sur l'enseigne.
+    """
+    warnings: list[str] = []
+    conclusive = coverage.offers > 0
+
+    if diagnostics.pages > 0 and diagnostics.diagnosed == 0:
+        conclusive = False
+        warnings.append(
+            "Aucune trace d'extraction au dernier passage : le scrapper déployé est antérieur "
+            "au diagnostic. Impossible de dire si une identité manquante est absente de la "
+            "fiche ou non lue. Attendre un passage du scrapper à jour."
+        )
+    elif diagnostics.diagnosed >= MIN_DIAGNOSED_PAGES:
+        read_pct = _pct(diagnostics.details_read, diagnostics.diagnosed)
+        if read_pct < MIN_DETAILS_READ_PCT:
+            conclusive = False
+            warnings.append(
+                f"Caractéristiques lues sur {read_pct:.1f} % des fiches seulement : la couverture "
+                "d'EAN mesure la panne de lecture, pas ce qu'Amazon publie. "
+                f"{diagnostics.unread_but_ean_visible} fiche(s) affichaient « EAN » sans qu'il soit "
+                "lu (sélecteurs à corriger) ; "
+                f"{diagnostics.unread_no_known_container} n'avaient aucun conteneur connu "
+                "(mise en page inconnue)."
+            )
+
+    if (
+        coverage.offers > 0
+        and coverage.counts["unitQuantity"] == 0
+        and coverage.counts["unitDoses"] == 0
+    ):
+        warnings.append(
+            "Aucune contenance ni dose par unité : les relevés sont antérieurs à la séparation "
+            "unité / total. Lancer la migration reparseQuantities puis le refine, ou attendre "
+            "le passage suivant du scrapper à jour."
+        )
+
+    verdict = coverage.verdict if conclusive else "non concluant — voir les avertissements"
+    return Report(
+        coverage=coverage,
+        diagnostics=diagnostics,
+        verdict=verdict,
+        conclusive=conclusive,
+        warnings=warnings,
+    )
+
+
+def _format_diagnostics(d: ExtractionDiagnostics) -> list[str]:
+    if d.pages == 0:
+        return ["Traces d'extraction : aucun relevé pour cette boutique."]
+    lines = [f"Traces d'extraction — dernier passage : {d.diagnosed} / {d.pages} relevés diagnostiqués"]
+    if d.diagnosed == 0:
+        return lines
+
+    def row(label: str, value: int) -> str:
+        return f"  {label:<50}{value:>6}   {_pct(value, d.diagnosed):>5.1f} %"
+
+    lines += [
+        row("Caractéristiques lues (≥ 1 ligne)", d.details_read),
+        row("  aucune lue, mais « EAN » affiché dans la page", d.unread_but_ean_visible),
+        row("  aucune lue, aucun conteneur connu", d.unread_no_known_container),
+        row("EAN tiré des caractéristiques", d.ean_sources["details"]),
+        row("EAN tiré du JSON-LD", d.ean_sources["json-ld"]),
+        row("Nœud JSON-LD Product présent", d.json_ld_product),
+        row("« Nombre d'articles » affiché dans la page", d.item_count_visible),
+        row("« Nombre d'articles » lu", d.declared_pack),
+    ]
+    for issue, value in sorted(d.pack_issues.items()):
+        lines.append(row(f"Conditionnement : {issue}", value))
+    if d.containers:
+        lines.append("  Conteneurs présents : " + ", ".join(f"{k} ({v})" for k, v in d.containers.items()))
+    if d.top_labels:
+        lines.append("  Libellés les plus lus : " + ", ".join(f"{k} ({v})" for k, v in d.top_labels))
+    return lines
+
+
+def format_report(report: Report, shop: str, fresh_only: bool) -> str:
+    summary = report.coverage
     n = summary.offers
     scope = "relues au dernier passage" if fresh_only else "toutes, relues ou non"
     lines = [f"=== Couverture d'identité — {shop}, offres en vente {scope} : {n} ===", ""]
@@ -248,7 +407,7 @@ def format_report(summary: CoverageSummary, shop: str, fresh_only: bool) -> str:
         row("② Sans EAN : marque + lot + mesure unitaire", "by_attributes"),
         row("③ Non comparable", "not_comparable"),
         "",
-        f"Verdict (clé stricte) : {summary.verdict}",
+        f"Verdict (clé stricte) : {report.verdict}",
         "② = charge de validation humaine à prévoir ; jamais affiché sans elle.",
         "",
         "Par mot-clé :",
@@ -273,13 +432,9 @@ def format_report(summary: CoverageSummary, shop: str, fresh_only: bool) -> str:
         for offer in example.offers:
             lines.append(f"    ×{offer['packSize']}  {(offer['title'] or '')[:70]}  {offer['url']}")
 
-    if summary.rates["packSize"] == 0 and summary.rates["ean"] > 0:
-        lines += [
-            "",
-            "⚠ Aucun nombre d'unités établi alors que des EAN existent : le scrapper",
-            "  déployé est-il antérieur à la lecture de « Nombre d'articles » ? Attendre",
-            "  deux ou trois scrapes et le refine suivant avant de conclure.",
-        ]
+    lines += ["", *_format_diagnostics(report.diagnostics)]
+    for warning in report.warnings:
+        lines += ["", f"⚠ {warning}"]
     return "\n".join(lines)
 
 
@@ -296,15 +451,17 @@ def main() -> None:
 
     client = MongoClient(MONGODB_URI)
     try:
-        offers = load_offers(client[DB_NAME], shop=args.shop, fresh_only=not args.all)
+        db = client[DB_NAME]
+        offers = load_offers(db, shop=args.shop, fresh_only=not args.all)
+        traces = load_scrape_diagnostics(db, shop=args.shop)
     finally:
         client.close()
 
-    summary = summarize(offers)
+    report = assess(summarize(offers), summarize_diagnostics(traces))
     if args.json:
-        print(json.dumps(asdict(summary), ensure_ascii=False, indent=2))
+        print(json.dumps(asdict(report), ensure_ascii=False, indent=2, default=str))
     else:
-        print(format_report(summary, shop=args.shop, fresh_only=not args.all))
+        print(format_report(report, shop=args.shop, fresh_only=not args.all))
 
 
 if __name__ == "__main__":

@@ -65,6 +65,22 @@ describe('PackReconciler', () => {
       assert.equal(pack.issue, 'per-unit-undetermined');
     });
 
+    it('8 pièces annoncées et 8 articles déclarés : seul le total est sûr', () => {
+      // Un blister de 8 brossettes, ou 8 brossettes à l'unité ? Les deux
+      // lectures contiennent 8 pièces ; le nombre d'unités, lui, est indécidable.
+      const pack = reconcilePack(parseQuantity('Oral-B CrossAction 8 Brossettes'), 8);
+      assert.equal(pack.packSize, null);
+      assert.equal(pack.doses, 8);
+      assert.equal(pack.unitDoses, null);
+      assert.equal(pack.issue, 'pieces-or-pack');
+    });
+
+    it('un nombre d’articles différent du nombre de pièces reste un lot déclaré', () => {
+      const pack = reconcilePack(parseQuantity('Oral-B CrossAction 4 Brossettes'), 2);
+      assert.equal(pack.packSize, 2);
+      assert.equal(pack.issue, 'per-unit-undetermined');
+    });
+
     it('ignore une déclaration qui n’est pas un entier positif', () => {
       const title = parseQuantity('Persil 3 x 1L');
       for (const declared of [0, -2, 1.5, Number.NaN]) {

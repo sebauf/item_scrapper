@@ -30,7 +30,13 @@ export type PackIssue =
    * La fiche annonce un lot que le titre ne mentionne pas : impossible de
    * savoir si la contenance du titre est celle d'une unité ou du lot.
    */
-  | 'per-unit-undetermined';
+  | 'per-unit-undetermined'
+  /**
+   * La fiche déclare N articles, le titre annonce N pièces (« 8 brossettes »,
+   * nombre d'articles : 8) : un paquet de 8 ou 8 unités d'une pièce ? Le
+   * total — 8 pièces — est vrai dans les deux lectures, le reste non.
+   */
+  | 'pieces-or-pack';
 
 export interface PackIdentity {
   /** Nombre d'unités de l'offre ; `1` = vendu à l'unité, déclaré ; `null` = non établi. */
@@ -92,6 +98,10 @@ export function reconcilePack(title: ParsedQuantity, declaredPackSize: number | 
   // Titre muet sur le lot.
   if (declared === null) return { packSize: null, ...fromTitle, issue: null };
   if (declared === 1) return { packSize: 1, ...fromTitle, issue: null };
+
+  if (title.unitDoses !== null && title.unitDoses === declared) {
+    return { ...EMPTY_PACK, doses: declared, issue: 'pieces-or-pack' };
+  }
 
   // La fiche déclare N unités, le titre n'en dit rien : « Lessive 4,5 L »
   // peut être une bouteille de 4,5 L dans un lot de 3, ou trois de 1,5 L. On

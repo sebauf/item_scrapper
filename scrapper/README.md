@@ -158,8 +158,9 @@ facultatifs** : une fiche ne publie pas toujours son code-barres.
 | `packSize` | `number \| null` | nombre d'unités vendues ensemble ; `1` = vendu à l'unité **déclaré par la fiche** ; `null` = non établi |
 | `quantity` | `{ amount, unit } \| null` | contenance **totale** de l'offre, ramenée au litre ou au kilo |
 | `unitQuantity` | `{ amount, unit } \| null` | contenance d'**une** unité du lot |
-| `doses` | `number \| null` | nombre **total** de lavages / doses / capsules |
-| `unitDoses` | `number \| null` | lavages / doses / capsules d'**une** unité |
+| `doses` | `number \| null` | nombre **total** de doses ou de pièces (lavages, capsules, brossettes, filtres…) |
+| `unitDoses` | `number \| null` | doses ou pièces d'**une** unité |
+| `identityDiagnostics` | objet \| `null` | traces de l'extraction — `items_raw` seulement, voir ci-dessous |
 
 **Pourquoi le lot compte autant que l'EAN.** Un EAN désigne l'unité que
 fabrique la marque — la bouteille. Un lot constitué par le vendeur (« lot de
@@ -175,10 +176,33 @@ désaccord entre les deux sources annule le lot et les totaux mais garde les
 grandeurs unitaires, vraies dans les deux lectures ; un lot déclaré que le
 titre tait laisse la contenance inconnue (une ou trois bouteilles ?).
 
+Les **pièces** se comptent comme les doses : un blister Oral-B de 8 brossettes
+est *une* unité (un EAN) de 8 pièces. Vocabulaire reconnu : lavages, doses,
+capsules, tablettes, pastilles, sachets, lingettes, brossettes, têtes, filtres,
+cartouches, recharges. « Pack de 4 brossettes » se lit comme le contenu d'un
+paquet, pas comme un lot de 4. Les mots génériques (« unités », « pièces »)
+sont ignorés : sur une lessive, « lot de 2 unités » compte des bouteilles. Quand
+la fiche déclare autant d'articles que le titre annonce de pièces (« 8
+brossettes », nombre d'articles : 8), seul le total est sûr — paquet de 8 ou 8
+unités ? — et le nombre d'unités reste non établi (`pieces-or-pack`).
+
 Sur un lot, un nombre de doses **unique** est refusé : les titres réels
 l'écrivent tantôt par unité (« Le Chat 2L 40 lavages - Lot de 2 »), tantôt
 pour le lot (« Persil 3 x 1L (60 lavages) »). Passent seulement « 3 x 40
 tablettes » et la paire cohérente « 40 lavages … soit 80 lavages ».
+
+### Traces d'extraction (`identityDiagnostics`)
+
+Chaque relevé enregistre *comment* son identité a été lue : source de l'EAN
+(`details` / `json-ld`), nombre de lignes de caractéristiques lues
+(`detailEntries`) et leurs libellés normalisés (`detailLabels`, 40 au plus),
+conteneurs connus présents dans la page (`detailContainers`), présence du mot
+« EAN » et de « Nombre d'articles » dans le texte (hors scripts), nombre
+d'articles déclaré et désaccord de conditionnement. Une couverture d'EAN
+faible a deux causes aux remèdes opposés — l'enseigne ne publie pas l'EAN, ou
+le scrapper ne sait plus le lire — et seules ces traces les distinguent. Le
+rapport `python -m src.reports.identity_coverage` (pipeline) les exploite et
+refuse de conclure quand la lecture est en panne.
 
 Le parti pris est de **refuser plutôt que de deviner**, champ par champ : une
 fiche portant plusieurs EAN (cas des lots) ressort sans code-barres, un titre

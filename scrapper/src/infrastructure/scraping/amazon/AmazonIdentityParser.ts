@@ -68,7 +68,7 @@ function clean(raw: string): string {
 }
 
 /** Repli des accents : « Numéro » et « Numero » doivent apparier pareil. */
-function normalizeLabel(raw: string): string {
+export function normalizeLabel(raw: string): string {
   return clean(raw)
     .replace(/[:：]\s*$/, '')
     .normalize('NFD')

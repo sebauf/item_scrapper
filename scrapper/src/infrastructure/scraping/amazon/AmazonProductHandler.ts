@@ -275,6 +275,7 @@ export function createAmazonProductHandler(
       packSize: identity.pack.packSize,
       doses: identity.pack.doses,
       unitDoses: identity.pack.unitDoses,
+      identityDiagnostics: identity.diagnostics,
     });
 
     await enqueueVariants(page, currentAsin, keyword, request.url, enqueueLinks, log);
