@@ -1,5 +1,5 @@
 import type { Quantity } from '../../../domain/product/Product.js';
-import type { ParsedQuantity } from './QuantityParser.js';
+import { parseQuantity, type ParsedQuantity } from './QuantityParser.js';
 
 /**
  * Nombre d'unités d'une offre : croisement du titre et de ce que la fiche
@@ -108,4 +108,32 @@ export function reconcilePack(title: ParsedQuantity, declaredPackSize: number | 
   // garde le nombre d'unités, qui est établi, et rien de ce qu'il faudrait
   // deviner.
   return { ...EMPTY_PACK, packSize: declared, issue: 'per-unit-undetermined' };
+}
+
+/** Les champs de conditionnement écrits dans `items_raw`, dans cet ordre. */
+export const PACK_FIELDS = ['packSize', 'quantity', 'unitQuantity', 'doses', 'unitDoses'] as const;
+
+export type PackFields = Pick<PackIdentity, (typeof PACK_FIELDS)[number]>;
+
+/**
+ * Conditionnement d'un relevé recalculé depuis ce qu'il a conservé : son titre
+ * et, s'il l'a enregistré, le nombre d'articles déclaré par la fiche. Même
+ * calcul que le scrape — c'est ce qui permet de rejouer un changement de
+ * parseur sur l'historique.
+ */
+export function reparsePack(title: string | null, declaredPackSize: number | null): PackFields {
+  const { packSize, quantity, unitQuantity, doses, unitDoses } = reconcilePack(
+    parseQuantity(title),
+    declaredPackSize,
+  );
+  return { packSize, quantity, unitQuantity, doses, unitDoses };
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+}
+
+/** Vrai si l'un des champs diffère ; un champ absent vaut `null`. */
+export function packFieldsChanged(current: Partial<PackFields>, next: PackFields): boolean {
+  return PACK_FIELDS.some((field) => !sameValue(current[field], next[field]));
 }

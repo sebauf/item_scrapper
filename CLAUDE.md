@@ -154,7 +154,7 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin }` (pur)
 - `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright + ordre de la cascade d'identité
 - `src/infrastructure/scraping/shared/` — parseurs agnostiques de la boutique : `Gtin` (clé de contrôle GTIN), `JsonLdParser`, `QuantityParser` (contenance et doses du titre, par unité et totales), `PackReconciler` (nombre d'unités : titre croisé avec la fiche)
-- `src/scripts/reparseQuantities.ts` — migration ponctuelle (`npm run migrate:reparse-quantities`) : relit le conditionnement des relevés antérieurs à `unitQuantity`
+- `src/scripts/reparseQuantities.ts` — migration (`npm run migrate:reparse-quantities`, image : `node dist/scripts/reparseQuantities.js`) : recalcule le conditionnement de `items_raw` avec le parseur actuel ; `--all` = tous les relevés, **à relancer après tout changement de parseur qui refuse ce qu'il acceptait** (sinon la règle « dernière valeur non nulle » garde l'ancienne valeur), sans = relevés jamais migrés ; ne réécrit que ce qui change, `--dry-run` compte
 - `src/scripts/spikeJsonLd.ts` — harnais de mesure de la couverture d'identité, n'écrit rien en base
 - `src/infrastructure/persistence/mongodb/MongoProductRepository.ts` — upserts products by URL + day
 - `src/infrastructure/persistence/mongodb/MongoKeywordRepository.ts` — CRUD for keywords
