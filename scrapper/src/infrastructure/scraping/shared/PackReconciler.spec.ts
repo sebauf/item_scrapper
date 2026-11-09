@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseQuantity } from './QuantityParser.js';
-import { reconcilePack } from './PackReconciler.js';
+import { packFieldsChanged, reconcilePack, reparsePack } from './PackReconciler.js';
 
 /**
  * La règle testée ici est celle qui empêche le faux rapprochement le plus
@@ -89,5 +89,36 @@ describe('PackReconciler', () => {
         assert.equal(pack.issue, null, String(declared));
       }
     });
+  });
+});
+
+describe('PackReconciler — recalcul de l’historique', () => {
+  it('défait un faux lot écrit par un parseur antérieur', () => {
+    // Avant que les brossettes ne soient reconnues, « Pack de 4 » était lu
+    // comme un lot de 4. La règle « dernière valeur non nulle » l'aurait
+    // conservé indéfiniment : seul un recalcul l'efface.
+    const before = { packSize: 4, quantity: null, unitQuantity: null, doses: null, unitDoses: null };
+    const after = reparsePack('Oral-B Pro CrossAction Pack de 4 Brossettes', null);
+    assert.deepEqual(after, { packSize: null, quantity: null, unitQuantity: null, doses: 4, unitDoses: 4 });
+    assert.equal(packFieldsChanged(before, after), true);
+  });
+
+  it('reprend le nombre d’articles déclaré que le relevé a conservé', () => {
+    assert.equal(reparsePack('Ariel Lessive 1,5 L', 1).packSize, 1);
+    assert.equal(reparsePack('Ariel Lessive 1,5 L', null).packSize, null);
+  });
+
+  it('ne réécrit pas un relevé déjà à jour, champs absents compris', () => {
+    const next = reparsePack('Persil 3 x 1L', null);
+    assert.equal(packFieldsChanged({ ...next }, next), false);
+    // Relevé antérieur à l'extraction : aucun champ, tout à null après calcul.
+    assert.equal(packFieldsChanged({}, reparsePack('Titre sans contenance', null)), false);
+    assert.equal(packFieldsChanged({}, next), true);
+  });
+
+  it('compare les contenances par valeur', () => {
+    const next = reparsePack('Ariel Lessive 1,5 L', 1);
+    const stored = { ...next, quantity: { amount: 1.5, unit: 'L' as const } };
+    assert.equal(packFieldsChanged(stored, next), false);
   });
 });

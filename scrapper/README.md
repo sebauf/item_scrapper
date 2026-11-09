@@ -247,7 +247,7 @@ Hors du flux nominal, à lancer à la main :
 
 ```bash
 npm run migrate:legacy-data          # devises symboliques → ISO, images en haute résolution
-npm run migrate:reparse-quantities -- --dry-run   # puis sans --dry-run : relit le conditionnement des anciens relevés
+npm run migrate:reparse-quantities -- --all --dry-run   # puis sans --dry-run : recalcule le conditionnement de l'historique
 npm run spike:jsonld -- --limit=30   # mesure ce qu'Amazon expose : JSON-LD, EAN, contenance
 ```
 
@@ -255,7 +255,13 @@ npm run spike:jsonld -- --limit=30   # mesure ce qu'Amazon expose : JSON-LD, EAN
 la séparation unité / total, avant le `build_price_history` suivant : celui-ci
 retient la dernière valeur d'identité *non nulle*, si bien qu'un ancien
 `doses` que le parseur refuse désormais (`null`) ne serait jamais remplacé.
-Idempotent — il ne touche que les relevés sans `unitQuantity`.
+Avec `--all`, il recalcule **tous** les relevés avec le parseur actuel (titre +
+« Nombre d'articles » conservé dans `identityDiagnostics`) : à relancer après
+chaque changement de parseur qui refuse ce qu'il acceptait — par exemple
+« Pack de 4 brossettes », lu comme un lot de 4 avant que les brossettes ne
+soient reconnues. Seuls les relevés qui changent sont réécrits ; la simulation
+(`--dry-run`) dit combien. Sans `--all`, seuls les relevés jamais migrés.
+Dans l'image : `node dist/scripts/reparseQuantities.js --all`.
 
 `spike:jsonld` ne modifie aucune collection : il lit `price_history` pour tirer
 un échantillon, visite les fiches et écrit un relevé JSON local.
