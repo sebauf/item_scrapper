@@ -88,6 +88,43 @@ class TestVerdict:
         assert verdict(3, 12).startswith("partiel")  # 25 % pile
         assert verdict(2, 10).startswith("insuffisant")
 
+    def test_le_verdict_nomme_l_ean_quand_c_est_lui_qui_manque(self):
+        offers = [offer(f"p{i}", packSize=1) for i in range(9)] + [offer("s", ean=EAN_A, packSize=1)]
+        verdict = summarize(offers).verdict
+        assert verdict.startswith("insuffisant, faute d'EAN")
+        assert "l'EAN (10.0 % des offres)" in verdict
+        assert "devra venir du concurrent" in verdict
+
+    def test_le_verdict_nomme_le_lot_quand_l_ean_est_la(self):
+        """Le cas qui a trompé la première lecture : beaucoup d'EAN, presque
+        aucun lot établi. Ce n'est pas un problème d'identité, et le verdict
+        ne doit surtout pas renvoyer vers le concurrent."""
+        offers = [offer(f"e{i}", ean=EAN_A) for i in range(9)] + [offer("s", ean=EAN_A, packSize=1)]
+        verdict = summarize(offers).verdict
+        assert verdict.startswith("insuffisant, mais pas faute d'identité")
+        assert "le nombre d'unités (10.0 %)" in verdict
+        assert "90.0 % des offres ont un EAN sans lot établi" in verdict
+        assert "concurrent" not in verdict
+
+    def test_le_verdict_nomme_les_deux_quand_tout_manque(self):
+        offers = [offer(f"n{i}") for i in range(9)] + [offer("s", ean=EAN_A, packSize=1)]
+        assert "manquent tous deux" in summarize(offers).verdict
+
+    def test_partiel_nomme_aussi_le_facteur_limitant(self):
+        offers = [offer(f"s{i}", ean=EAN_A, packSize=1) for i in range(4)]
+        offers += [offer(f"e{i}", ean=EAN_A) for i in range(6)]
+        verdict = summarize(offers).verdict
+        assert verdict.startswith("partiel")
+        # EAN 100 %, lot 40 % : le plafond est le lot, pas le croisement.
+        assert "facteur limitant : le nombre d'unités (40.0 %)" in verdict
+
+    def test_croisement_quand_ean_et_lot_ne_tombent_pas_sur_les_memes_offres(self):
+        offers = [offer(f"e{i}", ean=EAN_A) for i in range(5)]
+        offers += [offer(f"p{i}", packSize=1) for i in range(4)]
+        offers += [offer("s", ean=EAN_A, packSize=1)]
+        # EAN 60 %, lot 50 %, strict 10 % : chaque moitié serait suffisante seule.
+        assert "facteur limitant : le croisement" in summarize(offers).verdict
+
     def test_catalogue_vide(self):
         summary = summarize([])
         assert summary.offers == 0

@@ -267,12 +267,24 @@ mêmes variables que les tâches Airflow :
 ```bash
 IMAGE=ghcr.io/<owner>/<repo>-pipeline:main
 kubectl -n price-tracker run identity-report --rm -i --restart=Never \
-  --image="$IMAGE" --image-pull-policy=Always \
+  --image="$IMAGE" \
   --overrides='{"spec":{"imagePullSecrets":[{"name":"ghcr-pull-secret"}],
     "containers":[{"name":"identity-report","image":"'"$IMAGE"'",
+    "imagePullPolicy":"Always",
     "command":["python","-m","src.reports.identity_coverage"],
     "envFrom":[{"secretRef":{"name":"price-tracker-secrets"}}]}]}}'
 ```
+
+> **`imagePullPolicy` doit être dans l'override, pas en option.**
+> `kubectl run --overrides` applique un *merge patch* JSON : la liste
+> `containers` de l'override **remplace** celle que génère `kubectl`, et un
+> `--image-pull-policy=Always` passé en option disparaît avec elle. Le
+> conteneur retombe alors sur `IfNotPresent` et exécute l'image `:main`
+> **en cache sur le nœud** — celle du dernier scrape, pas celle qui vient
+> d'être publiée. Vécu le 10/11/2026 : une migration `--all` a examiné
+> « 0 relevé » parce qu'elle tournait dans une image antérieure à `--all`.
+> Repère : la migration à jour affiche `Relevés examinés (tous les relevés)`,
+> le rapport à jour se termine par « Traces d'extraction — dernier passage ».
 
 Le rapport (`pipeline/src/reports/identity_coverage.py`, lecture seule)
 applique la règle de fraîcheur des écrans — seules comptent les offres relues
