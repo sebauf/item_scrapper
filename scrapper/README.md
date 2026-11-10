@@ -235,7 +235,13 @@ ignorée : rien n'est écrit, rien n'est marqué.
 
 - `navigator.webdriver` masqué via un `preNavigationHook`
 - `--disable-blink-features=AutomationControlled`
-- empreinte de navigateur générée par le `browserPool` de Crawlee
+- empreinte de navigateur générée par le `browserPool` de Crawlee, **en français**
+  (`AmazonBrowserLocale` : langue de l'empreinte `fr-FR` + `Accept-Language`).
+  Sans ce réglage, l'empreinte annonce `en-US` (défaut de Crawlee) et amazon.fr
+  sert titres et caractéristiques en anglais — mesuré sur 927 fiches sur 927
+  le 10/11/2026. Les libellés d'identité restent reconnus dans les deux
+  langues (« Number of items », « Brand Name », « Global Trade Identification
+  Number »…), au cas où la préférence serait ignorée
 - allure volontairement basse : `maxConcurrency: 2`, `maxRequestsPerMinute: 10`
 - pool de sessions à cookies persistants (10 sessions, retirées après 50 usages
   ou 3 erreurs)

@@ -3,6 +3,10 @@ import { PlaywrightCrawler, createPlaywrightRouter } from 'crawlee';
 import { MongoConnection } from '../infrastructure/persistence/mongodb/MongoConnection.js';
 import { MongoProductRepository } from '../infrastructure/persistence/mongodb/MongoProductRepository.js';
 import { createAmazonProductHandler } from '../infrastructure/scraping/amazon/AmazonProductHandler.js';
+import {
+  AMAZON_BROWSER_POOL_OPTIONS,
+  requestFrenchPages,
+} from '../infrastructure/scraping/amazon/AmazonBrowserLocale.js';
 
 const TARGET_URL = 'https://www.amazon.fr/dp/B0GNSHRHV2/';
 
@@ -22,6 +26,8 @@ async function main(): Promise<void> {
       maxRequestsPerCrawl: 10,
       maxConcurrency: 1,
       requestHandler: router,
+      browserPoolOptions: AMAZON_BROWSER_POOL_OPTIONS,
+      preNavigationHooks: [requestFrenchPages],
       launchContext: {
         launchOptions: {
           headless: true,
