@@ -96,6 +96,64 @@ describe('AmazonIdentityParser', () => {
     });
   });
 
+  describe('fiches servies en anglais', () => {
+    // Libellés relevés tels quels le 10/11/2026 sur 927 fiches amazon.fr
+    // servies en anglais (identityDiagnostics.detailLabels).
+    const english = [
+      { label: 'ASIN', value: 'B0CZ1TL7XK' },
+      { label: 'Manufacturer', value: 'Procter & Gamble' },
+      { label: 'Unit count', value: '10.0 Count' },
+      { label: 'Number of Items', value: '1' },
+      { label: 'Brand Name', value: 'Oral-B' },
+      { label: 'Model name', value: 'CrossAction' },
+      { label: 'Item model number', value: 'EB50-10' },
+      { label: 'Manufacturer contact information', value: 'Procter & Gamble France' },
+      { label: 'Global Trade Identification Number', value: '04210201301660' },
+    ];
+
+    it('lit code-barres, marque, référence et nombre d’articles', () => {
+      const identity = parseAmazonDetails(english);
+      // GTIN-14 à indicateur 0 : ramené à l'EAN-13 de l'unité consommateur.
+      assert.equal(identity.ean, '4210201301660');
+      assert.equal(identity.brand, 'Oral-B');
+      assert.equal(identity.mpn, 'EB50-10');
+      assert.equal(identity.packSize, 1);
+      assert.equal(identity.asin, 'B0CZ1TL7XK');
+    });
+
+    it('ne prend ni la gamme pour une référence, ni le contact pour la marque', () => {
+      const identity = parseAmazonDetails([
+        { label: 'Model name', value: 'CrossAction' },
+        { label: 'Manufacturer contact information', value: 'Procter & Gamble France' },
+      ]);
+      assert.equal(identity.mpn, null);
+      assert.equal(identity.brand, null);
+    });
+
+    it('n’interprète pas « Unit count » comme un nombre d’articles', () => {
+      assert.equal(parseAmazonDetails([{ label: 'Unit count', value: '10.0 Count' }]).packSize, null);
+    });
+
+    it('retombe sur « Manufacturer » sans « Brand Name »', () => {
+      assert.equal(parseAmazonDetails([{ label: 'Manufacturer', value: 'Brita' }]).brand, 'Brita');
+    });
+
+    it('lit les variantes de référence fabricant', () => {
+      for (const label of ['Part Number', 'Model number', 'Manufacturer reference', 'Manufacturer Part Number', 'ManufacturerPartNumber']) {
+        assert.equal(parseAmazonDetails([{ label, value: 'REF-1' }]).mpn, 'REF-1', label);
+      }
+    });
+
+    it('refuse plusieurs GTIN distincts, comme plusieurs EAN', () => {
+      const identity = parseAmazonDetails([
+        { label: 'Global Trade Identification Number', value: '3014260610807' },
+        { label: 'EAN', value: '4005809001209' },
+      ]);
+      assert.equal(identity.ean, null);
+      assert.equal(identity.ambiguousEan, true);
+    });
+  });
+
   describe('refus', () => {
     it('refuse de choisir quand la fiche porte plusieurs EAN', () => {
       // Cas réel des lots : Amazon liste les codes de chaque référence.

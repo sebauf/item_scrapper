@@ -121,22 +121,42 @@ function readGtins(value: string): string[] {
   return [...found];
 }
 
+/**
+ * Libellés reconnus, **en français et en anglais**.
+ *
+ * amazon.fr sert ses fiches dans la langue que le navigateur demande. Le
+ * scrapper demande le français (`AmazonBrowserLocale`), mais une préférence
+ * ignorée suffirait à rendre l'identité illisible : c'est arrivé — 927 fiches
+ * sur 927 servies en anglais le 10/11/2026, nombre d'articles lu sur 0 % des
+ * fiches alors qu'il était publié sur 92 %. Les libellés anglais ci-dessous
+ * sont ceux relevés ce jour-là (`identityDiagnostics.detailLabels`), pas des
+ * suppositions.
+ */
 const LABEL_MATCHERS = {
-  ean: (label: string) => /\bean\b/.test(label),
+  // « Global Trade Identification Number » : le code-barres des fiches
+  // servies en anglais (30 % des fiches mesurées), sous un nom sans « EAN ».
+  ean: (label: string) =>
+    /\bean\b/.test(label) || /\bgtin\b/.test(label) || /global trade identification number/.test(label),
   upc: (label: string) => /\bupc\b/.test(label),
   asin: (label: string) => /\basin\b/.test(label),
-  brand: (label: string) => /\bmarque\b/.test(label) || /^brand$/.test(label),
-  // Libellé exact : « Référence fabricant » et « Numéro de pièce du
-  // fabricant » contiennent le mot sans désigner la marque.
-  manufacturer: (label: string) => /^fabricant$/.test(label),
-  // « Nombre d'articles » seulement. « Nombre d'unités » est écarté à dessein :
-  // Amazon y publie souvent une contenance (« 1500.0 millilitre ») qui sert à
-  // son prix unitaire, pas un nombre d'articles.
-  itemCount: (label: string) => /^nombre d.articles$/.test(label),
+  brand: (label: string) => /\bmarque\b/.test(label) || /^brand( name)?$/.test(label),
+  // Libellé exact : « Référence fabricant », « Manufacturer reference » ou
+  // « Manufacturer contact information » contiennent le mot sans désigner
+  // la marque.
+  manufacturer: (label: string) => /^fabricant$/.test(label) || /^manufacturer$/.test(label),
+  // « Nombre d'articles » / « Number of items » seulement. « Nombre d'unités »
+  // / « Unit count » est écarté à dessein : Amazon y publie souvent une
+  // contenance (« 1500.0 millilitre ») qui sert à son prix unitaire, pas un
+  // nombre d'articles.
+  itemCount: (label: string) => /^nombre d.articles$/.test(label) || /^number of items$/.test(label),
+  // « Model name » (« CrossAction ») est une gamme, pas une référence : exclu.
   mpn: (label: string) =>
     /numero du modele/.test(label) ||
     /reference fabricant/.test(label) ||
     /numero de piece/.test(label) ||
+    /^(item )?model number$/.test(label) ||
+    /^(item )?part number$/.test(label) ||
+    /^manufacturer ?(reference|part ?number)$/.test(label) ||
     /^mpn$/.test(label),
 } as const;
 

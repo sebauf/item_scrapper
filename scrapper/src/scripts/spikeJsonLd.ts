@@ -10,6 +10,10 @@ import {
 } from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
 import { EMPTY_PARSED_QUANTITY } from '../infrastructure/scraping/shared/QuantityParser.js';
 import { EMPTY_PACK } from '../infrastructure/scraping/shared/PackReconciler.js';
+import {
+  AMAZON_BROWSER_POOL_OPTIONS,
+  requestFrenchPages,
+} from '../infrastructure/scraping/amazon/AmazonBrowserLocale.js';
 
 /**
  * Harnais de mesure du spike « extraction d'identité Amazon ».
@@ -213,7 +217,9 @@ async function main(): Promise<void> {
       maxPoolSize: 10,
       sessionOptions: { maxUsageCount: 50, maxErrorScore: 3 },
     },
+    browserPoolOptions: AMAZON_BROWSER_POOL_OPTIONS,
     preNavigationHooks: [
+      requestFrenchPages,
       async ({ page }) => {
         await page.addInitScript(() => {
           Object.defineProperty(navigator, 'webdriver', { get: () => undefined });

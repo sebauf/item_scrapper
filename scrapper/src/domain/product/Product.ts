@@ -39,9 +39,9 @@ export interface IdentityDiagnostics {
   detailLabels: string[];
   /** Conteneurs de caractéristiques connus présents dans la page. */
   detailContainers: string[];
-  /** Le texte visible ou replié de la page contient « EAN ». */
+  /** Le texte de la page contient « EAN », « GTIN » ou « Global Trade Identification Number ». */
   mentionsEan: boolean;
-  /** Le texte de la page contient « Nombre d'articles ». */
+  /** Le texte de la page contient « Nombre d'articles » ou « Number of items ». */
   mentionsItemCount: boolean;
   /** Nombre d'articles déclaré par la fiche, avant croisement avec le titre. */
   declaredPackSize: number | null;

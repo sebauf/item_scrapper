@@ -5,6 +5,7 @@ import type { Keyword } from '../../../domain/keyword/Keyword.js';
 import type { TrackedUrl } from '../../../domain/trackedUrl/TrackedUrl.js';
 import { amazonSearchHandler } from './AmazonSearchHandler.js';
 import { createAmazonProductHandler } from './AmazonProductHandler.js';
+import { AMAZON_BROWSER_POOL_OPTIONS, requestFrenchPages } from './AmazonBrowserLocale.js';
 
 const KNOWN_PRODUCTS_LIMIT_PER_KEYWORD = 150;
 
@@ -41,7 +42,11 @@ export class AmazonCrawler implements IShopScraper {
         maxPoolSize: 10,
         sessionOptions: { maxUsageCount: 50, maxErrorScore: 3 },
       },
+      // Fiches en français : sans cela, amazon.fr sert de l'anglais à
+      // l'empreinte en-US par défaut de Crawlee (cf. AmazonBrowserLocale).
+      browserPoolOptions: AMAZON_BROWSER_POOL_OPTIONS,
       preNavigationHooks: [
+        requestFrenchPages,
         async ({ page }) => {
           await page.addInitScript(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
