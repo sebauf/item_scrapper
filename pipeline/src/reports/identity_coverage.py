@@ -62,6 +62,10 @@ MIN_DETAILS_READ_PCT = 50.0
 MIN_DIAGNOSED_PAGES = 10
 TOP_LABELS = 20
 
+# Taux strict sous cette fraction du plus petit plafond (EAN ou lot) : le
+# facteur limitant n'est plus une moitié de la clé mais leur croisement.
+CROSSING_RATIO = 0.8
+
 STRICT_RESOLVED = 60.0
 STRICT_PARTIAL = 25.0
 MAX_EXAMPLES = 5
@@ -140,14 +144,55 @@ class CoverageSummary:
     shared_ean_examples: list[SharedEanExample] = field(default_factory=list)
 
 
-def _verdict(strict_pct: float, total: int) -> str:
+def limiting_factor(rates: dict[str, float]) -> str:
+    """Laquelle des deux moitiés de la clé stricte bride la couverture.
+
+    La clé exige l'EAN **et** le nombre d'unités : chacun plafonne le taux
+    strict, et les deux plafonds appellent des remèdes opposés. Un EAN rare
+    est une question d'identité (la chercher chez le concurrent) ; un lot
+    rarement établi alors que l'EAN est là est une question de lecture du
+    conditionnement — « Nombre d'articles », ou la clé (EAN, contenu total).
+    """
+    ean, pack = rates["ean"], rates["packSize"]
+    if ean < STRICT_PARTIAL and pack < STRICT_PARTIAL:
+        return f"EAN ({ean:.1f} %) et nombre d'unités ({pack:.1f} %) manquent tous deux"
+    if ean < STRICT_PARTIAL:
+        return f"l'EAN ({ean:.1f} % des offres) ; le nombre d'unités est établi pour {pack:.1f} %"
+    # Chaque moitié plafonne le taux strict. S'il reste nettement sous les deux
+    # plafonds, c'est que l'EAN et le lot tombent rarement sur les mêmes offres.
+    if rates["strict"] < CROSSING_RATIO * min(ean, pack):
+        return f"le croisement : EAN ({ean:.1f} %) et lot ({pack:.1f} %) rarement sur les mêmes offres"
+    if pack <= ean:
+        return (
+            f"le nombre d'unités ({pack:.1f} %) ; {rates['ean_without_pack']:.1f} % des offres ont "
+            "un EAN sans lot établi"
+        )
+    return f"l'EAN ({ean:.1f} % des offres) ; le nombre d'unités est établi pour {pack:.1f} %"
+
+
+def _verdict(rates: dict[str, float], total: int) -> str:
     if total == 0:
         return "aucune offre — rien à mesurer"
-    if strict_pct >= STRICT_RESOLVED:
+    strict = rates["strict"]
+    if strict >= STRICT_RESOLVED:
         return "résolu : comparaison stricte sur EAN + lot pour l'essentiel du catalogue"
-    if strict_pct >= STRICT_PARTIAL:
-        return "partiel : cascade complète nécessaire (EAN + lot, puis attributs validés)"
-    return "insuffisant : l'identité devra venir du concurrent, ne pas abaisser les seuils"
+    factor = limiting_factor(rates)
+    if strict >= STRICT_PARTIAL:
+        return (
+            "partiel : cascade complète nécessaire (EAN + lot, puis attributs validés) — "
+            f"facteur limitant : {factor}"
+        )
+    if rates["ean"] < STRICT_PARTIAL:
+        # Seul cas où la conclusion historique tient : l'EAN lui-même manque.
+        return (
+            f"insuffisant, faute d'EAN — facteur limitant : {factor}. L'identité devra venir "
+            "du concurrent ; ne pas abaisser les seuils"
+        )
+    return (
+        f"insuffisant, mais pas faute d'identité — facteur limitant : {factor}. Corriger la "
+        "lecture du lot (« Nombre d'articles ») ou adopter la clé (EAN, contenu total) ; "
+        "ne pas abaisser les seuils"
+    )
 
 
 def _shared_ean_groups(offers: list[dict]) -> tuple[dict[str, int], list[SharedEanExample]]:
@@ -230,7 +275,7 @@ def summarize(offers: list[dict]) -> CoverageSummary:
         offers=total,
         counts=counts,
         rates=rates,
-        verdict=_verdict(rates["strict"], total),
+        verdict=_verdict(rates, total),
         by_keyword=by_keyword,
         shared_ean_groups=groups,
         shared_ean_examples=examples,
