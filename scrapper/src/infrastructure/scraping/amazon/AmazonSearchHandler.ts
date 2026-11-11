@@ -1,21 +1,37 @@
 import type { PlaywrightCrawlingContext } from 'crawlee';
+import type { ScrapeFailureRecorder } from '../shared/ScrapeFailureRecorder.js';
+import { SEARCH_RESULT_SELECTOR } from './AmazonPageEvidence.js';
+import { diagnoseOrRetry, recordUnreadablePage } from './AmazonUnreadablePage.js';
 
 const MAX_SEARCH_PAGES = 5;
 
-export async function amazonSearchHandler({
-  page,
-  request,
-  enqueueLinks,
-  log,
-}: PlaywrightCrawlingContext): Promise<void> {
+export function createAmazonSearchHandler(
+  failures: ScrapeFailureRecorder,
+): (context: PlaywrightCrawlingContext) => Promise<void> {
+  return (context) => handleSearchPage(context, failures);
+}
+
+async function handleSearchPage(
+  context: PlaywrightCrawlingContext,
+  failures: ScrapeFailureRecorder,
+): Promise<void> {
+  const { page, request, enqueueLinks, log } = context;
   const { keyword, page: pageNum = 1 } = request.userData as { keyword: string; page?: number };
 
-  await page
-    .waitForSelector('div[data-component-type="s-search-result"]', { timeout: 15000 })
-    .catch(() => {});
+  await page.waitForSelector(SEARCH_RESULT_SELECTOR, { timeout: 15000 }).catch(() => {});
+
+  // Une recherche sans résultat lisible n'est plus « traitée » en silence :
+  // un captcha à cet endroit privait le mot-clé de tous ses nouveaux produits
+  // pour la journée.
+  const resultCount = await page.locator(SEARCH_RESULT_SELECTOR).count().catch(() => 0);
+  if (resultCount === 0) {
+    const unreadable = await diagnoseOrRetry(context, 'search');
+    await recordUnreadablePage(failures, context, 'search', unreadable, 'skipped');
+    return;
+  }
 
   await enqueueLinks({
-    selector: 'div[data-component-type="s-search-result"] a.a-link-normal[href*="/dp/"]',
+    selector: `${SEARCH_RESULT_SELECTOR} a.a-link-normal[href*="/dp/"]`,
     label: 'PRODUCT',
     userData: { keyword },
     transformRequestFunction: (req) => {
@@ -39,5 +55,5 @@ export async function amazonSearchHandler({
     }
   }
 
-  log.info(`Search page ${pageNum} for "${keyword}" processed`);
+  log.info(`Search page ${pageNum} for "${keyword}" processed (${resultCount} results)`);
 }

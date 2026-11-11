@@ -1,4 +1,8 @@
 import { MongoClient, type Db } from 'mongodb';
+import {
+  COLLECTION_SCRAPE_FAILURES,
+  SCRAPE_FAILURES_RETENTION_DAYS,
+} from './MongoScrapeFailureRepository.js';
 
 export class MongoConnection {
   private client: MongoClient | null = null;
@@ -11,6 +15,14 @@ export class MongoConnection {
     await this._db.collection('items_raw').createIndex({ url: 1, day: 1 }, { unique: true });
     await this._db.collection('keywords').createIndex({ keyword: 1 }, { unique: true });
     await this._db.collection('tracked_urls').createIndex({ url: 1 }, { unique: true });
+    const failures = this._db.collection(COLLECTION_SCRAPE_FAILURES);
+    // Purge automatique : ces traces servent à diagnostiquer les derniers
+    // passages, pas à faire de l'historique (et certaines portent du HTML).
+    await failures.createIndex(
+      { occurredAt: 1 },
+      { name: 'occurredAt_ttl', expireAfterSeconds: SCRAPE_FAILURES_RETENTION_DAYS * 86400 },
+    );
+    await failures.createIndex({ day: -1, reason: 1 }, { name: 'day_reason' });
   }
 
   get db(): Db {

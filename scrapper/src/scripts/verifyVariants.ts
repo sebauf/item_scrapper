@@ -1,8 +1,10 @@
 import 'dotenv/config';
-import { PlaywrightCrawler, createPlaywrightRouter } from 'crawlee';
+import { PlaywrightCrawler, createPlaywrightRouter, log } from 'crawlee';
 import { MongoConnection } from '../infrastructure/persistence/mongodb/MongoConnection.js';
 import { MongoProductRepository } from '../infrastructure/persistence/mongodb/MongoProductRepository.js';
+import { MongoScrapeFailureRepository } from '../infrastructure/persistence/mongodb/MongoScrapeFailureRepository.js';
 import { createAmazonProductHandler } from '../infrastructure/scraping/amazon/AmazonProductHandler.js';
+import { ScrapeFailureRecorder } from '../infrastructure/scraping/shared/ScrapeFailureRecorder.js';
 import {
   AMAZON_BROWSER_POOL_OPTIONS,
   requestFrenchPages,
@@ -20,7 +22,12 @@ async function main(): Promise<void> {
   try {
     const productRepository = new MongoProductRepository(connection.db);
     const router = createPlaywrightRouter();
-    router.addDefaultHandler(createAmazonProductHandler(productRepository));
+    const failures = new ScrapeFailureRecorder(
+      new MongoScrapeFailureRepository(connection.db),
+      log,
+      'amazon',
+    );
+    router.addDefaultHandler(createAmazonProductHandler(productRepository, failures));
 
     const crawler = new PlaywrightCrawler({
       maxRequestsPerCrawl: 10,

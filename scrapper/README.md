@@ -228,8 +228,49 @@ de stock n'est pas une disparition, et le produit peut revenir :
   indisponible sorte immédiatement du tableau de bord ;
 - au premier relevé réussi suivant, le drapeau est levé.
 
-Une page sans titre exploitable (blocage probable) est en revanche simplement
-ignorée : rien n'est écrit, rien n'est marqué.
+Une fiche en **404 / 410** (ou affichant « page introuvable ») reçoit le même
+traitement. Les autres pages sans titre sont diagnostiquées, voir ci-dessous.
+
+## Pages illisibles : diagnostic et journal des échecs
+
+Une fiche sans titre, ou une page de recherche sans résultat lisible, n'est plus
+abandonnée en silence. Elle est **diagnostiquée** (`AmazonPageDiagnosis`, règles
+pures testées) à partir de l'URL finale, du statut HTTP, de marqueurs de la page
+(formulaire de captcha, squelette de fiche / de recherche) et, en dernier
+recours, de son texte :
+
+| Cause (`reason`) | Signe | Conséquence |
+|---|---|---|
+| `captcha` | `/errors/validateCaptcha`, `#captchacharacters`, « pas un robot », « continuer vos achats » | session retirée, nouvelle tentative |
+| `sign_in` | redirection vers `/ap/signin`, `/ap/cvf` | session retirée, nouvelle tentative |
+| `rate_limited` | HTTP 429 / 503, « une erreur s'est produite » | session retirée, nouvelle tentative |
+| `http_error` | autre 4xx / 5xx | nouvelle tentative si 5xx |
+| `empty_page` | HTML quasi vide | nouvelle tentative |
+| `not_found` | HTTP 404 / 410, « page introuvable » | fiche marquée indisponible |
+| `layout_changed` | squelette de fiche (ou de recherche) présent, sélecteurs muets | ignorée, **HTML conservé** — c'est le code à réparer |
+| `no_results` | « Aucun résultat pour » | ignorée |
+| `unknown` | rien de connu | nouvelle tentative, **HTML conservé** à l'abandon |
+| `request_error` | la requête elle-même a échoué (délai, navigateur) | géré par Crawlee |
+
+Les nouvelles tentatives sont celles de Crawlee (`maxRequestRetries`, 3 par
+défaut) : un captcha passager ne coûte plus le relevé du jour.
+
+Chaque échec (et chaque tentative) est écrit dans la collection
+**`scrape_failures`** : URL demandée et finale, mot-clé, cause, issue
+(`retried`, `gave_up`, `skipped`, `marked_unavailable`), numéro de tentative,
+statut HTTP, titre de la page, début du texte visible, marqueurs, message
+d'erreur. Le HTML complet n'est gardé que pour les causes incertaines
+(`layout_changed`, `unknown`), à l'abandon, 5 pages par cause et par passage
+au plus, compressé en gzip. Les documents expirent après 30 jours (index TTL).
+
+Un **bilan par cause** termine chaque passage — dernière ligne du log de la
+tâche `scrape` dans Airflow. Pour le détail :
+
+```bash
+npm run failures                       # bilan du dernier jour en échec + derniers échecs
+npm run failures -- --day=2026-11-10   # un jour donné (UTC)
+npm run failures -- --dump=<id>        # extrait le HTML conservé → scrape-failure-<id>.html
+```
 
 ## Anti-détection
 
@@ -255,6 +296,7 @@ Hors du flux nominal, à lancer à la main :
 npm run migrate:legacy-data          # devises symboliques → ISO, images en haute résolution
 npm run migrate:reparse-quantities -- --all --dry-run   # puis sans --dry-run : recalcule le conditionnement de l'historique
 npm run spike:jsonld -- --limit=30   # mesure ce qu'Amazon expose : JSON-LD, EAN, contenance
+npm run failures                     # pages illisibles du dernier passage, par cause (lecture seule)
 ```
 
 `migrate:reparse-quantities` est **à lancer une fois** après le déploiement de

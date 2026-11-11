@@ -20,6 +20,13 @@ spec:
       # Doit pouvoir créer/surveiller des Pods (KubernetesPodOperator) :
       # cf. airflow-rbac.yaml.
       serviceAccountName: airflow-scheduler
+      # Nom DNS **stable** pour le serveur de logs : avec le Service headless
+      # `airflow-scheduler-logs` ci-dessous, ce Pod est résolu dans le cluster
+      # sous airflow-scheduler.airflow-scheduler-logs.price-tracker.svc.<domaine>,
+      # quel que soit son IP. Un seul réplica, stratégie Recreate : jamais deux
+      # Pods sous ce nom.
+      hostname: airflow-scheduler
+      subdomain: airflow-scheduler-logs
       # L'image Airflow tourne en uid 50000 / gid 0 : le volume doit être
       # inscriptible par le groupe 0.
       securityContext:
@@ -46,11 +53,16 @@ spec:
             - name: AIRFLOW__CORE__LOAD_EXAMPLES
               value: "false"
             # Le hostname enregistré avec chaque tâche est l'adresse à laquelle
-            # le webserver ira chercher son log. Par défaut c'est le nom du Pod,
-            # qu'aucun DNS du cluster ne résout : on publie l'IP du Pod à la
-            # place.
+            # le webserver ira chercher son log, **pour toujours** : il est figé
+            # dans la base au lancement de la tâche. On publiait l'IP du Pod,
+            # qui change à chaque recréation (déploiement, nœud redémarré) :
+            # tous les logs écrits avant devenaient injoignables, bien que
+            # présents sur le volume. Les DAGs lancés toutes les 30 min
+            # gardaient des logs récents lisibles ; le scrape, lancé une fois
+            # par nuit, presque jamais. getfqdn rend le nom DNS stable défini
+            # par hostname + subdomain (cf. plus haut).
             - name: AIRFLOW__CORE__HOSTNAME_CALLABLE
-              value: airflow.utils.net.get_host_ip_address
+              value: airflow.utils.net.getfqdn
             # Le webserver signe sa requête de log avec cette clé et le serveur
             # de logs la vérifie : sans la même valeur des deux côtés -> 403.
             - name: AIRFLOW__WEBSERVER__SECRET_KEY
@@ -89,6 +101,26 @@ spec:
         - name: logs
           persistentVolumeClaim:
             claimName: airflow-logs
+---
+# Service headless (sans IP virtuelle) : il ne sert qu'à publier dans le DNS du
+# cluster le nom stable du Pod scheduler (hostname + subdomain), auquel le
+# webserver vient lire les logs des tâches sur le port 8793.
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow-scheduler-logs
+  namespace: price-tracker
+spec:
+  clusterIP: None
+  selector:
+    app: airflow-scheduler
+  # Le scheduler n'a pas de readinessProbe ; publier le nom dès le démarrage
+  # évite toute fenêtre où il ne serait pas résolu.
+  publishNotReadyAddresses: true
+  ports:
+    - name: worker-logs
+      port: 8793
+      targetPort: 8793
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

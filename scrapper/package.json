@@ -11,7 +11,8 @@
     "test": "node --test --import tsx \"src/**/*.spec.ts\"",
     "migrate:legacy-data": "tsx src/scripts/migrateLegacyData.ts",
     "migrate:reparse-quantities": "tsx src/scripts/reparseQuantities.ts",
-    "spike:jsonld": "tsx src/scripts/spikeJsonLd.ts"
+    "spike:jsonld": "tsx src/scripts/spikeJsonLd.ts",
+    "failures": "tsx src/scripts/scrapeFailures.ts"
   },
   "dependencies": {
     "crawlee": "^3.11.0",

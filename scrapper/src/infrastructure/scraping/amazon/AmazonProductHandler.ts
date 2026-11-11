@@ -5,6 +5,9 @@ import { parsePrice, parseUnitPrice } from './PriceParser.js';
 import { toHighResImageUrls } from './ImageUrlParser.js';
 import { extractAmazonIdentity } from './AmazonIdentityExtractor.js';
 import { AVAILABILITY_SELECTOR, OWN_PRICE_SELECTORS, isUnavailable } from './AmazonOfferParser.js';
+import { isBlockUrl } from './AmazonPageDiagnosis.js';
+import { diagnoseOrRetry, recordUnreadablePage } from './AmazonUnreadablePage.js';
+import type { ScrapeFailureRecorder } from '../shared/ScrapeFailureRecorder.js';
 
 const SCROLL_MIN_PX = 400;
 const SCROLL_RANDOM_RANGE_PX = 300;
@@ -15,7 +18,6 @@ const UNIT_PRICE_MAX_LENGTH = 100;
 const UNIT_PRICE_HINT_PATTERN = /par\s+\w|\/\s*\w/i;
 const PRODUCT_PATH_RE = /\/dp\/[A-Z0-9]{10}/i;
 const PRODUCT_ASIN_RE = /\/dp\/([A-Z0-9]{10})/i;
-const BLOCK_PATH_FRAGMENTS = ['/errors/validateCaptcha', '/ap/signin', '/ap/cvf'];
 
 async function simulateHumanScroll(page: Page): Promise<void> {
   await page.evaluate(
@@ -150,18 +152,16 @@ async function enqueueVariants(
   }
 }
 
-function isBlockPage(url: string): boolean {
-  return BLOCK_PATH_FRAGMENTS.some((fragment) => url.includes(fragment));
-}
-
 function isDeadProductRedirect(originalUrl: string, finalUrl: string): boolean {
-  return PRODUCT_PATH_RE.test(originalUrl) && !PRODUCT_PATH_RE.test(finalUrl) && !isBlockPage(finalUrl);
+  return PRODUCT_PATH_RE.test(originalUrl) && !PRODUCT_PATH_RE.test(finalUrl) && !isBlockUrl(finalUrl);
 }
 
 export function createAmazonProductHandler(
   productRepository: IProductRepository,
+  failures: ScrapeFailureRecorder,
 ): (context: PlaywrightCrawlingContext) => Promise<void> {
-  return async ({ page, request, enqueueLinks, log }) => {
+  return async (context) => {
+    const { page, request, enqueueLinks, log } = context;
     const { keyword } = request.userData as { keyword?: string };
 
     await simulateHumanScroll(page);
@@ -177,10 +177,21 @@ export function createAmazonProductHandler(
 
     const title = await extractTitle(page);
 
+    // Pas de titre, pas de relevé — mais plus d'abandon silencieux : la page
+    // est diagnostiquée (captcha, fiche supprimée, refonte…), réessayée si
+    // cela a un sens, et l'échec enregistré dans `scrape_failures`.
     if (!title) {
-      log.warning('Skipped save: page failed to extract a title (likely blocked or unavailable)', {
-        url: request.url,
-      });
+      const unreadable = await diagnoseOrRetry(context, 'product');
+      // Même traitement qu'une fiche redirigée : la fiche n'existe plus.
+      const notFound = unreadable.diagnosis.reason === 'not_found';
+      if (notFound) await productRepository.markUnavailable(request.url);
+      await recordUnreadablePage(
+        failures,
+        context,
+        'product',
+        unreadable,
+        notFound ? 'marked_unavailable' : 'skipped',
+      );
       return;
     }
 

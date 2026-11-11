@@ -37,6 +37,7 @@ npm run start:prod                 # run compiled output
 npm test                           # unit tests (node:test) — pure parsers, no browser
 npm run typecheck                  # tsc --noEmit
 npm run spike:jsonld -- --limit=30 # mesure ce qu'Amazon expose (EAN, JSON-LD, contenance)
+npm run failures                   # pages illisibles du dernier passage, par cause ; --dump=<id> extrait le HTML conservé
 ```
 
 Les parseurs d'identité (`scraping/shared/`) et de prix sont des fonctions
@@ -134,12 +135,12 @@ kubectl apply -k k8s/overlays/prod # production overlay
 ### Scrapper — clean architecture
 
 ```
-domain/          — entities (Keyword, Product) + repository interfaces
+domain/          — entities (Keyword, Product, ScrapeFailure) + repository interfaces
 application/     — use cases (ScrapeProductsUseCase, SeedKeywordsUseCase) + port IShopScraper
 infrastructure/  — MongoDB repositories, AmazonCrawler + handlers
 ```
 
-Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `IShopScraper.scrape(keywords)` → `AmazonCrawler` runs a search + product pages via Crawlee → results upserted in MongoDB via `MongoProductRepository`.
+Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `IShopScraper.scrape(keywords)` → `AmazonCrawler` runs a search + product pages via Crawlee → results upserted in MongoDB via `MongoProductRepository`; unreadable pages go to `scrape_failures` via `MongoScrapeFailureRepository`.
 
 ### Key scrapper files
 
@@ -148,7 +149,11 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/application/SeedKeywordsUseCase.ts` — seeds missing keywords into DB
 - `src/infrastructure/scraping/amazon/AmazonCrawler.ts` — configures `PlaywrightCrawler`, routes search vs product pages
 - `src/infrastructure/scraping/amazon/AmazonSearchHandler.ts` — enqueues product URLs from search results
-- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page; checks availability **before** the price
+- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page; checks availability **before** the price; a page **without title** is diagnosed, never dropped silently (see below)
+- `src/infrastructure/scraping/amazon/AmazonPageDiagnosis.ts` — pur : why a page could not be read (fiche sans titre, recherche sans résultat lisible) → `captcha`, `sign_in`, `rate_limited` (429/503, « une erreur s'est produite »), `http_error`, `empty_page`, `not_found` (404/410), `layout_changed` (page skeleton present, our selectors find nothing — the code is at fault), `no_results`, `unknown`. Order of rules = order of certainty: URL and captcha form, HTTP status, skeleton markers, then text (searched in the **whole** text: Amazon's nav header alone can fill the first thousands of characters). `AmazonPageEvidence.ts` collects the evidence with Playwright and never throws
+- `src/infrastructure/scraping/amazon/AmazonUnreadablePage.ts` — `diagnoseOrRetry`: retryable causes (blocks, empty page, unknown) **throw** a `PageDiagnosisError` so Crawlee retries (`maxRequestRetries`, default 3), after `session.retire()` for blocks; others are returned to the handler — `not_found` → `markUnavailable` (like a redirect), `layout_changed` / `no_results` → skipped
+- `src/infrastructure/scraping/shared/ScrapeFailureRecorder.ts` — single sink of every failure: logs one line, writes `scrape_failures`, counts; never fails the scrape (DB error = lost trace, not lost pages). `AmazonCrawler` feeds it from `errorHandler` (`retried`) and `failedRequestHandler` (`gave_up`), and logs a **per-cause summary at the end of the run** (last lines of the Airflow `scrape` task log). HTML kept only for uncertain causes (`layout_changed`, `unknown`), on the final attempt, ≤ 5 per cause per run
+- `src/scripts/scrapeFailures.ts` — `npm run failures` (image : `node dist/scripts/scrapeFailures.js`) : read-only summary of `scrape_failures` for the last day, `--day=YYYY-MM-DD`, `--dump=<id>` writes the kept HTML to a file
 - `src/infrastructure/scraping/amazon/AmazonOfferParser.ts` — offer rules (pur) : « Actuellement indisponible » → `markUnavailable`, no price recorded; price read **only** inside the product's own price blocks (`#apex_desktop`, `#corePriceDisplay_desktop_feature_div`…), never from a page-wide `.a-price` — on an unavailable page that is the price of a *replacement* article. Prices on the page but none in those blocks → saved with `price: null` and a warning (third-party sellers only, or selectors outdated by a redesign)
 - `src/infrastructure/scraping/amazon/PriceParser.ts` — normalises Amazon price strings
 - `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin, packSize }` (pur), libellés **français et anglais** (« Number of items », « Brand Name », « Global Trade Identification Number »…)
@@ -213,6 +218,15 @@ jitter of 5 min to 3 h): `jitter >> scrape >> purge >> refine >> score`. The
 `scrape` task overrides `execution_timeout` to 3 h — at 10 requests/minute a
 full 1000-page crawl takes ~100 min, and a run killed half-way would hide every
 product it did not reach.
+
+**Task logs in k8s**: the webserver reads a task's log over HTTP from the
+scheduler's `serve-logs` (port 8793), at the hostname **frozen in the task
+instance** when it started. That hostname is the scheduler Pod's stable DNS
+name — `hostname: airflow-scheduler` + `subdomain: airflow-scheduler-logs` and
+the headless Service of the same name (`k8s/base/airflow-scheduler.yaml`),
+`HOSTNAME_CALLABLE = airflow.utils.net.getfqdn`. It used to be the Pod IP: every
+Pod recreation made all earlier logs unreachable (still on the PVC), which hid
+the nightly scrape while the 30-min fuel DAG always had fresh, readable logs.
 
 A `cleanup_logs` task runs outside that chain (a failed scrape must not stop
 it): it deletes Airflow's own task logs older than `AIRFLOW_LOG_RETENTION_DAYS`
@@ -641,6 +655,7 @@ keywords, favourites, tracked URLs and favourite stations, and nothing else.
 - `fuel_restock_forecasts` — published 24 h restock chance, one doc per (favourite station × fuel in shortage for < 7 days), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `probability` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`restock_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
 - `fuel_restock_models` — same shape as `fuel_shortage_models`, for the restock model. Written only by the daily training task (`restock_forecast.train`)
 - `fuel_shortage_models` — `_id: "current"` = the model in service (`payload` pickle, `trainedAt`, `dataUntil`, `metrics.test` / `metrics.baseline`, `featureColumns`, `sklearnVersion`); `_id: "last_rejected"` = last refused training and why. Written only by `shortage_forecast.train`
+- `scrape_failures` — one doc per page the scrapper could not read **and per attempt**: `url`, `finalUrl`, `keyword`, `shop`, `pageKind` (`product` | `search`), `reason` (see `AmazonPageDiagnosis`, + `request_error`), `outcome` (`retried` | `gave_up` | `skipped` | `marked_unavailable`), `attempt`, `detail`, `httpStatus`, `pageTitle`, `textExcerpt` (1000 chars), `htmlLength`, `markers`, `error`, `occurredAt`, `day` (UTC midnight, like `items_raw`), optionally `html` (gzip Binary, `htmlEncoding: "gzip"`). TTL index `occurredAt` 30 days, index `{ day: -1, reason: 1 }` — both created by the scrapper's `MongoConnection`. Written only by the scrapper, read by nobody but `npm run failures` / mongosh
 - Upsert by `(url, day)` in `items_raw` → re-runs update existing items without duplicates
 - URI configured in `.env` via `MONGODB_URI`
 
