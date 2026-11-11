@@ -101,7 +101,8 @@ export async function extractPageSignals(page: Page): Promise<PageSignals> {
         // Les deux langues : une page servie en anglais nomme le code-barres
         // « Global Trade Identification Number ».
         mentionsEan: /\b(EAN|GTIN)\b|global trade identification number/i.test(text),
-        mentionsItemCount: /nombre d.articles|number of items/i.test(text),
+        // « Nombre d’ articles » (espace après l'apostrophe) existe aussi.
+        mentionsItemCount: /nombre d\W{0,3}articles|number of items/i.test(text),
       };
     }, DETAIL_CONTAINER_IDS)
     .catch(() => NO_SIGNALS);

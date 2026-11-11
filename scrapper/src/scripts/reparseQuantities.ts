@@ -29,6 +29,11 @@ import {
  * `identityDiagnostics.declaredPackSize` quand le relevé l'a enregistré, ce qui
  * rend le recalcul identique à ce qu'aurait produit le scrape lui-même.
  *
+ * Limite : seule la **valeur lue** au scrape est conservée, pas la ligne brute
+ * de la fiche. Un libellé que le parseur ratait alors (« Nombre d’ articles »,
+ * espace après l'apostrophe, avant le 11/11/2026) a laissé `declaredPackSize`
+ * à `null` : aucune migration ne le retrouve, seul un nouveau scrape le lit.
+ *
  * Modes :
  *   (défaut)  relevés sans `unitQuantity` seulement — jamais migrés ;
  *   --all     tous les relevés : à relancer après chaque changement de parseur.

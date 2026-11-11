@@ -70,6 +70,21 @@ describe('AmazonIdentityParser', () => {
       assert.equal(parseAmazonDetails([entry]).packSize, 2);
     });
 
+    it('lit « Nombre d’ articles », espace après l’apostrophe', () => {
+      // Graphie relevée sur 214 fiches sur 352 le 11/11/2026 (detailLabels :
+      // « nombre d’ articles ») : l’ancien motif n’admettait qu’un signe.
+      for (const raw of ['Nombre d’ articles‏ : ‎3', "Nombre d' articles : 3", 'Nombre d articles : 3']) {
+        const entry = splitDetailBullet(raw)!;
+        assert.equal(parseAmazonDetails([entry]).packSize, 3, raw);
+      }
+    });
+
+    it('n’étend pas l’appariement au-delà de « Nombre d’articles »', () => {
+      for (const label of ['Nombre d’articles par paquet', 'Nombre d’unités', 'Nombre de articles maximum']) {
+        assert.equal(parseAmazonDetails([{ label, value: '3' }]).packSize, null, label);
+      }
+    });
+
     it('accepte l’entier écrit en flottant ou suivi de son unité', () => {
       assert.equal(readItemCount('1.0'), 1);
       assert.equal(readItemCount('3,0'), 3);
