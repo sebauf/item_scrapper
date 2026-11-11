@@ -148,7 +148,11 @@ const LABEL_MATCHERS = {
   // / « Unit count » est écarté à dessein : Amazon y publie souvent une
   // contenance (« 1500.0 millilitre ») qui sert à son prix unitaire, pas un
   // nombre d'articles.
-  itemCount: (label: string) => /^nombre d.articles$/.test(label) || /^number of items$/.test(label),
+  //
+  // Jusqu'à trois signes entre « d » et « articles » : Amazon écrit aussi
+  // « Nombre d’ articles », espace après l'apostrophe — 214 fiches sur 352 le
+  // 11/11/2026, que l'ancien `d.articles` (un seul signe) laissait passer.
+  itemCount: (label: string) => /^nombre d\W{0,3}articles$/.test(label) || /^number of items$/.test(label),
   // « Model name » (« CrossAction ») est une gamme, pas une référence : exclu.
   mpn: (label: string) =>
     /numero du modele/.test(label) ||
