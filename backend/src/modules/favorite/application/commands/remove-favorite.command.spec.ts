@@ -1,5 +1,5 @@
 import { UserId } from 'src/shared/domain/user-id';
-import { ProductId } from '../../../catalog/domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { InMemoryFavoriteRepository } from '../../testing/in-memory-favorite.repository';
 import { RemoveFavoriteCommand } from './remove-favorite.command';
 

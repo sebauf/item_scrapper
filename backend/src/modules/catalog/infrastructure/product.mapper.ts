@@ -1,7 +1,7 @@
 import { Document } from 'mongodb';
 import { isDeal } from '../domain/deal-policy';
 import { Money, TrendDirection, TREND_DIRECTIONS, UnitPrice } from '../domain/money';
-import { ProductId } from '../domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { PriceHistoryEntry, ProductSummary } from '../application/ports/product.read-model';
 
 /**

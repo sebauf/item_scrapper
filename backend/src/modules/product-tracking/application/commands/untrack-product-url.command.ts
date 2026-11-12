@@ -8,7 +8,7 @@ import { TrackedUrlRepository } from '../../domain/tracked-url.repository';
  * Retire une URL du suivi individuel — miroir de UntrackKeywordCommand.
  *
  * Prend directement l'URL canonique (pas un identifiant encodé) : c'est
- * l'interface, `catalog/domain/product-id.ts`, qui fait le décodage avant
+ * l'interface, `shared/domain/product-id.ts`, qui fait le décodage avant
  * d'appeler cette commande — cette dernière ne connaît pas la notion
  * d'identifiant HTTP, seulement l'URL métier.
  */

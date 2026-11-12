@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Db, Document } from 'mongodb';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
 import { findLastScrapeDay } from 'src/shared/infrastructure/mongo/last-scrape';
-import { ProductId } from '../domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { PAGE_SIZE, ProductQuery, ProductSort } from '../domain/product-query';
 import {
   ProductDetail,
@@ -45,8 +45,6 @@ export class MongoProductReadModel extends ProductReadModel {
   }
 
   /**
-   * Portage de frontend/src/lib/queries.ts:fetchProductsPage.
-   *
    * Le `$facet` est ce qui rend cette requête rentable : les trois résultats
    * (la page, le total filtré, les stats non filtrées) sont produits en une
    * seule passe sur le même jeu de documents. Les calculer séparément
@@ -114,8 +112,6 @@ export class MongoProductReadModel extends ProductReadModel {
   }
 
   /**
-   * Portage de frontend/src/lib/queries.ts:fetchProductDetail.
-   *
    * Trois sources, chacune faisant autorité sur une partie de la fiche :
    *  - `items_raw` (dernier relevé) pour les champs volatils — prix du jour,
    *    date de livraison ;

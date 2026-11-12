@@ -1,5 +1,4 @@
-import { InvalidProductId } from './catalog.errors';
-import { ProductId } from './product-id';
+import { InvalidProductId, ProductId } from './product-id';
 
 const URL = 'https://www.amazon.fr/dp/B0CZ1TL7XK?th=1&psc=1';
 

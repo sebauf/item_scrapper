@@ -1,6 +1,6 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { ProductNotFound } from '../domain/catalog.errors';
-import { ProductId } from '../domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { DashboardReadModel } from '../application/ports/dashboard.read-model';
 import { ProductReadModel } from '../application/ports/product.read-model';
 import { GetDashboardQuery } from '../application/queries/get-dashboard.query';

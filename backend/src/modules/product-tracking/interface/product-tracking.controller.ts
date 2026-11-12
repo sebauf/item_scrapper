@@ -2,7 +2,7 @@ import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post } from
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { UserId } from 'src/shared/domain/user-id';
 import { CurrentUser } from 'src/shared/interface/http/auth.guard';
-import { ProductId } from '../../catalog/domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { TrackProductUrlCommand } from '../application/commands/track-product-url.command';
 import { UntrackProductUrlCommand } from '../application/commands/untrack-product-url.command';
 import { ListTrackedUrlSummariesQuery } from '../application/queries/list-tracked-url-summaries.query';

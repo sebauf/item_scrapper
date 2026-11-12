@@ -267,13 +267,18 @@ src/modules/keyword/   write context: Keyword aggregate, KeywordName value objec
                        KeywordRepository port, TrackKeyword / UntrackKeyword commands
 src/modules/profile/   user profile: PhoneNumber value object (E.164), UserProfile
                        (phone + alertFuels), GET/PUT /profile — read by the restock alert
-src/modules/catalog/   read-only context: ProductId / ProductQuery value objects,
+src/modules/catalog/   read-only context: ProductQuery value object,
                        DealPolicy, read models over items_raw / price_history / deal_scores
-src/shared/            DomainError families (400/409/404), Mongo connection + required indexes
+src/shared/            DomainError families (400/409/404), UserId + ProductId (value objects
+                       used by several modules), Mongo connection + required indexes
 ```
 
 Dependency rule: `domain` imports nothing, `application` imports only `domain`,
-`infrastructure` and `interface` may import anything. No file under `domain/`
+`infrastructure` and `interface` may import anything. Between modules, one way
+only: a module's `domain` / `application` may use another's `domain` and
+`application` (favorite → catalog, product-tracking; profile → fuel; catalog's
+dashboard → the keyword / product-tracking read ports), never its
+`infrastructure`; what several modules share lives in `src/shared/`. No file under `domain/`
 imports `@nestjs/*` or `mongodb`.
 
 Write side goes through the aggregate (it protects invariants). Read side goes

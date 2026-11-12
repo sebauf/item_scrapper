@@ -12,8 +12,14 @@ Ce fichier n'en garde que ce qui sert à juger la propreté d'un diff.
 - `application/` n'importe pas `infrastructure/` : elle dépend de **ports**
   (`domain/*.repository.ts`, `application/ports/*.read-model.ts`), implémentés
   dans `infrastructure/`.
-- Un module n'importe pas l'intérieur d'un autre module ; ce qui est commun va
-  dans `src/shared/`.
+- Entre modules, à sens unique et sans cycle : le `domain/` et l'`application/`
+  d'un module peuvent utiliser le `domain/` et l'`application/` (objets-valeurs,
+  erreurs, ports, commandes) d'un autre — favorite → catalog et
+  product-tracking, profile → fuel, le tableau de bord de catalog → les ports de
+  lecture de keyword et product-tracking. Jamais son `infrastructure/`. Une
+  `interface/` peut réutiliser le DTO de réponse d'un autre module quand elle
+  renvoie la même chose (favoris → `ProductDetailResponse`). Ce que plusieurs
+  modules partagent va dans `src/shared/` (`UserId`, `ProductId`).
 - Le domaine ne connaît pas HTTP : il lève une `DomainError` qui décrit le
   problème, jamais un code de statut. La traduction en 400 / 404 / 409 se fait
   une seule fois, dans `DomainExceptionFilter`.

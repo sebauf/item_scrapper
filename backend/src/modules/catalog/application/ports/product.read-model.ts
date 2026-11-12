@@ -1,5 +1,5 @@
 import { Money, TrendDirection, UnitPrice } from '../../domain/money';
-import { ProductId } from '../../domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { ProductQuery } from '../../domain/product-query';
 
 /**

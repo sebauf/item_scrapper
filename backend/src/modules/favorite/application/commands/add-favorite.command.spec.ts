@@ -1,5 +1,5 @@
 import { UserId } from 'src/shared/domain/user-id';
-import { ProductId } from '../../../catalog/domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { TrackProductUrlCommand } from '../../../product-tracking/application/commands/track-product-url.command';
 import { ProductUrlQuotaExceeded } from '../../../product-tracking/domain/product-tracking.errors';
 import { TrackedUrlQuota } from '../../../product-tracking/domain/tracked-url-quota';

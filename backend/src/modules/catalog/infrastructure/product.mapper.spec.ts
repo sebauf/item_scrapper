@@ -1,5 +1,5 @@
 import { DEAL_SCORE_THRESHOLD } from '../domain/deal-policy';
-import { ProductId } from '../domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { toHistoryEntries, toIso, toProductSummary } from './product.mapper';
 
 /**
