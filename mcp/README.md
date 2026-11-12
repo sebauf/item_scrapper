@@ -73,8 +73,8 @@ d'être importé.
 - **`limit`** (défaut 10, au plus 50) : le backend renvoie jusqu'à 200 stations,
   taillé pour une carte. Le tri est déjà fait côté backend, l'outil ne garde que
   la tête de liste et dit combien il en a omis.
-- **Heures de Paris** (`format-fuel.ts`) : le backend parle UTC, l'utilisateur
-  non. Une prévision est rendue « avant <fin de l'horizon> », jamais comme une
+- **Heures de Paris** (`format-time.ts`, pour toutes les dates, produits
+  compris) : le backend parle UTC, l'utilisateur non. Une prévision est rendue « avant <fin de l'horizon> », jamais comme une
   heure d'événement — le modèle prédit un événement *dans les 24 h*.
 - **ODbL** : les enseignes viennent d'OpenStreetMap ; la recherche cite la
   source et les instructions demandent à l'agent de la citer à son tour.
@@ -108,9 +108,12 @@ src/
 ├── http.ts            façade HTTP : /mcp, /health/live, /health/ready, auth bearer
 ├── server.ts          fabrique du serveur MCP + instructions envoyées au modèle
 ├── format.ts          DTO du backend → texte destiné au modèle
-├── format-fuel.ts     idem pour les carburants (heures de Paris, prévisions)
+├── format-fuel.ts     idem pour les carburants (prévisions)
+├── format-time.ts     toute date affichée, en heure de Paris
 ├── backend/
 │   ├── client.ts      client HTTP typé de l'API (timeout, erreurs)
+│   ├── contract.ts    valeurs admises par le backend (carburants, tris), vérifiées
+│   │                  au typecheck contre api-types.ts
 │   └── api-types.ts   généré depuis /openapi.json — ne pas éditer
 ├── tools/             définition des outils, par contexte métier
 └── testing/           fixtures, exclues du build
