@@ -14,8 +14,12 @@ from datetime import datetime
 import pandas as pd
 from pymongo.database import Database
 
+from src.clock import naive_utc_now
+from src.database import open_database
 from src.fuel.restock_forecast.dataset import build_dataset
 from src.fuel.restock_forecast.model import RESTOCK
+from src.fuel.shortage_forecast.archive import fetch_archives
+from src.fuel.shortage_forecast.dataset import history_from_archive
 from src.fuel.shortage_forecast.features import History
 from src.fuel.shortage_forecast.model import record_rejection, save_model, train_and_validate
 
@@ -53,14 +57,7 @@ def run(db: Database, history: History, data_until: datetime, now: datetime) -> 
 
 
 if __name__ == "__main__":
-    from datetime import timezone
-
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-    from src.fuel.shortage_forecast.archive import fetch_archives
-    from src.fuel.shortage_forecast.dataset import history_from_archive
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = naive_utc_now()
     archive = fetch_archives([now.year - 1, now.year])
-    run(MongoClient(MONGODB_URI)[DB_NAME], history_from_archive(archive), archive.generated_at, now)
+    with open_database() as db:
+        run(db, history_from_archive(archive), archive.generated_at, now)

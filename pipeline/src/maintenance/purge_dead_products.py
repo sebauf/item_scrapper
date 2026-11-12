@@ -29,20 +29,22 @@ les protège aussi). Ce sont des demandes explicites d'un utilisateur —
 effacer l'historique de prix qu'il a demandé à constituer, parce que la boutique
 a retiré la fiche quinze jours, serait une perte sèche et irréversible.
 """
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from pymongo.database import Database
+
+from src.database import open_database
 
 PURGE_AFTER_DAYS = 15
 
 
-def _last_scrape_day(db: Database):
+def _last_scrape_day(db: Database) -> datetime | None:
     """Jour du dernier passage du scrapper, ou None sur une base vide."""
     doc = db["items_raw"].find_one({}, sort=[("day", -1)], projection={"day": 1})
     return doc.get("day") if doc else None
 
 
-def _protected_urls(db: Database) -> set:
+def _protected_urls(db: Database) -> set[str]:
     return {doc["url"] for doc in db["tracked_urls"].find({}, {"url": 1})} | {
         doc["url"] for doc in db["favorites"].find({}, {"url": 1})
     }
@@ -86,10 +88,5 @@ def purge_dead_products(db: Database) -> int:
 
 
 if __name__ == "__main__":
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-
-    client = MongoClient(MONGODB_URI)
-    count = purge_dead_products(client[DB_NAME])
-    print(f"purge: {count} dead products removed")
+    with open_database() as db:
+        print(f"purge: {purge_dead_products(db)} dead products removed")

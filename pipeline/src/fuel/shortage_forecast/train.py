@@ -17,11 +17,13 @@
 Compter environ 5 minutes et 2,5 Go de mémoire au pic (année de crise : près
 de 10 millions de changements de prix lus).
 """
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pandas as pd
 from pymongo.database import Database
 
+from src.clock import naive_utc_now
+from src.database import open_database
 from src.fuel.restock_forecast import train as restock_train
 from src.fuel.shortage_forecast import episodes
 from src.fuel.shortage_forecast.archive import Archive, fetch_archives
@@ -73,10 +75,7 @@ def run(db: Database, archive: Archive, now: datetime) -> bool:
 
 
 if __name__ == "__main__":
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = naive_utc_now()
     archive = fetch_archives([now.year - 1, now.year])
-    run(MongoClient(MONGODB_URI)[DB_NAME], archive, now)
+    with open_database() as db:
+        run(db, archive, now)

@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pymongo import UpdateOne
 from pymongo.database import Database
 
+from src.database import open_database
+
 # Champs d'identité de l'article (code-barres, marque, contenance), par
 # opposition aux champs volatils que sont le prix ou la date de livraison.
 #
@@ -102,9 +104,9 @@ PIPELINE = [
 ]
 
 
-def build_price_history(db: Database) -> int:
+def build_price_history(db: Database, now: datetime | None = None) -> int:
     """Returns the number of products written to `price_history`."""
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     operations = []
 
     for doc in db["items_raw"].aggregate(PIPELINE):
@@ -120,10 +122,5 @@ def build_price_history(db: Database) -> int:
 
 
 if __name__ == "__main__":
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-
-    client = MongoClient(MONGODB_URI)
-    count = build_price_history(client[DB_NAME])
-    print(f"price_history: {count} products refreshed")
+    with open_database() as db:
+        print(f"price_history: {build_price_history(db)} products refreshed")

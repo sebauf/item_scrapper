@@ -41,6 +41,8 @@ from dataclasses import asdict, dataclass, field
 
 from pymongo.database import Database
 
+from src.database import open_database
+
 FIELDS = (
     "keyword",
     "title",
@@ -490,17 +492,9 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="sortie JSON")
     args = parser.parse_args()
 
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-
-    client = MongoClient(MONGODB_URI)
-    try:
-        db = client[DB_NAME]
+    with open_database() as db:
         offers = load_offers(db, shop=args.shop, fresh_only=not args.all)
         traces = load_scrape_diagnostics(db, shop=args.shop)
-    finally:
-        client.close()
 
     report = assess(summarize(offers), summarize_diagnostics(traces))
     if args.json:

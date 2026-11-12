@@ -54,7 +54,7 @@ import io
 import pickle
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -65,6 +65,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
+from src.clock import naive_utc_now
 from src.fuel.shortage_forecast.dataset import Dataset
 from src.fuel.shortage_forecast.features import CATEGORICAL_FEATURES, FEATURE_COLUMNS
 
@@ -262,7 +263,7 @@ def train_and_validate(dataset: Dataset, spec: ModelSpec = SHORTAGE) -> Training
 def save_model(db: Database, result: TrainingResult, data_until: datetime, trained_at: datetime | None = None,
                spec: ModelSpec = SHORTAGE):
     """Met le modèle en service, avec ses métriques et ses versions."""
-    trained_at = trained_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    trained_at = trained_at or naive_utc_now()
     buffer = io.BytesIO()
     pickle.dump(result.model, buffer, protocol=pickle.HIGHEST_PROTOCOL)
     db[spec.collection].replace_one(

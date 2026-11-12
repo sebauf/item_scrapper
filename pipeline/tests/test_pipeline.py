@@ -9,7 +9,7 @@ pipeline réécrire le document qu'on vient de supprimer.
 import mongomock
 import pytest
 
-from src import pipeline
+from src import database, pipeline
 from src.config import DB_NAME
 
 
@@ -17,7 +17,8 @@ from src.config import DB_NAME
 def calls(monkeypatch):
     """Remplace les trois étapes par des témoins, et Mongo par un mongomock."""
     client = mongomock.MongoClient()
-    monkeypatch.setattr(pipeline, "MongoClient", lambda uri: client)
+    monkeypatch.setenv("MONGODB_URI", "mongodb://test")
+    monkeypatch.setattr(database, "MongoClient", lambda uri: client)
 
     recorded = []
 

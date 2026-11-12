@@ -1,16 +1,13 @@
 """Fixtures communes aux tests du pipeline.
 
-`src.config` lit `MONGODB_URI` dans l'environnement *à l'import* et lève une
-KeyError s'il est absent : on fournit donc une valeur factice avant tout import
-de `src.*`. Aucun test n'ouvre de vraie connexion — la base est un mongomock.
+Aucun test n'ouvre de vraie connexion — la base est un mongomock.
 """
-import os
 from datetime import datetime, timedelta
-
-os.environ.setdefault("MONGODB_URI", "mongodb://localhost:27017")
 
 import mongomock
 import pytest
+
+from src.clock import naive_utc_now
 
 
 @pytest.fixture
@@ -27,7 +24,7 @@ def today():
     filtre d'obsolescence de `score()` compare `day` à un `datetime` sans
     fuseau, et mélanger les deux lèverait une TypeError.
     """
-    return datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    return naive_utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def money(amount, currency="EUR"):

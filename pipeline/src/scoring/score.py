@@ -53,6 +53,8 @@ import numpy as np
 from pymongo import UpdateOne
 from pymongo.database import Database
 
+from src.database import open_database
+
 from src.scoring.features import PRICE_COLUMN, build_frame, latest_rows_only
 
 MIN_OBSERVATIONS = 5
@@ -114,11 +116,11 @@ def _trend_direction(frame, url: str) -> str:
     return "stable"
 
 
-def score(db: Database) -> int:
+def score(db: Database, now: datetime | None = None) -> int:
+    now = now or datetime.now(timezone.utc)
     docs = list(db["price_history"].find({"unavailable": {"$ne": True}}))
     frame = build_frame(docs)
 
-    now = datetime.now(timezone.utc)
     stale_cutoff = now.replace(tzinfo=None) - timedelta(days=STALE_AFTER_DAYS)
 
     scoreable = frame.iloc[0:0]
@@ -167,10 +169,5 @@ def score(db: Database) -> int:
 
 
 if __name__ == "__main__":
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-
-    client = MongoClient(MONGODB_URI)
-    count = score(client[DB_NAME])
-    print(f"deal_scores: {count} products scored")
+    with open_database() as db:
+        print(f"deal_scores: {score(db)} products scored")
