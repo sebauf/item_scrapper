@@ -11,7 +11,6 @@ interface LegacyDoc {
 }
 
 async function main(): Promise<void> {
-
   const connection = await MongoConnection.fromEnv();
 
   try {

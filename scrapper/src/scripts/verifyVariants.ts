@@ -3,15 +3,17 @@ import { PlaywrightCrawler, createPlaywrightRouter } from 'crawlee';
 import { MongoConnection } from '../infrastructure/persistence/mongodb/MongoConnection.js';
 import { MongoProductRepository } from '../infrastructure/persistence/mongodb/MongoProductRepository.js';
 import { createAmazonProductHandler } from '../infrastructure/scraping/amazon/AmazonProductHandler.js';
-import {
-  AMAZON_BROWSER_POOL_OPTIONS,
-  requestFrenchPages,
-} from '../infrastructure/scraping/amazon/AmazonBrowserLocale.js';
+import { AMAZON_CRAWLER_OPTIONS } from '../infrastructure/scraping/amazon/AmazonCrawlerOptions.js';
 
+/**
+ * Rejoue le handler produit sur une seule fiche (et ses déclinaisons), avec
+ * les réglages du scrape : utile pour mettre au point un sélecteur sans lancer
+ * un crawl complet. Écrit en base comme le scrape, sous le mot-clé
+ * `verify-variants`.
+ */
 const TARGET_URL = 'https://www.amazon.fr/dp/B0GNSHRHV2/';
 
 async function main(): Promise<void> {
-
   const connection = await MongoConnection.fromEnv();
 
   try {
@@ -20,17 +22,10 @@ async function main(): Promise<void> {
     router.addDefaultHandler(createAmazonProductHandler(productRepository));
 
     const crawler = new PlaywrightCrawler({
+      ...AMAZON_CRAWLER_OPTIONS,
       maxRequestsPerCrawl: 10,
       maxConcurrency: 1,
       requestHandler: router,
-      browserPoolOptions: AMAZON_BROWSER_POOL_OPTIONS,
-      preNavigationHooks: [requestFrenchPages],
-      launchContext: {
-        launchOptions: {
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'],
-        },
-      },
     });
 
     await crawler.run([{ url: TARGET_URL, userData: { keyword: 'verify-variants' } }]);
