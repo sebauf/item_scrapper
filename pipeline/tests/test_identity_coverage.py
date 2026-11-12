@@ -131,7 +131,7 @@ class TestVerdict:
         assert summary.rates["strict"] == 0.0
         assert "rien à mesurer" in summary.verdict
         report = assess(summary, summarize_diagnostics([]))
-        assert "Aucune offre" in format_report(report, "amazon", True)
+        assert "Aucune offre" in format_report(report, "amazon", "fresh")
 
 
 class TestEanPartages:
@@ -183,7 +183,7 @@ class TestChargement:
             offer("autre-boutique", shop="carrefour", lastSeen=D + timedelta(days=1)),
         ])
         assert [o["_id"] for o in load_offers(db)] == ["frais"]
-        assert {o["_id"] for o in load_offers(db, fresh_only=False)} == {"frais", "ancien"}
+        assert {o["_id"] for o in load_offers(db, scope="all")} == {"frais", "ancien"}
         assert [o["_id"] for o in load_offers(db, shop="carrefour")] == ["autre-boutique"]
 
     def test_base_vide(self, db):
@@ -195,7 +195,7 @@ class TestChargement:
             offer("u2", ean=EAN_A, packSize=2, title="Ariel 1,5 L - Lot de 2"),
         ])
         report = assess(summarize(load_offers(db)), summarize_diagnostics([]))
-        text = format_report(report, "amazon", True)
+        text = format_report(report, "amazon", "fresh")
         assert "Clé stricte (EAN + nombre d'unités)" in text
         assert "100.0 %" in text
         assert "nombres d'unités différents : 1" in text
@@ -276,7 +276,7 @@ class TestVerdictFinal:
         assert not report.conclusive
         assert report.verdict.startswith("non concluant")
         assert any("0.0 % des fiches" in w and "81 fiche(s)" in w for w in report.warnings)
-        text = format_report(report, "amazon", True)
+        text = format_report(report, "amazon", "fresh")
         assert "non concluant" in text
         assert "insuffisant" not in text
 

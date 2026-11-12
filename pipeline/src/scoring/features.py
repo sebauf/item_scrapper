@@ -40,6 +40,10 @@ import pandas as pd
 
 PRICE_COLUMN = "price_amount"
 
+# Fenêtre de la référence : les prix des 30 jours précédant le relevé, d'où le
+# suffixe `_30d` des colonnes calculées ici.
+BASELINE_WINDOW_DAYS = 30
+
 HAMPEL_K = 3.0
 # Facteur de cohérence : MAD × 1,4826 estime l'écart-type d'une loi normale.
 MAD_TO_SIGMA = 1.4826
@@ -100,40 +104,36 @@ def usual_price_range(prices: list[float]) -> tuple[float, float] | None:
 
 
 def extract_rows(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Une ligne par relevé avec prix, comparé aux seuls relevés **antérieurs**."""
     history = sorted(doc.get("history", []), key=lambda h: h["day"])
-    if not history:
-        return []
-
     prior: list[tuple[Any, float | None]] = []
     rows = []
-
     for snapshot in history:
-        day = snapshot["day"]
-        price = snapshot.get("price")
-        price_amount = _amount(price)
-
-        prior_30d = [amt for d, amt in prior if amt is not None and (day - d).days <= 30]
-
-        if price_amount is not None:
-            baseline, n_inliers = robust_baseline(prior_30d)
-            usual_low, usual_high = usual_price_range(prior_30d) or (None, None)
-            rows.append(
-                {
-                    "url": doc["_id"],
-                    "day": day,
-                    "baseline_price_30d": baseline,
-                    "n_inliers": n_inliers,
-                    "usual_low_30d": usual_low,
-                    "usual_high_30d": usual_high,
-                    "n_observations": len(prior),
-                    "currency": price["currency"],
-                    PRICE_COLUMN: price_amount,
-                }
-            )
-
-        prior.append((day, price_amount))
-
+        amount = _amount(snapshot.get("price"))
+        if amount is not None:
+            rows.append(_observation_row(doc["_id"], snapshot, prior))
+        prior.append((snapshot["day"], amount))
     return rows
+
+
+def _observation_row(
+    url: str, snapshot: dict[str, Any], prior: list[tuple[Any, float | None]]
+) -> dict[str, Any]:
+    day, price = snapshot["day"], snapshot["price"]
+    window = [amt for d, amt in prior if amt is not None and (day - d).days <= BASELINE_WINDOW_DAYS]
+    baseline, n_inliers = robust_baseline(window)
+    usual_low, usual_high = usual_price_range(window) or (None, None)
+    return {
+        "url": url,
+        "day": day,
+        "baseline_price_30d": baseline,
+        "n_inliers": n_inliers,
+        "usual_low_30d": usual_low,
+        "usual_high_30d": usual_high,
+        "n_observations": len(prior),
+        "currency": price["currency"],
+        PRICE_COLUMN: price["amount"],
+    }
 
 
 def build_frame(docs: list[dict[str, Any]]) -> pd.DataFrame:

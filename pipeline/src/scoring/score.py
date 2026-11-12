@@ -50,6 +50,7 @@ scrapper clears the flag on its next successful scrape.
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
+import pandas as pd
 from pymongo import UpdateOne
 from pymongo.database import Database
 
@@ -95,7 +96,7 @@ def _same_day_move(row: dict) -> str | None:
     return None
 
 
-def _trend_direction(frame, url: str) -> str:
+def _trend_direction(frame: pd.DataFrame, url: str) -> str:
     """Trajectoire de fond (Theil–Sen), insensible au saut d'un seul jour."""
     history = frame[frame["url"] == url].sort_values("day")
     days = np.array([(d - history["day"].iloc[0]).days for d in history["day"]], dtype=float)
@@ -117,55 +118,58 @@ def _trend_direction(frame, url: str) -> str:
 
 
 def score(db: Database, now: datetime | None = None) -> int:
+    """Returns the number of products scored."""
     now = now or datetime.now(timezone.utc)
-    docs = list(db["price_history"].find({"unavailable": {"$ne": True}}))
-    frame = build_frame(docs)
+    frame = build_frame(list(db["price_history"].find({"unavailable": {"$ne": True}})))
+    scoreable = _scoreable_rows(frame, now)
 
-    stale_cutoff = now.replace(tzinfo=None) - timedelta(days=STALE_AFTER_DAYS)
-
-    scoreable = frame.iloc[0:0]
-    if not frame.empty:
-        latest = latest_rows_only(frame)
-        scoreable = latest[
-            (latest["n_inliers"] >= MIN_OBSERVATIONS)
-            & latest["baseline_price_30d"].notna()
-            & (latest["day"] >= stale_cutoff)
-        ]
-
-    operations = []
-    for row in scoreable.to_dict("records"):
-        url = row["url"]
-        predicted_price = row["baseline_price_30d"]
-        actual_price = row[PRICE_COLUMN]
-        deal_score = (predicted_price - actual_price) / predicted_price * 100
-
-        operations.append(
-            UpdateOne(
-                {"_id": url},
-                {
-                    "$set": {
-                        "score": round(float(deal_score), 1),
-                        "predictedPrice": round(float(predicted_price), 2),
-                        "actualPrice": actual_price,
-                        "currency": row["currency"],
-                        "trendDirection": _same_day_move(row) or _trend_direction(frame, url),
-                        "computedAt": now,
-                    }
-                },
-                upsert=True,
-            )
-        )
-
+    operations = [_deal_score_update(row, frame, now) for row in scoreable.to_dict("records")]
     if operations:
         db["deal_scores"].bulk_write(operations)
 
-    # Drop any leftover deal_scores from products that no longer meet the
-    # threshold (or from the old cross-product ML model) so the frontend
-    # never shows a stale/unreliable score.
-    scored_urls = scoreable["url"].tolist() if not scoreable.empty else []
+    # Un produit qui ne remplit plus les conditions perd son score : l'écran
+    # ne doit jamais montrer un score périmé ou fondé sur trop peu de relevés.
+    scored_urls = [] if scoreable.empty else scoreable["url"].tolist()
     db["deal_scores"].delete_many({"_id": {"$nin": scored_urls}})
-
     return len(operations)
+
+
+def _scoreable_rows(frame: pd.DataFrame, now: datetime) -> pd.DataFrame:
+    """Dernier relevé de chaque produit, s'il est récent et que sa référence
+    repose sur assez de relevés conservés par le filtre de Hampel."""
+    if frame.empty:
+        return frame
+    stale_cutoff = now.replace(tzinfo=None) - timedelta(days=STALE_AFTER_DAYS)
+    latest = latest_rows_only(frame)
+    return latest[
+        (latest["n_inliers"] >= MIN_OBSERVATIONS)
+        & latest["baseline_price_30d"].notna()
+        & (latest["day"] >= stale_cutoff)
+    ]
+
+
+def deal_score(predicted_price: float, actual_price: float) -> float:
+    """Écart du prix du jour à la référence, en % de la référence (> 0 = moins cher)."""
+    return (predicted_price - actual_price) / predicted_price * 100
+
+
+def _deal_score_update(row: dict, frame: pd.DataFrame, now: datetime) -> UpdateOne:
+    predicted_price = row["baseline_price_30d"]
+    actual_price = row[PRICE_COLUMN]
+    return UpdateOne(
+        {"_id": row["url"]},
+        {
+            "$set": {
+                "score": round(float(deal_score(predicted_price, actual_price)), 1),
+                "predictedPrice": round(float(predicted_price), 2),
+                "actualPrice": actual_price,
+                "currency": row["currency"],
+                "trendDirection": _same_day_move(row) or _trend_direction(frame, row["url"]),
+                "computedAt": now,
+            }
+        },
+        upsert=True,
+    )
 
 
 if __name__ == "__main__":
