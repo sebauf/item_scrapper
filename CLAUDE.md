@@ -624,8 +624,11 @@ src/config.ts     McpConfig — env vars validated at startup (same idea as back
 src/http.ts       HTTP facade: /mcp (Streamable HTTP, stateless), /health/live, /health/ready
 src/server.ts     MCP server factory + the instructions sent to the model on initialize
 src/format.ts     backend DTOs → compact text for the model (never raw JSON)
-src/format-fuel.ts  fuel DTOs → text (Paris times, forecasts as « before <horizon end> »)
-src/backend/      typed HTTP client over the API + api-types.ts (**generated**, do not edit)
+src/format-fuel.ts  fuel DTOs → text (forecasts as « before <horizon end> »)
+src/format-time.ts  every date shown to the model, in Paris time (the backend speaks UTC)
+src/backend/      typed HTTP client over the API + api-types.ts (**generated**, do not edit);
+                  contract.ts — backend values used by the zod schemas (fuel codes, sorts),
+                  each checked at typecheck to cover the generated union exactly
 src/tools/        tool definitions, split by bounded context (catalog / keywords / product-tracking / favorites / fuel)
 ```
 
