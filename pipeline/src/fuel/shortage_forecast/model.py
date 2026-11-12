@@ -81,7 +81,7 @@ GAP_DAYS = 1
 MIN_POSITIVES = 500
 
 # Seuil utilisé pour rapporter précision et rappel dans les métriques ; celui
-# des alertes est réglable à part (cf. restock_alerts.py), le défaut étant le même.
+# des alertes est réglable à part (cf. src/fuel/alerts/config.py), le défaut étant le même.
 REPORT_THRESHOLD = 0.5
 
 HYPERPARAMETERS = dict(

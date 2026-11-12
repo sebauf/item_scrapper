@@ -1,8 +1,8 @@
-"""Alerte de réapprovisionnement par utilisateur : détection sur le dernier
-état connu, un webhook signé par destinataire.
+"""Alertes carburant par utilisateur : détection sur le dernier état connu,
+un webhook signé par destinataire.
 
 Les imports successifs passent par le vrai `import_stations` sur un mongomock,
-suivis de `alert_restocks`, comme en production. Les profils et favorites sont
+suivis de `alert_fuel_events`, comme en production. Les profils et favorites sont
 écrits dans la forme qu'utilise le backend (`user_profiles`,
 `favorite_stations`). Aucun test n'appelle le réseau — `urlopen` est remplacé
 pour tous les tests du fichier.
@@ -15,19 +15,13 @@ from urllib.error import URLError
 
 import pytest
 
-from src.fuel import restock_alerts as module
+from src.fuel.alerts import FuelAlertConfig, alert_fuel_events
+from src.fuel.alerts import webhook as module
+from src.fuel.alerts.detection import RESTOCK
+from src.fuel.alerts.messages import format_restock_summary
+from src.fuel.alerts.subscribers import Subscriber, load_subscribers, mask_phone
+from src.fuel.alerts.webhook import request_id, sign, whatsapp_chat_id
 from src.fuel.import_stations import import_stations
-from src.fuel.restock_alerts import (
-    RestockConfig,
-    Subscriber,
-    alert_fuel_events,
-    format_summary,
-    mask_phone,
-    request_id,
-    sign,
-    subscribers,
-    whatsapp_chat_id,
-)
 
 NOW = datetime(2026, 10, 26, 12, 0)
 LATER = NOW + timedelta(hours=5)
@@ -38,7 +32,7 @@ BOB = "bob@example.com"
 ALICE_PHONE = "+33612345678"
 BOB_PHONE = "+33698765432"
 
-CONFIG = RestockConfig(webhook_url="http://hermes:8644/webhooks/fuel-restock", webhook_secret="s3cr3t")
+CONFIG = FuelAlertConfig(webhook_url="http://hermes:8644/webhooks/fuel-restock", webhook_secret="s3cr3t")
 
 
 def record(station_id, **fields):
@@ -240,21 +234,21 @@ def test_ignore_un_numero_qui_n_est_pas_au_format_e164(db, phone):
     profile(db, phone=phone)
     favorite(db, 1)
 
-    assert subscribers(db) == []
+    assert load_subscribers(db) == []
 
 
 def test_ignore_un_carburant_inconnu_dans_le_profil(db):
     profile(db, fuels=("kerosene", "e10", "gazole"))
     favorite(db, 1)
 
-    assert subscribers(db)[0].fuels == ("gazole", "e10")
+    assert load_subscribers(db)[0].fuels == ("gazole", "e10")
 
 
 def test_une_favorite_sans_proprietaire_n_alerte_personne(alice):
     # Favorite antérieure aux comptes, pas encore rattachée par le backend.
     alice["favorite_stations"].insert_one({"_id": "2", "addedAt": NOW})
 
-    assert subscribers(alice)[0].station_ids == frozenset({"1"})
+    assert load_subscribers(alice)[0].station_ids == frozenset({"1"})
 
 
 def test_chacun_recoit_ses_stations_et_ses_carburants_a_son_numero(db, sent):
@@ -323,22 +317,22 @@ def test_supprime_les_etats_de_l_ancienne_alerte_globale(alice):
     assert [d["_id"] for d in alice["fuel_watch_state"].find()] == [f"{ALICE}:1:gazole"]
 
 
-# --- RestockConfig.from_env ------------------------------------------------
+# --- FuelAlertConfig.from_env ------------------------------------------------
 
 
 def test_desactive_sans_webhook():
-    assert RestockConfig.from_env({}) is None
+    assert FuelAlertConfig.from_env({}) is None
 
 
 def test_lit_le_webhook_et_son_secret():
-    config = RestockConfig.from_env({"FUEL_RESTOCK_WEBHOOK_URL": "http://h/webhooks/x",
+    config = FuelAlertConfig.from_env({"FUEL_RESTOCK_WEBHOOK_URL": "http://h/webhooks/x",
                                      "FUEL_RESTOCK_WEBHOOK_SECRET": "abc"})
 
-    assert config == RestockConfig("http://h/webhooks/x", "abc")
+    assert config == FuelAlertConfig("http://h/webhooks/x", "abc")
 
 
 def test_un_webhook_sans_secret_desactive_sans_lever(capsys):
-    assert RestockConfig.from_env({"FUEL_RESTOCK_WEBHOOK_URL": "http://h/webhooks/x"}) is None
+    assert FuelAlertConfig.from_env({"FUEL_RESTOCK_WEBHOOK_URL": "http://h/webhooks/x"}) is None
     assert "SECRET manquant" in capsys.readouterr().out
 
 
@@ -354,7 +348,7 @@ def restock(**fields):
 
 
 def test_le_resume_est_lisible_tel_quel():
-    summary = format_summary([restock()])
+    summary = format_restock_summary([restock()])
 
     assert summary.splitlines()[0] == "⛽ Gazole de retour dans 1 station(s) favorite(s) :"
     assert "• Gazole — Avia, 12 avenue Félix Faure, 69003 Lyon — 1,719 €" in summary
@@ -362,13 +356,13 @@ def test_le_resume_est_lisible_tel_quel():
 
 
 def test_le_resume_annonce_les_carburants_revenus_dans_l_ordre_canonique():
-    summary = format_summary([restock(fuel="sp98"), restock(fuel="gazole", stationId="2")])
+    summary = format_restock_summary([restock(fuel="sp98"), restock(fuel="gazole", stationId="2")])
 
     assert summary.splitlines()[0] == "⛽ Gazole, SP98 de retour dans 2 station(s) favorite(s) :"
 
 
 def test_le_resume_tolere_une_station_anonyme_sans_date_de_rupture():
-    summary = format_summary([restock(brand=None, shortageSince=None)])
+    summary = format_restock_summary([restock(brand=None, shortageSince=None)])
 
     assert "— Station, " in summary
     assert "rupture" not in summary
@@ -413,8 +407,8 @@ def test_l_identifiant_de_requete_distingue_les_destinataires():
     a = Subscriber(ALICE, ALICE_PHONE, ("gazole",), frozenset({"1"}))
     b = Subscriber(BOB, BOB_PHONE, ("gazole",), frozenset({"1"}))
 
-    assert request_id(a, NOW) != request_id(b, NOW)
-    assert request_id(a, NOW) == request_id(a, NOW)
+    assert request_id(a, NOW, RESTOCK) != request_id(b, NOW, RESTOCK)
+    assert request_id(a, NOW, RESTOCK) == request_id(a, NOW, RESTOCK)
 
 
 def test_un_echec_d_envoi_garde_la_rupture_et_reessaie_au_prochain_import(alice, monkeypatch, capsys):
@@ -617,7 +611,7 @@ def test_un_echec_d_envoi_de_risque_reessaie_au_prochain_import(alice, monkeypat
 
 
 def test_seuil_desactive_coupe_seulement_l_alerte_de_risque(alice, sent):
-    no_risk = RestockConfig(CONFIG.webhook_url, CONFIG.webhook_secret, risk_threshold=None)
+    no_risk = FuelAlertConfig(CONFIG.webhook_url, CONFIG.webhook_secret, risk_threshold=None)
     events_of(alice, [record(1)], NOW, config=no_risk)
     events_of(alice, [record(1)], NOW + STEP, risks={("1", "gazole"): 0.99}, config=no_risk)
     assert sent == []
@@ -635,7 +629,7 @@ def test_lit_le_seuil_de_risque(raw, expected):
     if raw is not None:
         environ["FUEL_SHORTAGE_RISK_THRESHOLD"] = raw
 
-    assert RestockConfig.from_env(environ).risk_threshold == expected
+    assert FuelAlertConfig.from_env(environ).risk_threshold == expected
 
 
 def test_les_identifiants_de_requete_distinguent_les_types():
@@ -644,5 +638,5 @@ def test_les_identifiants_de_requete_distinguent_les_types():
     ids = {request_id(a, NOW, kind) for kind in ("restock", "shortage", "risk")}
 
     assert len(ids) == 3
-    assert request_id(a, NOW).startswith("fuel-restock-")
+    assert request_id(a, NOW, RESTOCK).startswith("fuel-restock-")
     assert request_id(a, NOW, "risk").startswith("fuel-shortage-risk-")

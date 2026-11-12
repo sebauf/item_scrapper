@@ -336,7 +336,7 @@ if __name__ == "__main__":
     import os
 
     from src.database import open_database
-    from src.fuel.restock_alerts import RestockConfig, alert_fuel_events
+    from src.fuel.alerts import FuelAlertConfig, alert_fuel_events
     from src.fuel.restock_forecast.forecasts import publish_restock_forecasts
     from src.fuel.shortage_forecast import episodes
     from src.fuel.shortage_forecast.forecasts import publish_forecasts
@@ -348,7 +348,7 @@ if __name__ == "__main__":
         print(f"brands: OSM export unavailable ({error}), keeping known brands")
         brands = None
 
-    restock = RestockConfig.from_env(os.environ)
+    restock = FuelAlertConfig.from_env(os.environ)
 
     imported_at = naive_utc_now()
     with open_database() as db:
