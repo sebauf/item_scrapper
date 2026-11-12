@@ -8,7 +8,7 @@ import { UserProfileRepository } from '../domain/user-profile.repository';
 /**
  * `_id` = identifiant de l'utilisateur (e-mail) : un profil par compte, sans
  * index supplémentaire. Le pipeline lit `phone` et `alertFuels`
- * (pipeline/src/fuel/restock_alerts.py) — ne pas les renommer sans lui.
+ * (pipeline/src/fuel/alerts/subscribers.py) — ne pas les renommer sans lui.
  */
 interface UserProfileDocument {
   _id: string;

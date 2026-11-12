@@ -4,27 +4,39 @@
 
 ```
 src/pipeline.py              point d'entrée : purge → refine → score
-src/config.py                MONGODB_URI, DB_NAME
+src/config.py                DB_NAME, mongodb_uri() (lue à l'appel, pas à l'import)
+src/database.py              open_database() — seul endroit qui ouvre une connexion
+src/clock.py                 naive_utc_now() — convention UTC naïf de la base
 src/maintenance/, refine/, scoring/, reports/   chaîne Amazon
-src/fuel/                    import carburants, alertes, modèles de rupture / réapprovisionnement
+src/fuel/                    import carburants (import_job), alertes (alerts/),
+                             modèles de rupture / réapprovisionnement
 ```
+
+Propriétaires uniques côté carburants : `fuel/fuels.py` (codes, libellés,
+**ordre** — c'est l'encodage de la variable `fuel` des modèles, on n'ajoute
+qu'à la fin), `fuel/favorites.py` (une favorite sans `userId` n'appartient à
+personne), `shortage_forecast/event_search.py` (comptages par recherche
+dichotomique, partagés par les deux modèles).
 
 Chaque module exécutable a son `if __name__ == "__main__":` et se lance par
 `python -m src.<chemin>` ; la logique vit dans des fonctions importables, pas
-dans le bloc `__main__`.
+dans le bloc `__main__`, qui se limite à `with open_database() as db:` et un
+appel.
 
 ## Règles propres au pipeline
 
 - **La base est un paramètre.** Une fonction qui lit ou écrit Mongo reçoit
   `db: Database` (`purge_dead_products(db)`, `score(db)`) ; elle n'ouvre pas sa
-  propre connexion. C'est ce qui permet aux tests de lui passer un `mongomock`.
+  propre connexion — seuls les points d'entrée appellent `open_database()`.
+  C'est ce qui permet aux tests de lui passer un `mongomock`.
 - **L'horloge est un paramètre** dès qu'une règle dépend de la date :
-  `now: datetime | None = None`, avec `datetime.now(timezone.utc)` par défaut
-  (`import_stations`, `presumed_shortages`). Un `datetime.now()` enfoui dans une
-  règle la rend intestable.
+  `now: datetime | None = None`, avec `naive_utc_now()` par défaut côté
+  carburants (`import_stations`, `save_model`) — la chaîne Amazon garde
+  `datetime.now(timezone.utc)` (`score`, `build_price_history`). Un
+  `datetime.now()` enfoui dans une règle la rend intestable.
 - **Séparer lecture, règle et écriture** : `parse_*` / `detect_*` / `format_*`
   purs, encadrés par une fonction d'orchestration qui fait les I/O
-  (`import_stations`, `restock_alerts`). Un constat si une règle fait aussi un
+  (`import_stations`, `alerts/notify`). Un constat si une règle fait aussi un
   `update_many`.
 - **Une seule fonction de features pour l'entraînement et la prédiction**
   (`shortage_forecast/features.py`). Toute logique de feature dupliquée côté
@@ -60,6 +72,10 @@ dans le bloc `__main__`.
 
 | Ce qu'on voit | Pourquoi ne pas le « corriger » |
 |---|---|
+| `ShortageModel` et `_logit` dans `shortage_forecast/model.py`, nom « rupture » aussi pour le modèle de réapprovisionnement | Le pickle en service désigne cette classe par son chemin : la renommer ou la déplacer rend les modèles illisibles jusqu'au prochain entraînement. |
+| `compute_features` (rupture et réapprovisionnement) de ~60 lignes | Une quinzaine d'intermédiaires partagés ; découper par famille de variables demanderait un objet de contexte et disperserait « indexer, puis compter ». Raison écrite dans la docstring du module. |
+| Imports de `model` / `predict` à l'intérieur des `try` de `publish_*` | Un scikit-learn absent ou cassé ne doit pas faire échouer l'import des prix. |
+| `python -m src.fuel.import_stations` qui délègue à `import_job.main` | Point d'entrée du DAG conservé : images Airflow et pipeline déployables séparément. |
 | Docstrings de module longues, en partie en anglais, en partie en français | Elles exposent la méthode (filtre de Hampel, Theil–Sen, calibration de Platt) et ses mesures ; les raccourcir, oui, perdre la justification, non. Ne pas « harmoniser » la langue dans un diff sans rapport. |
 | Échec d'envoi d'alerte attrapé et journalisé | Une alerte ratée ne doit pas faire échouer l'import des prix ; l'état n'est pas avancé, l'alerte est retentée. |
 | Modèles stockés en pickle dans Mongo, `scikit-learn` épinglé | Choix documenté (pas de PVC) ; le pickle n'est lisible que par la version qui l'a écrit. |

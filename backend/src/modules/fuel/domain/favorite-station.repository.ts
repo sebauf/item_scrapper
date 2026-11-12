@@ -16,7 +16,7 @@ export interface FavoriteStationEntry {
  * La collection est aussi lue par le pipeline : l'alerte de
  * réapprovisionnement surveille, pour chaque utilisateur, **ses** favorites,
  * avec les carburants et le numéro de son profil
- * (pipeline/src/fuel/restock_alerts.py, contexte Profile).
+ * (pipeline/src/fuel/alerts/, contexte Profile).
  */
 export abstract class FavoriteStationRepository {
   abstract add(owner: UserId, stationId: string): Promise<void>;

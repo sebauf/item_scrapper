@@ -178,7 +178,9 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 ```
 pipeline/src/
   pipeline.py               — entry point: runs purge, then refine, then score
-  config.py                 — MONGODB_URI + DB_NAME from .env
+  config.py                 — DB_NAME + mongodb_uri() (read on call, not on import)
+  database.py               — open_database(): the only place that opens a connection, for entry points; every function receives `db`
+  clock.py                  — naive_utc_now(): the DB's naive-UTC convention, only as a `now` default or in an entry point
   maintenance/purge_dead_products.py — deletes products the scrapper can no longer read
   refine/build_price_history.py  — aggregates items_raw → price_history
   scoring/features.py       — extracts per-product time-series rows (baseline_price_30d, n_inliers, usual_low_30d / usual_high_30d, n_observations)
@@ -381,6 +383,13 @@ declare every price change and shortage). Read through the Opendatasoft
 `exports/json` endpoint (whole dataset in one call; `records` caps at 10 000),
 with `timezone=UTC`.
 
+- `pipeline/src/fuel/import_job.py` — the 30-min task (`python -m
+  src.fuel.import_stations`, kept as the DAG entry point): fetch → import →
+  `episodes.record_live` → shortage then restock forecasts → alerts; only the
+  import itself may fail the task. `fuel/fuels.py` owns the fuel codes, labels
+  and order (the order is the models' encoding of `fuel`: append only, then
+  retrain); `fuel/favorites.py` owns « a favourite without `userId` belongs to
+  nobody ».
 - `pipeline/src/fuel/import_stations.py` — one `fuel_stations` doc per station,
   **replaced** on each import; stations absent from the feed are deleted, but only
   after a guard: an import yielding fewer than half the known stations raises
@@ -410,7 +419,8 @@ with `timezone=UTC`.
   truncated, the import keeps the brands already stored — prices still update.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
-- `pipeline/src/fuel/restock_alerts.py` — **fuel alerts, per user**: restock,
+- `pipeline/src/fuel/alerts/` — **fuel alerts, per user** (`config`,
+  `subscribers`, `detection` — pure —, `messages`, `webhook`, `notify`): restock,
   shortage and shortage *risk* (see below for the latter two); opt-in
   (off unless `FUEL_RESTOCK_WEBHOOK_URL` is set; `FUEL_RESTOCK_WEBHOOK_SECRET`
   is mandatory with it — unsigned, the route would text any number). A user is
@@ -647,7 +657,7 @@ keywords, favourites, tracked URLs and favourite stations, and nothing else.
 - `favorites` — one doc per (user, product); `userId`, `url`, `addedAt`; unique index `userId_url` (partial on `userId` existing). Written by the backend; `url` read by the purge
 - `favorite_stations` — one doc per (user, station); `userId`, `stationId` (official id), `addedAt`; unique index `userId_stationId`. Legacy docs keep `_id` = station id. Written only by the backend (star on the fuel map), read by the pipeline's restock alert (each user's own stations). Not purged when a station leaves the feed (it becomes useful again if the station comes back)
 - `user_profiles` — one doc per user, `_id` = user id (email); `phone` (E.164 or null), `alertFuels[]` (fuel codes), `updatedAt`. Written only by the backend (profile page, `PUT /api/v1/profile`), read by the restock alert (recipient + fuels)
-- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`restock_alerts.py`), after each import
+- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`pipeline/src/fuel/alerts/`), after each import
 - `fuel_shortages` — shortage history, one doc per episode, `_id = "<stationId>:<fuel>:<start ISO>"`; fields: `stationId`, `fuel`, `start`, `end` (null while ongoing), `source` (`live` | `archive`). Opened/closed by every fuel import (`episodes.record_live`, independent of the alert config), realigned nightly on the official archive (`sync_from_archive`: the archive wins over the period it covers, live episodes it doesn't know there are deleted), 200-day retention. Read by the risk forecast
 - `fuel_shortage_forecasts` — published 24 h shortage risk, one doc per (favourite station × available fuel), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `risk` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`shortage_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
 - `fuel_restock_forecasts` — published 24 h restock chance, one doc per (favourite station × fuel in shortage for < 7 days), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `probability` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`restock_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
