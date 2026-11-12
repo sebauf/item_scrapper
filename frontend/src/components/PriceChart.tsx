@@ -10,12 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { formatPrice } from '@/lib/format';
-
-export interface PricePoint {
-  day: string;
-  price: number | null;
-  crossedOut: number | null;
-}
+import type { PricePoint } from '@/lib/price-history';
 
 function formatDay(day: string): string {
   const date = new Date(day);
