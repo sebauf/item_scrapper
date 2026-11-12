@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { UserId } from 'src/shared/domain/user-id';
-import { FavoriteStationRepository } from '../../domain/favorite-station.repository';
+import {
+  FavoriteStationEntry,
+  FavoriteStationRepository,
+} from '../../domain/favorite-station.repository';
 import { STALE_AFTER_HOURS } from '../../domain/freshness-policy';
 import {
   LIKELY_RESTOCK_THRESHOLD,
@@ -18,7 +21,7 @@ import {
   ShortageRiskLevel,
   shortageOutlook,
 } from '../../domain/shortage-forecast-policy';
-import { FuelStationReadModel, StationRow } from '../ports/fuel-station.read-model';
+import { FuelPriceRow, FuelStationReadModel, StationRow } from '../ports/fuel-station.read-model';
 import { RestockForecastReadModel } from '../ports/restock-forecast.read-model';
 import { ShortageForecastReadModel } from '../ports/shortage-forecast.read-model';
 import { FuelPriceView, toFuelView } from './search-fuel-stations.query';
@@ -100,68 +103,20 @@ export class ListFavoriteStationDetailsQuery {
   async execute(owner: UserId, now: Date = new Date()): Promise<FavoriteStationDetailsResult> {
     const entries = await this.favorites.list(owner);
     const ids = entries.map((entry) => entry.stationId);
-    const [stations, forecasts, restocks] = await Promise.all([
+    const [stations, shortageForecasts, restockForecasts] = await Promise.all([
       this.stations.findByIds(ids),
       this.forecasts.findForStations(ids),
       this.restockForecasts.findForStations(ids),
     ]);
 
     const stationById = new Map(stations.map((station) => [station.id, station]));
-    const forecastByPair = new Map<string, PublishedForecast>(
-      forecasts.map((f) => [pairKey(f.stationId, f.fuel), f]),
+    const forecasts: ForecastsByPair = {
+      shortage: byPair(shortageForecasts),
+      restock: byPair(restockForecasts),
+    };
+    const views = entries.map((entry) =>
+      favoriteStationView(entry, stationById.get(entry.stationId) ?? null, forecasts, now),
     );
-    const restockByPair = new Map<string, PublishedRestockForecast>(
-      restocks.map((f) => [pairKey(f.stationId, f.fuel), f]),
-    );
-
-    let latest: Date | null = null;
-    let latestRestock: Date | null = null;
-    const views = entries.map((entry): FavoriteStationDetailsView => {
-      const station = stationById.get(entry.stationId);
-      if (station === undefined) {
-        return { id: entry.stationId, addedAt: entry.addedAt.toISOString(), station: null };
-      }
-      const { id, fuels, ...rest } = station;
-      return {
-        id,
-        addedAt: entry.addedAt.toISOString(),
-        station: {
-          ...rest,
-          fuels: fuels.map((fuel) => {
-            const outlook = shortageOutlook(
-              forecastByPair.get(pairKey(id, fuel.code)) ?? null,
-              fuel.available,
-              now,
-            );
-            if (outlook && (latest === null || outlook.computedAt > latest)) latest = outlook.computedAt;
-            const restock = restockOutlook(
-              restockByPair.get(pairKey(id, fuel.code)) ?? null,
-              fuel.available,
-              fuel.shortageSince,
-              now,
-            );
-            if (restock && (latestRestock === null || restock.computedAt > latestRestock)) {
-              latestRestock = restock.computedAt;
-            }
-            return {
-              ...toFuelView(fuel, now),
-              shortageOutlook: outlook && {
-                risk: outlook.risk,
-                level: outlook.level,
-                computedAt: outlook.computedAt.toISOString(),
-                horizonEnd: outlook.horizonEnd.toISOString(),
-              },
-              restockOutlook: restock && {
-                probability: restock.probability,
-                level: restock.level,
-                computedAt: restock.computedAt.toISOString(),
-                horizonEnd: restock.horizonEnd.toISOString(),
-              },
-            };
-          }),
-        },
-      };
-    });
 
     return {
       stations: views,
@@ -171,19 +126,89 @@ export class ListFavoriteStationDetailsQuery {
         maxAgeHours: FORECAST_MAX_AGE_HOURS,
         elevatedThreshold: ELEVATED_SHORTAGE_THRESHOLD,
         likelyThreshold: LIKELY_SHORTAGE_THRESHOLD,
-        computedAt: (latest as Date | null)?.toISOString() ?? null,
+        computedAt: latestComputedAt(views, (fuel) => fuel.shortageOutlook),
       },
       restockForecast: {
         horizonHours: FORECAST_HORIZON_HOURS,
         maxAgeHours: FORECAST_MAX_AGE_HOURS,
         possibleThreshold: POSSIBLE_RESTOCK_THRESHOLD,
         likelyThreshold: LIKELY_RESTOCK_THRESHOLD,
-        computedAt: (latestRestock as Date | null)?.toISOString() ?? null,
+        computedAt: latestComputedAt(views, (fuel) => fuel.restockOutlook),
       },
     };
   }
 }
 
+interface ForecastsByPair {
+  shortage: Map<string, PublishedForecast>;
+  restock: Map<string, PublishedRestockForecast>;
+}
+
+function byPair<F extends { stationId: string; fuel: string }>(forecasts: F[]): Map<string, F> {
+  return new Map(forecasts.map((forecast) => [pairKey(forecast.stationId, forecast.fuel), forecast]));
+}
+
 function pairKey(stationId: string, fuel: string): string {
   return `${stationId}:${fuel}`;
+}
+
+function favoriteStationView(
+  entry: FavoriteStationEntry,
+  station: StationRow | null,
+  forecasts: ForecastsByPair,
+  now: Date,
+): FavoriteStationDetailsView {
+  const addedAt = entry.addedAt.toISOString();
+  if (station === null) return { id: entry.stationId, addedAt, station: null };
+  const { id, fuels, ...rest } = station;
+  return {
+    id,
+    addedAt,
+    station: { ...rest, fuels: fuels.map((fuel) => favoriteFuelView(id, fuel, forecasts, now)) },
+  };
+}
+
+/** Prévision de rupture si le carburant est disponible, de retour s'il est en rupture. */
+function favoriteFuelView(
+  stationId: string,
+  fuel: FuelPriceRow,
+  forecasts: ForecastsByPair,
+  now: Date,
+): FavoriteFuelView {
+  const key = pairKey(stationId, fuel.code);
+  const shortage = shortageOutlook(forecasts.shortage.get(key) ?? null, fuel.available, now);
+  const restock = restockOutlook(
+    forecasts.restock.get(key) ?? null,
+    fuel.available,
+    fuel.shortageSince,
+    now,
+  );
+  return {
+    ...toFuelView(fuel, now),
+    shortageOutlook: shortage && { risk: shortage.risk, level: shortage.level, ...horizonDates(shortage) },
+    restockOutlook: restock && {
+      probability: restock.probability,
+      level: restock.level,
+      ...horizonDates(restock),
+    },
+  };
+}
+
+function horizonDates(outlook: { computedAt: Date; horizonEnd: Date }) {
+  return { computedAt: outlook.computedAt.toISOString(), horizonEnd: outlook.horizonEnd.toISOString() };
+}
+
+/**
+ * Date de la prévision la plus récente affichée, `null` s'il n'y en a aucune.
+ * Les dates ISO 8601 en UTC se comparent comme des chaînes.
+ */
+function latestComputedAt(
+  views: FavoriteStationDetailsView[],
+  outlookOf: (fuel: FavoriteFuelView) => { computedAt: string } | null,
+): string | null {
+  const dates = views
+    .flatMap((view) => view.station?.fuels ?? [])
+    .map((fuel) => outlookOf(fuel)?.computedAt)
+    .filter((date): date is string => date !== undefined);
+  return dates.length === 0 ? null : dates.reduce((a, b) => (b > a ? b : a));
 }

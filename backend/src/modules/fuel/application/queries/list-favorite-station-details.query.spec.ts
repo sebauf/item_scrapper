@@ -168,6 +168,31 @@ describe('ListFavoriteStationDetailsQuery', () => {
     expect(result.stations.map((s) => s.id)).toEqual(['2', '1']);
   });
 
+  it('annonce la date de la prévision la plus récente, par modèle', async () => {
+    const earlier = new Date('2026-11-05T11:00:00.000Z');
+    const station = aFuelStation({
+      id: '1',
+      fuels: [
+        aFuelPrice({ code: 'gazole' }),
+        aFuelPrice({ code: 'e10' }),
+        aFuelPrice({ code: 'sp98', price: null, available: false, shortageSince: earlier }),
+      ],
+    });
+
+    const result = await query(
+      { '1': new Date('2026-11-01T10:00:00.000Z') },
+      [station],
+      [
+        { stationId: '1', fuel: 'gazole', risk: 0.2, computedAt: earlier },
+        { stationId: '1', fuel: 'e10', risk: 0.4, computedAt },
+      ],
+      [{ stationId: '1', fuel: 'sp98', probability: 0.5, computedAt: earlier }],
+    ).execute(alice, now);
+
+    expect(result.forecast.computedAt).toBe('2026-11-05T11:30:00.000Z');
+    expect(result.restockForecast.computedAt).toBe('2026-11-05T11:00:00.000Z');
+  });
+
   it('aucune favorite : liste vide', async () => {
     const result = await query({}).execute(alice, now);
 
