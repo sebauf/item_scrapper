@@ -67,10 +67,11 @@ from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_s
 
 from src.clock import naive_utc_now
 from src.fuel.shortage_forecast.dataset import Dataset
-from src.fuel.shortage_forecast.features import CATEGORICAL_FEATURES, FEATURE_COLUMNS
+from src.fuel.shortage_forecast.features import CATEGORICAL_FEATURES, DAY, FEATURE_COLUMNS
 
 COLLECTION = "fuel_shortage_models"
 MODEL_ID = "current"
+REJECTED_ID = "last_rejected"
 
 DECAY_DAYS = 60
 CALIBRATION_DAYS = 21
@@ -103,7 +104,13 @@ def _logit(p: np.ndarray) -> np.ndarray:
 @dataclass
 class ShortageModel:
     """Estimateur + calibration, et ce qu'il faut pour vérifier qu'il
-    correspond au code qui le charge."""
+    correspond au code qui le charge. Sert aussi au modèle de
+    réapprovisionnement.
+
+    Ne pas renommer ni déplacer cette classe, ni `_logit` : le pickle en
+    service désigne `src.fuel.shortage_forecast.model.ShortageModel`, et ne
+    se relirait plus — plus aucune prévision jusqu'au prochain entraînement.
+    """
     estimator: HistGradientBoostingClassifier
     calibrator: LogisticRegression
     feature_columns: list[str] = field(default_factory=lambda: list(FEATURE_COLUMNS))
@@ -152,7 +159,7 @@ SHORTAGE = ModelSpec(
 
 
 def time_weights(t: pd.Series, reference: pd.Timestamp) -> np.ndarray:
-    age_days = ((reference - t).dt.total_seconds() / 86400).to_numpy()
+    age_days = ((reference - t).dt.total_seconds() / DAY).to_numpy()
     return np.exp(-np.maximum(age_days, 0) / DECAY_DAYS)
 
 
@@ -200,6 +207,13 @@ def evaluate(y: np.ndarray, weight: np.ndarray, p: np.ndarray, threshold: float 
         "precision": float(np.average(y[alert], weights=weight[alert])) if alert.any() else None,
         "recall": float((weight[alert] * y[alert]).sum() / positives) if positives else None,
     }
+
+
+def format_metrics(metrics: dict) -> str:
+    """Une ligne de journal pour les métriques de `evaluate`."""
+    return (f"AUC {metrics['auc']:.3f}, précision moyenne {metrics['averagePrecision']:.3f}, "
+            f"Brier {metrics['brier']:.4f}, précision@{metrics['threshold']:.0%} "
+            f"{(metrics['precision'] or 0):.0%}, rappel {(metrics['recall'] or 0):.0%}")
 
 
 def split_masks(t: pd.Series, end: pd.Timestamp, test_days: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -284,7 +298,7 @@ def record_rejection(db: Database, result: TrainingResult, attempted_at: datetim
                      spec: ModelSpec = SHORTAGE):
     """Garde la trace d'un entraînement refusé, sans toucher au modèle en service."""
     db[spec.collection].update_one(
-        {"_id": "last_rejected"},
+        {"_id": REJECTED_ID},
         {"$set": {"attemptedAt": attempted_at, "reason": result.reason, "metrics": result.metrics}},
         upsert=True,
     )

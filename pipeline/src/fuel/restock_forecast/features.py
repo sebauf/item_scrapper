@@ -23,21 +23,25 @@ import numpy as np
 import pandas as pd
 
 from src.fuel.fuels import FUELS
+from src.fuel.shortage_forecast.event_search import (
+    GROUP_SHIFT,
+    Groups,
+    alive_count,
+    count_between,
+    last_at_or_before,
+    pair_keys,
+    sorted_keys,
+)
 from src.fuel.shortage_forecast.features import (
-    _KEY,
     CATEGORICAL_FEATURES,
     DAY,
     HORIZON_SECONDS,
     HOUR,
+    LONGEST_WINDOW_DAYS,
     NUMERIC_FEATURES as SHORTAGE_NUMERIC_FEATURES,
     History,
-    _alive,
-    _count_between,
-    _Groups,
-    _hours_since,
-    _last_le,
-    _sorted_keys,
     compute_features as compute_context_features,
+    hours_since,
     seconds,
 )
 
@@ -45,7 +49,7 @@ HORIZON_HOURS = HORIZON_SECONDS // HOUR
 
 # Fenêtre de la durée habituelle : celle du plus long comptage du modèle de
 # rupture (`sf_starts_180d`), donc ce que `fuel_shortages` retient.
-DURATION_WINDOW_SECONDS = 180 * DAY
+DURATION_WINDOW_SECONDS = LONGEST_WINDOW_DAYS * DAY
 
 RESTOCK_FEATURES = [
     "shortage_age_hours",
@@ -59,13 +63,11 @@ NUMERIC_FEATURES = SHORTAGE_NUMERIC_FEATURES + RESTOCK_FEATURES
 FEATURE_COLUMNS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 
-def _pair(left, right) -> np.ndarray:
-    return pd.Series(left, dtype=object).astype(str).to_numpy() + "|" + np.asarray(right, dtype=str)
-
-
 def compute_features(history: History, queries: pd.DataFrame) -> pd.DataFrame:
     """Variables de chaque ligne de `queries` (`station`, `fuel`, `t`), un
-    couple en rupture à `t`. Mêmes conventions que le modèle de rupture."""
+    couple en rupture à `t`. Mêmes conventions que le modèle de rupture, et
+    d'un bloc pour la même raison (cf. la docstring de
+    `shortage_forecast.features`)."""
     q = queries.reset_index(drop=True).copy()
     q["station"], q["fuel"] = q["station"].astype(str), q["fuel"].astype(str)
     t = seconds(q["t"])
@@ -77,36 +79,34 @@ def compute_features(history: History, queries: pd.DataFrame) -> pd.DataFrame:
     q_dept = dept_of.reindex(q["station"]).to_numpy()
     c_dept = dept_of.reindex(closed["station"]).to_numpy()
 
-    q_pair, sh_pair, c_pair = _pair(q["station"], q["fuel"]), _pair(sh["station"], sh["fuel"]), \
-        _pair(closed["station"], closed["fuel"])
-    q_deptfuel, c_deptfuel = _pair(q_dept, q["fuel"]), _pair(c_dept, closed["fuel"])
-    sold_deptfuel = _pair(sold["dept"], sold["fuel"])
+    q_pair, sh_pair = pair_keys(q["station"], q["fuel"]), pair_keys(sh["station"], sh["fuel"])
+    c_pair = pair_keys(closed["station"], closed["fuel"])
+    q_deptfuel, c_deptfuel = pair_keys(q_dept, q["fuel"]), pair_keys(c_dept, closed["fuel"])
+    sold_deptfuel = pair_keys(sold["dept"], sold["fuel"])
 
-    pairs = _Groups(pd.Series(q_pair), pd.Series(sh_pair))
-    stations = _Groups(q["station"], closed["station"])
-    deptfuels = _Groups(pd.Series(q_deptfuel), pd.Series(c_deptfuel), pd.Series(sold_deptfuel))
-    fuels = _Groups(pd.Series(FUELS), q["fuel"], closed["fuel"], sold["fuel"])
-    q_p, q_st = pairs.ids(pd.Series(q_pair)), stations.ids(q["station"])
-    q_df, q_f = deptfuels.ids(pd.Series(q_deptfuel)), fuels.ids(q["fuel"])
+    pairs = Groups(q_pair, sh_pair)
+    stations = Groups(q["station"], closed["station"])
+    deptfuels = Groups(q_deptfuel, c_deptfuel, sold_deptfuel)
+    fuels = Groups(FUELS, q["fuel"], closed["fuel"], sold["fuel"])
+    q_p, q_st = pairs.ids(q_pair), stations.ids(q["station"])
+    q_df, q_f = deptfuels.ids(q_deptfuel), fuels.ids(q["fuel"])
 
-    empty = np.zeros(0, dtype=np.int64)
-    start = seconds(sh["start"]) if len(sh) else empty
-    c_start = seconds(closed["start"]) if len(closed) else empty
-    c_end = seconds(closed["end"]) if len(closed) else empty
+    start = seconds(sh["start"])
+    c_start, c_end = seconds(closed["start"]), seconds(closed["end"])
 
     # — la rupture en cours : son début est le dernier début du couple ≤ t
-    current_start = _last_le(_sorted_keys(pairs.ids(pd.Series(sh_pair)), start), q_p, t)
-    out["shortage_age_hours"] = _hours_since(current_start, t)
+    current_start = last_at_or_before(sorted_keys(pairs.ids(sh_pair), start), q_p, t)
+    out["shortage_age_hours"] = hours_since(current_start, t)
 
     # — durée moyenne des ruptures du couple **closes** à t, sur 180 jours :
     # somme glissante des durées par double recherche dans des clés triées.
-    c_p = pairs.ids(pd.Series(c_pair))
-    keys = c_p * _KEY + c_end
+    c_p = pairs.ids(c_pair)
+    keys = c_p * GROUP_SHIFT + c_end
     order = np.argsort(keys, kind="stable")
     keys = keys[order]
     cumulated = np.concatenate([[0], np.cumsum((c_end - c_start)[order])]).astype(float)
-    hi = np.searchsorted(keys, q_p * _KEY + t, side="right")
-    lo = np.searchsorted(keys, q_p * _KEY + t - DURATION_WINDOW_SECONDS, side="right")
+    hi = np.searchsorted(keys, q_p * GROUP_SHIFT + t, side="right")
+    lo = np.searchsorted(keys, q_p * GROUP_SHIFT + t - DURATION_WINDOW_SECONDS, side="right")
     n_closed = (hi - lo).astype(float)
     with np.errstate(divide="ignore", invalid="ignore"):
         out["sf_mean_duration_hours_180d"] = np.where(
@@ -116,17 +116,17 @@ def compute_features(history: History, queries: pd.DataFrame) -> pd.DataFrame:
 
     # — fins de rupture des dernières 24 h : la station, le département, la France
     pair_ends = keys
-    station_ends = _sorted_keys(stations.ids(closed["station"]), c_end)
-    out["station_other_ends_24h"] = (_count_between(station_ends, q_st, t - DAY, t)
-                                     - _count_between(pair_ends, q_p, t - DAY, t)).astype(float)
+    station_ends = sorted_keys(stations.ids(closed["station"]), c_end)
+    out["station_other_ends_24h"] = (count_between(station_ends, q_st, t - DAY, t)
+                                     - count_between(pair_ends, q_p, t - DAY, t)).astype(float)
     first, last = seconds(sold["first_at"]), seconds(sold["last_at"])
     with np.errstate(divide="ignore", invalid="ignore"):
-        dept_sold = _alive(deptfuels.ids(pd.Series(sold_deptfuel)), first, last, q_df, t)
-        nat_sold = _alive(fuels.ids(sold["fuel"]), first, last, q_f, t)
-        dept_ends = _sorted_keys(deptfuels.ids(pd.Series(c_deptfuel)), c_end)
-        nat_ends = _sorted_keys(fuels.ids(closed["fuel"]), c_end)
-        out["dept_ends_24h_share"] = _count_between(dept_ends, q_df, t - DAY, t) / dept_sold
-        out["nat_ends_24h_share"] = _count_between(nat_ends, q_f, t - DAY, t) / nat_sold
+        dept_sold = alive_count(deptfuels.ids(sold_deptfuel), first, last, q_df, t)
+        nat_sold = alive_count(fuels.ids(sold["fuel"]), first, last, q_f, t)
+        dept_ends = sorted_keys(deptfuels.ids(c_deptfuel), c_end)
+        nat_ends = sorted_keys(fuels.ids(closed["fuel"]), c_end)
+        out["dept_ends_24h_share"] = count_between(dept_ends, q_df, t - DAY, t) / dept_sold
+        out["nat_ends_24h_share"] = count_between(nat_ends, q_f, t - DAY, t) / nat_sold
 
     frame = out.astype(float).replace([np.inf, -np.inf], np.nan)
     return frame[FEATURE_COLUMNS]

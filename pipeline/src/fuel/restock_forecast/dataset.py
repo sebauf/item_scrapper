@@ -31,9 +31,8 @@ pratique à « si c'est une vraie rupture, finit-elle dans les 24 h ? ».
 import numpy as np
 import pandas as pd
 
-from src.fuel.shortage_forecast.dataset import Dataset
+from src.fuel.shortage_forecast.dataset import Dataset, daily_random_instants
 from src.fuel.shortage_forecast.features import (
-    DAY,
     HORIZON_SECONDS,
     OPEN_ACTIVE_SECONDS,
     History,
@@ -73,16 +72,9 @@ def sample_snapshots(
     begin = np.maximum(shortage_start, first_day)
     stop = np.minimum(until - 1, last)
 
-    n_days = np.maximum((stop - first_day) // DAY - (begin - first_day) // DAY + 1, 0)
-    n_days = np.where(stop >= begin, n_days, 0)
-    if n_days.sum() == 0:
+    idx, t = daily_random_instants(begin, stop, first_day, rng)
+    if len(idx) == 0:
         return pd.DataFrame(columns=columns)
-    idx = np.repeat(np.arange(len(sh)), n_days)
-    day0 = first_day + ((begin - first_day) // DAY) * DAY
-    offsets = np.concatenate([np.arange(n) for n in n_days])
-    t = np.repeat(day0, n_days) + offsets * DAY + rng.integers(0, DAY, size=len(idx))
-    inside = (t >= begin[idx]) & (t <= stop[idx])
-    idx, t = idx[inside], t[inside]
 
     closed = sh["end"].notna().to_numpy()[idx]
     real_end = seconds(sh["end"].fillna(sh["start"]))[idx]

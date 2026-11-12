@@ -88,7 +88,9 @@ def publish_forecasts(db: Database, now: datetime) -> dict[tuple[str, str], floa
     des alertes de rupture et de réapprovisionnement, qui n'en dépendent pas.
     """
     try:
-        from src.fuel.shortage_forecast.model import load_model
+        # Importés ici, dans le try : un scikit-learn absent ou cassé ne doit
+        # pas, lui non plus, faire échouer l'import des prix.
+        from src.fuel.shortage_forecast.model import REPORT_THRESHOLD, load_model
         from src.fuel.shortage_forecast.predict import predict_risks
 
         model = load_model(db, now)
@@ -98,10 +100,10 @@ def publish_forecasts(db: Database, now: datetime) -> dict[tuple[str, str], floa
             return None
         risks = predict_risks(db, model, favorite_pairs(db), now)
         write_forecasts(db, risks, now)
-        high = sum(1 for p in risks.values() if p >= 0.5)
+        high = sum(1 for p in risks.values() if p >= REPORT_THRESHOLD)
         print(f"shortage-risk: {len(risks)} couple(s) station favorite × carburant prévu(s), "
-              f"{high} à 50 % ou plus")
+              f"{high} à {REPORT_THRESHOLD * 100:.0f} % ou plus")
         return risks
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001 — une prévision ratée ne prive ni des prix ni des alertes
         print(f"shortage-risk: prévision impossible ({error!r}), prévisions publiées inchangées")
         return None
