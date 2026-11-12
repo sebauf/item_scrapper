@@ -1,6 +1,6 @@
 ---
 name: clean-code
-description: Revue et refactoring « clean code » de ce monorepo (scrapper TypeScript, backend NestJS DDD, pipeline Python, frontend Next.js, serveur MCP), avec ses conventions et ses exceptions assumées. À utiliser quand on écrit ou modifie du code du dépôt et qu'on veut le rendre propre, quand on relit un diff ou une PR pour la lisibilité ou la maintenabilité, ou quand l'utilisateur parle de clean code, nettoyage, refactoring, code smells, nommage, fonction trop longue, duplication ou commentaires. Pas pour chercher des bugs (/code-review) ni pour un audit de sécurité (/security-review).
+description: Revue et refactoring « clean code » de ce monorepo selon les principes d'Uncle Bob (Clean Code de Robert C. Martin), appliqués aux conventions du scrapper TypeScript, du backend NestJS DDD, du pipeline Python, du frontend Next.js et du serveur MCP, avec leurs exceptions assumées. À utiliser quand on écrit ou modifie du code du dépôt et qu'on veut le rendre propre, quand on relit un diff ou une PR pour la lisibilité ou la maintenabilité, ou quand l'utilisateur parle de clean code, nettoyage, refactoring, code smells, nommage, fonction trop longue, duplication ou commentaires. Pas pour chercher des bugs (/code-review) ni pour un audit de sécurité (/security-review).
 ---
 
 # Clean code — item_scrapper
@@ -10,9 +10,12 @@ souvent une session Claude sans contexte, ou vous dans six mois : **le code et
 son commentaire « pourquoi » doivent suffire** à comprendre une décision sans
 relire la PR qui l'a introduite.
 
-Ce skill ne remplace pas les conventions du dépôt, il les applique. Quand une
-règle générale du livre *Clean Code* contredit un choix documenté ici, **le
-choix du dépôt gagne** — voir « Exceptions assumées ».
+Ce skill applique les **principes d'Uncle Bob** (*Clean Code*, Robert C.
+Martin) — la grille complète, chapitre par chapitre, est dans
+[references/uncle-bob.md](references/uncle-bob.md) — **et** les conventions du
+dépôt. Les rares points où le livre cède le pas sont des contraintes
+techniques documentées : voir « Exceptions assumées ». Ordre de priorité :
+exceptions assumées > référence du module > grille d'Uncle Bob.
 
 ## Périmètre
 
@@ -30,9 +33,13 @@ choix du dépôt gagne** — voir « Exceptions assumées ».
 1. **Délimiter.** Le diff courant (`git diff`, `git diff main...HEAD`) ou les
    fichiers désignés. On ne réécrit pas le reste du fichier : la règle du scout
    s'applique aux lignes touchées et à leur voisinage immédiat.
-2. **Charger la référence du module** (table ci-dessous) — elle contient les
-   règles d'architecture propres à chaque composant.
-3. **Passer le diagnostic** : règles transverses, puis celles du module.
+2. **Charger systématiquement [references/uncle-bob.md](references/uncle-bob.md)**,
+   puis **la référence du module** (table ci-dessous), qui contient les règles
+   d'architecture propres à chaque composant.
+3. **Passer le diagnostic** : grille d'Uncle Bob chapitre par chapitre (noms,
+   fonctions, commentaires, mise en forme, objets, erreurs, frontières, tests,
+   classes, odeurs du ch. 17), puis règles transverses ci-dessous, puis
+   règles du module.
 4. **Filtrer** chaque constat par « Exceptions assumées ». Un constat qui y
    figure n'est pas un constat.
 5. **Rendre le rapport** (format en bas). N'appliquer les corrections que si
@@ -72,10 +79,14 @@ choix du dépôt gagne** — voir « Exceptions assumées ».
   implicite). Les effets de bord vivent à la périphérie : handlers, repositories,
   controllers, `main`. C'est ce qui permet aux suites de tests de tourner sans
   navigateur, sans réseau et sans base.
-- **Pas de seuil de lignes.** Les vrais signaux : la fonction mélange deux
-  niveaux d'abstraction (règle métier + sélecteur CSS, calcul + écriture Mongo) ;
-  elle a besoin de commentaires de section internes ; on ne peut pas tester une
-  de ses règles sans monter toute l'infrastructure.
+- **Petites — seuil d'Uncle Bob utilisé comme signal** : au-delà de ~20 lignes
+  de logique, la fonction **doit être examinée**, et la garder telle quelle
+  demande une raison écrite dans le rapport. Ce n'est pas un défaut
+  automatique. Agrégations Mongo et définitions déclaratives exemptées (détail
+  dans `uncle-bob.md`, ch. 3). Autres signaux, quelle que soit la taille : deux
+  niveaux d'abstraction mêlés (règle métier + sélecteur CSS, calcul + écriture
+  Mongo), commentaires de section internes, règle impossible à tester sans
+  monter toute l'infrastructure.
 - Clauses de garde en tête, un seul chemin nominal.
 - Pas de booléen-drapeau qui change le comportement : deux fonctions, ou une
   union de chaînes (`sort: 'distance' | 'price'`).
@@ -165,6 +176,12 @@ documentés ; les signaler comme défauts serait une régression.
 | Question | Si non |
 |---|---|
 | Comprend-on chaque fonction sans lire son corps ? | Renommer. |
+| Chaque fonction fait-elle une seule chose, à un seul niveau d'abstraction ? | Extraire (ch. 3). |
+| Les fonctions de plus de ~20 lignes ont-elles une raison de le rester ? | Découper, ou écrire la raison dans le rapport (ch. 3). |
+| Le fichier se lit-il de haut en bas, du général au détail ? | Réordonner (règle de la descente, ch. 3). |
+| Chaque classe a-t-elle une seule raison de changer ? | Séparer (SRP, ch. 10). |
+| Aucune chaîne `a.b().c().d()` sur des objets ? | Demander au voisin direct (Déméter, ch. 6). |
+| Chaque nouvelle règle et chaque bug corrigé ont-ils leur test ? | L'écrire d'abord (TDD, ch. 9). |
 | Chaque règle métier est-elle testable sans navigateur, réseau ni base ? | L'extraire en fonction pure. |
 | Chaque nombre métier est-il une constante nommée, avec unité et justification ? | Nommer, justifier, un seul propriétaire. |
 | Les imports respectent-ils les frontières du module (cf. référence) ? | Déplacer le code, pas la règle. |
@@ -181,8 +198,12 @@ Constats regroupés par gravité, chacun en une ou deux lignes :
 - **À améliorer** — lisibilité : nom, découpage, duplication, test mal nommé.
 - **À discuter** — question de goût ou compromis ; donner les deux options.
 
-Chaque constat : `chemin/fichier.ts:ligne` — règle — pourquoi c'est un problème
-ici — proposition concrète (extrait de code si utile).
+Chaque constat : `chemin/fichier.ts:ligne` — principe cité (`ch. 3 — un seul
+niveau d'abstraction`, ou la règle du dépôt / du module) — pourquoi c'est un
+problème ici — proposition concrète (extrait de code si utile).
+
+Les fonctions de plus de ~20 lignes conservées telles quelles sont listées avec
+leur raison, pour que la décision soit visible.
 
 Terminer par :
 - les **exceptions assumées rencontrées** et volontairement non signalées (une
