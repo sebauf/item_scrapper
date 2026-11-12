@@ -9,6 +9,7 @@ import type {
   TrackedUrlSummary,
   UnitPrice,
 } from './backend/client.js';
+import { formatParisDay } from './format-time.js';
 
 /**
  * Mise en forme des réponses de l'API pour un lecteur qui est un modèle.
@@ -30,9 +31,9 @@ export function formatUnitPrice(unitPrice: UnitPrice | null): string | null {
   return unitPrice === null ? null : `${unitPrice.amount.toFixed(2)}/${unitPrice.unit}`;
 }
 
-/** Date ISO → `2026-08-08`, la partie horaire n'apporte rien à l'agent. */
+/** Date ISO → `2026-08-08`, à Paris : la partie horaire n'apporte rien à l'agent. */
 export function formatDay(iso: string | null): string {
-  return iso === null ? 'jamais' : iso.slice(0, 10);
+  return iso === null ? 'jamais' : formatParisDay(iso);
 }
 
 function formatScoring(product: ProductSummary): string {

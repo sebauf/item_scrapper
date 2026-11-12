@@ -9,7 +9,7 @@ import type {
   RestockChanceLevel,
   ShortageRiskLevel,
 } from './backend/client.js';
-import { formatParisDateTime } from './format-time.js';
+import { formatParisDateTime, formatParisDay } from './format-time.js';
 
 /**
  * Mise en forme des réponses carburant pour un lecteur qui est un modèle.
@@ -152,7 +152,7 @@ export function formatFavoriteFuel(fuel: FavoriteFuel): string {
 }
 
 function formatFavoriteStation(favorite: FavoriteStationDetails): string {
-  const added = `ajoutée le ${formatParisDateTime(favorite.addedAt).slice(0, 10)}`;
+  const added = `ajoutée le ${formatParisDay(favorite.addedAt)}`;
   if (favorite.station === null) {
     return [
       `- Station ${favorite.id} — absente du flux officiel actuellement (${added})`,

@@ -7,6 +7,8 @@
 
 const TIME_ZONE = 'Europe/Paris';
 
+const UNKNOWN_DATE = 'date inconnue';
+
 const PARIS_FORMAT = new Intl.DateTimeFormat('fr-FR', {
   timeZone: TIME_ZONE,
   year: 'numeric',
@@ -19,11 +21,22 @@ const PARIS_FORMAT = new Intl.DateTimeFormat('fr-FR', {
 
 /** ISO 8601 (UTC) → `2026-11-08 14:30`, heure de Paris. */
 export function formatParisDateTime(iso: string | null): string {
-  if (iso === null) return 'date inconnue';
+  const parts = parisParts(iso);
+  return parts === null
+    ? UNKNOWN_DATE
+    : `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+/** ISO 8601 (UTC) → `2026-11-08`, date de Paris. */
+export function formatParisDay(iso: string | null): string {
+  const parts = parisParts(iso);
+  return parts === null ? UNKNOWN_DATE : `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** Année, mois, jour, heure et minute à Paris ; `null` pour une date absente ou illisible. */
+function parisParts(iso: string | null): Record<string, string> | null {
+  if (iso === null) return null;
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return 'date inconnue';
-  const parts = Object.fromEntries(
-    PARIS_FORMAT.formatToParts(date).map((part) => [part.type, part.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+  if (Number.isNaN(date.getTime())) return null;
+  return Object.fromEntries(PARIS_FORMAT.formatToParts(date).map((part) => [part.type, part.value]));
 }
