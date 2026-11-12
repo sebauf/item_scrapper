@@ -26,6 +26,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 from pymongo.database import Database
 
+from src.fuel.favorites import favorite_station_fuels
 from src.fuel.restock_forecast.dataset import MAX_SHORTAGE_AGE_SECONDS
 from src.fuel.shortage_forecast.forecasts import HORIZON_HOURS, write_forecasts
 
@@ -34,22 +35,20 @@ FIELD = "probability"
 
 
 def shortage_pairs(db: Database, now: datetime) -> list[tuple[str, str]]:
-    """(station, carburant en rupture récente) des stations favorites d'au
-    moins un utilisateur (une favorite historique sans `userId` n'appartient
-    à personne, comme pour la rupture)."""
-    station_ids = sorted({
-        doc["stationId"]
-        for doc in db["favorite_stations"].find({"userId": {"$exists": True}}, {"stationId": 1})
-        if doc.get("stationId")
-    })
+    """(station, carburant en rupture depuis moins de 7 jours) des stations
+    favorites d'au moins un utilisateur."""
     oldest = now - timedelta(seconds=MAX_SHORTAGE_AGE_SECONDS)
-    pairs = set()
-    for station in db["fuel_stations"].find({"_id": {"$in": station_ids}}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            since = fuel.get("shortageSince")
-            if not fuel.get("available") and since is not None and since >= oldest:
-                pairs.add((station["_id"], fuel["code"]))
-    return sorted(pairs)
+    return sorted({
+        (station_id, fuel["code"])
+        for station_id, fuel in favorite_station_fuels(db)
+        if _in_recent_shortage(fuel, oldest)
+    })
+
+
+def _in_recent_shortage(fuel: dict, oldest: datetime) -> bool:
+    """En rupture, depuis une date connue postérieure à `oldest`."""
+    since = fuel.get("shortageSince")
+    return not fuel.get("available") and since is not None and since >= oldest
 
 
 def predict_chances(db: Database, model, pairs: list[tuple[str, str]], now: datetime) -> dict[tuple[str, str], float]:

@@ -41,7 +41,7 @@ import pandas as pd
 ARCHIVE_URL = "https://donnees.roulez-eco.fr/opendata/annee/{year}"
 REQUEST_TIMEOUT_SECONDS = 300
 
-# Libellés de l'archive → codes de fuel_stations (cf. import_stations.FUELS).
+# Libellés de l'archive → codes de `src.fuel.fuels`.
 FUEL_CODES = {
     "Gazole": "gazole",
     "E10": "e10",

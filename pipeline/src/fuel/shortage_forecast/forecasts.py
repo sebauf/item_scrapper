@@ -29,6 +29,8 @@ from datetime import datetime
 from pymongo import ReplaceOne
 from pymongo.database import Database
 
+from src.fuel.favorites import favorite_station_fuels
+
 COLLECTION = "fuel_shortage_forecasts"
 HORIZON_HOURS = 24
 
@@ -39,19 +41,12 @@ def forecast_id(station_id: str, fuel: str) -> str:
 
 def favorite_pairs(db: Database) -> list[tuple[str, str]]:
     """(station, carburant disponible) des stations favorites d'au moins un
-    utilisateur. Une favorite historique sans `userId` n'appartient à personne
-    (cf. legacy-ownership côté backend) : elle n'est pas prévue."""
-    station_ids = sorted({
-        doc["stationId"]
-        for doc in db["favorite_stations"].find({"userId": {"$exists": True}}, {"stationId": 1})
-        if doc.get("stationId")
+    utilisateur."""
+    return sorted({
+        (station_id, fuel["code"])
+        for station_id, fuel in favorite_station_fuels(db)
+        if fuel.get("available")
     })
-    pairs = set()
-    for station in db["fuel_stations"].find({"_id": {"$in": station_ids}}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            if fuel.get("available"):
-                pairs.add((station["_id"], fuel["code"]))
-    return sorted(pairs)
 
 
 def write_forecasts(

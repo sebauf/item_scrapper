@@ -32,6 +32,7 @@ import pandas as pd
 from pymongo import DeleteOne, ReplaceOne, UpdateOne
 from pymongo.database import Database
 
+from src.fuel.import_stations import fuels_by_pair
 from src.fuel.shortage_forecast.archive import Archive
 from src.fuel.shortage_forecast.features import MIN_SHORTAGE_SECONDS
 
@@ -58,10 +59,7 @@ def record_live(db: Database, imported_at: datetime) -> tuple[int, int]:
     """
     collection = db[COLLECTION]
     ensure_indexes(db)  # sans effet s'ils existent déjà
-    current: dict[tuple[str, str], dict] = {}
-    for station in db["fuel_stations"].find({}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            current[(station["_id"], fuel["code"])] = fuel
+    current = fuels_by_pair(db)
 
     ops, opened = [], 0
     for (station_id, code), fuel in current.items():

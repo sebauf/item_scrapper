@@ -35,9 +35,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from src.fuel.shortage_forecast.archive import FUEL_CODES
-
-FUELS = tuple(FUEL_CODES.values())
+from src.fuel.fuels import FUEL_RANK, FUELS
 
 HOUR = 3600
 DAY = 24 * HOUR
@@ -250,7 +248,7 @@ def compute_features(history: History, queries: pd.DataFrame) -> pd.DataFrame:
         out["nat_starts_24h_share"] = _count_between(f_starts, q_f, t - DAY, t) / nat_sold
 
     out["hour_local"], out["weekday_local"] = _local_calendar(t)
-    out["fuel"] = q["fuel"].map({code: i for i, code in enumerate(FUELS)}).to_numpy(dtype=float)
+    out["fuel"] = q["fuel"].map(FUEL_RANK).to_numpy(dtype=float)
     out["pop"] = pd.Series(q_pop).map({"R": 0, "A": 1}).to_numpy(dtype=float)
 
     frame = pd.DataFrame(out).astype(float)

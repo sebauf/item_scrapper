@@ -22,11 +22,11 @@ forecast.py` le vérifie en ajoutant l'avenir et en comparant).
 import numpy as np
 import pandas as pd
 
+from src.fuel.fuels import FUELS
 from src.fuel.shortage_forecast.features import (
     _KEY,
     CATEGORICAL_FEATURES,
     DAY,
-    FUELS,
     HORIZON_SECONDS,
     HOUR,
     NUMERIC_FEATURES as SHORTAGE_NUMERIC_FEATURES,

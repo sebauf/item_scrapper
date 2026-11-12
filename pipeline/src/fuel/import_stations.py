@@ -55,17 +55,15 @@ from pymongo.database import Database
 
 from src.clock import naive_utc_now
 from src.fuel.brands import fetch_osm_stations
+from src.fuel.fuels import FUELS
 
 DATASET_URL = (
     "https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
     "prix-des-carburants-en-france-flux-instantane-v2/exports/json"
 )
 
-# Préfixe des colonnes de l'API → code exposé par le backend. L'ordre est celui
-# de l'affichage : du plus vendu au plus rare.
-FUELS = ("gazole", "e10", "sp98", "sp95", "e85", "gplc")
-
 STATION_FIELDS = ("id", "latitude", "longitude", "cp", "pop", "adresse", "ville")
+# Colonnes de chaque carburant dans l'API, préfixées par son code : `gazole_prix`…
 FUEL_SUFFIXES = ("prix", "maj", "rupture_debut", "rupture_type")
 
 # Les coordonnées du flux sont des degrés multipliés par 100 000
@@ -228,17 +226,8 @@ def presumed_shortages(db: Database, now: datetime) -> dict[str, dict[str, dict]
     la rajeunirait à chaque passage, elle ne s'éteindrait jamais.
     """
     oldest = now - timedelta(days=PRESUMED_SHORTAGE_MAX_DAYS)
-    declared: dict[tuple[str, str], datetime] = {}
-    for episode in db["fuel_shortages"].find(
-        {"end": None, "start": {"$gte": oldest}}, {"stationId": 1, "fuel": 1, "start": 1}
-    ):
-        key = (episode["stationId"], episode["fuel"])
-        declared[key] = max(episode["start"], declared.get(key, episode["start"]))
-
-    previous: dict[tuple[str, str], dict] = {}
-    for station in db["fuel_stations"].find({}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            previous[(station["_id"], fuel["code"])] = fuel
+    declared = _open_shortage_starts(db, oldest)
+    previous = fuels_by_pair(db)
 
     presumed: dict[str, dict[str, dict]] = {}
     for key in declared.keys() | previous.keys():
@@ -249,16 +238,41 @@ def presumed_shortages(db: Database, now: datetime) -> dict[str, dict[str, dict]
             since = now if before.get("available") else before.get("shortageSince")
         if since is None or since < oldest:
             continue
-        presumed.setdefault(station_id, {})[code] = {
-            "code": code,
-            "price": None,
-            # La dernière déclaration connue pour ce carburant : la fraîcheur
-            # reste celle de la station, jamais celle de notre import.
-            "updatedAt": (before or {}).get("updatedAt") or since,
-            "available": False,
-            "shortageSince": since,
-        }
+        presumed.setdefault(station_id, {})[code] = _presumed_fuel(code, since, before)
     return presumed
+
+
+def fuels_by_pair(db: Database) -> dict[tuple[str, str], dict]:
+    """Carburants du dernier import, par (station, code)."""
+    return {
+        (station["_id"], fuel["code"]): fuel
+        for station in db["fuel_stations"].find({}, {"fuels": 1})
+        for fuel in station.get("fuels", [])
+    }
+
+
+def _open_shortage_starts(db: Database, oldest: datetime) -> dict[tuple[str, str], datetime]:
+    """Début déclaré de la rupture ouverte de chaque (station, carburant) ; la
+    plus récente s'il y en a plusieurs."""
+    starts: dict[tuple[str, str], datetime] = {}
+    for episode in db["fuel_shortages"].find(
+        {"end": None, "start": {"$gte": oldest}}, {"stationId": 1, "fuel": 1, "start": 1}
+    ):
+        key = (episode["stationId"], episode["fuel"])
+        starts[key] = max(episode["start"], starts.get(key, episode["start"]))
+    return starts
+
+
+def _presumed_fuel(code: str, since: datetime, before: dict | None) -> dict:
+    return {
+        "code": code,
+        "price": None,
+        # La dernière déclaration connue pour ce carburant : la fraîcheur
+        # reste celle de la station, jamais celle de notre import.
+        "updatedAt": (before or {}).get("updatedAt") or since,
+        "available": False,
+        "shortageSince": since,
+    }
 
 
 class TruncatedFeedError(RuntimeError):

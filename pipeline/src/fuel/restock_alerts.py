@@ -111,17 +111,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pymongo import ReplaceOne
 from pymongo.database import Database
 
+from src.fuel.favorites import favorite_stations_by_user
+from src.fuel.fuels import FUEL_LABELS, FUEL_RANK
+
 REQUEST_TIMEOUT_SECONDS = 10
 
-FUEL_LABELS = {
-    "gazole": "Gazole",
-    "e10": "SP95-E10",
-    "sp98": "SP98",
-    "sp95": "SP95",
-    "e85": "E85",
-    "gplc": "GPLc",
-}
-FUEL_ORDER = {code: i for i, code in enumerate(FUEL_LABELS)}
 
 # Même forme que le backend (profile/domain/phone-number.ts), qui normalise à
 # la saisie. Revérifiée ici : un numéro écrit à la main dans Mongo ne doit pas
@@ -203,19 +197,13 @@ class Subscriber:
 def subscribers(db: Database) -> list[Subscriber]:
     """Utilisateurs surveillés : numéro valide, carburant connu, station
     favorite. Triés par identifiant, pour un ordre d'envoi stable."""
-    stations_by_user: dict[str, set[str]] = {}
-    for doc in db["favorite_stations"].find(
-        {"userId": {"$exists": True}}, {"userId": 1, "stationId": 1}
-    ):
-        if doc.get("stationId"):
-            stations_by_user.setdefault(doc["userId"], set()).add(doc["stationId"])
-
+    stations_by_user = favorite_stations_by_user(db)
     result = []
     for profile in db["user_profiles"].find({}, {"phone": 1, "alertFuels": 1}):
         user_id, phone = profile["_id"], profile.get("phone")
         fuels = tuple(sorted(
             {code for code in profile.get("alertFuels") or [] if code in FUEL_LABELS},
-            key=FUEL_ORDER.__getitem__,
+            key=FUEL_RANK.__getitem__,
         ))
         station_ids = stations_by_user.get(user_id)
         if not (isinstance(phone, str) and E164.match(phone) and fuels and station_ids):
@@ -324,7 +312,7 @@ def detect_events(
                 "seenAt": seen_at,
             }
     for kind in events:
-        events[kind].sort(key=lambda r: (r["stationId"], FUEL_ORDER[r["fuel"]]))
+        events[kind].sort(key=lambda r: (r["stationId"], FUEL_RANK[r["fuel"]]))
     return events, updates
 
 
@@ -350,7 +338,7 @@ def _station_line(r: dict) -> str:
 
 
 def _fuel_labels(events: list[dict]) -> str:
-    fuels = sorted({r["fuel"] for r in events}, key=FUEL_ORDER.__getitem__)
+    fuels = sorted({r["fuel"] for r in events}, key=FUEL_RANK.__getitem__)
     return ", ".join(FUEL_LABELS[code] for code in fuels)
 
 
