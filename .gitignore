@@ -32,5 +32,7 @@ playwright-report/
 .DS_Store
 Thumbs.db
 
-# Claude Code
-.claude/
+# Claude Code — réglages et état locaux ignorés ; seuls les skills du projet
+# sont versionnés (les sessions cloud les reçoivent avec le clone).
+.claude/*
+!.claude/skills/
