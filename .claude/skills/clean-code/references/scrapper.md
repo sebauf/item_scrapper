@@ -25,8 +25,9 @@ Chaque lecture de fiche suit le même schéma, à respecter dans tout nouveau co
 | renvoie des chaînes et des listes brutes | décide, normalise, refuse |
 | pas de test unitaire (navigateur requis) | test `*.spec.ts` à côté, sans navigateur ni réseau |
 
-Exemples dans le dépôt : `AmazonProductHandler` → `PriceParser`, `AmazonOfferParser` ;
-`AmazonIdentityExtractor` → `AmazonIdentityParser`, `JsonLdParser`,
+Exemples dans le dépôt : `AmazonProductPage` → `PriceParser`, `AmazonOfferParser`,
+`AmazonUrl` (orchestrés par `AmazonProductHandler`) ;
+`AmazonIdentityExtractor` → `AmazonIdentityCascade`, `AmazonIdentityParser`, `JsonLdParser`,
 `QuantityParser`, `PackReconciler`, `Gtin`.
 
 **Constat « à corriger »** : une regex, un seuil ou un choix métier écrit dans un
@@ -50,7 +51,15 @@ handler ou un extractor. Le déplacer dans le parseur et le tester.
   `reparseQuantities --all` : le signaler dans le rapport si le diff touche
   `QuantityParser` ou `PackReconciler`.
 - Les scripts (`src/scripts/`) sont des points d'entrée : ils réutilisent les
-  parseurs, ils n'en réimplémentent pas.
+  parseurs, ils n'en réimplémentent pas, et ils crawlent avec
+  `AMAZON_CRAWLER_OPTIONS` — un crawler réglé autrement est servi autrement
+  (pages de blocage, fiches en anglais). Connexion par
+  `MongoConnection.fromEnv()`.
+- **Réglages liés** : `DEFAULT_MAX_REQUESTS_PER_CRAWL`,
+  `KNOWN_PRODUCTS_LIMIT_PER_KEYWORD` (`AmazonCrawler`), `MAX_SEARCH_PAGES`
+  (`AmazonSearchHandler`) et `MAX_REQUESTS_PER_MINUTE` voyagent avec la règle
+  de fraîcheur, les quotas du backend et le délai de la tâche Airflow : en
+  changer un, c'est relire les autres.
 
 ## Exceptions assumées propres au scrapper
 

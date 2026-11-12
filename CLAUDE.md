@@ -158,20 +158,24 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/main.ts` — entry point: MongoDB connection, use-case wiring, default keywords
 - `src/application/ScrapeProductsUseCase.ts` — fetches enabled keywords, delegates to scraper
 - `src/application/SeedKeywordsUseCase.ts` — seeds missing keywords into DB
-- `src/infrastructure/scraping/amazon/AmazonCrawler.ts` — configures `PlaywrightCrawler`, routes search vs product pages
+- `src/infrastructure/scraping/amazon/AmazonCrawler.ts` — builds the request queue (search, known products, tracked URLs), routes search vs product pages; owns `DEFAULT_MAX_REQUESTS_PER_CRAWL` and `KNOWN_PRODUCTS_LIMIT_PER_KEYWORD`
+- `src/infrastructure/scraping/amazon/AmazonCrawlerOptions.ts` — pace, session pool, anti-detection, French pages: `AMAZON_CRAWLER_OPTIONS`, shared by the crawler **and the scripts** (a spike crawled differently would measure block pages)
+- `src/infrastructure/scraping/amazon/AmazonUrl.ts` — URL rules (pur) : ASIN, canonical product URL, block pages, dead-product redirect, variant URLs
 - `src/infrastructure/scraping/amazon/AmazonSearchHandler.ts` — enqueues product URLs from search results
-- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page; checks availability **before** the price
+- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — orchestrates a product page: dead redirect → title → availability **before** the price → record → variants
+- `src/infrastructure/scraping/amazon/AmazonProductPage.ts` — DOM side of a product page: named selectors, raw texts only
 - `src/infrastructure/scraping/amazon/AmazonOfferParser.ts` — offer rules (pur) : « Actuellement indisponible » → `markUnavailable`, no price recorded; price read **only** inside the product's own price blocks (`#apex_desktop`, `#corePriceDisplay_desktop_feature_div`…), never from a page-wide `.a-price` — on an unavailable page that is the price of a *replacement* article. Prices on the page but none in those blocks → saved with `price: null` and a warning (third-party sellers only, or selectors outdated by a redesign)
 - `src/infrastructure/scraping/amazon/PriceParser.ts` — normalises Amazon price strings
 - `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin, packSize }` (pur), libellés **français et anglais** (« Number of items », « Brand Name », « Global Trade Identification Number »…)
 - `src/infrastructure/scraping/amazon/AmazonBrowserLocale.ts` — fiches demandées **en français** (empreinte `fr-FR` + `Accept-Language`), partagé par le crawler et les scripts : l'empreinte par défaut de Crawlee est `en-US`, et amazon.fr sert alors titres et caractéristiques en anglais
-- `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright + ordre de la cascade d'identité
+- `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright de l'identité, rien d'autre
+- `src/infrastructure/scraping/amazon/AmazonIdentityCascade.ts` — ordre de la cascade d'identité (pur) : EAN du JSON-LD puis des caractéristiques, marque des caractéristiques puis du JSON-LD, traces de diagnostic
 - `src/infrastructure/scraping/shared/` — parseurs agnostiques de la boutique : `Gtin` (clé de contrôle GTIN), `JsonLdParser`, `QuantityParser` (contenance et doses du titre, par unité et totales), `PackReconciler` (nombre d'unités : titre croisé avec la fiche)
 - `src/scripts/reparseQuantities.ts` — migration (`npm run migrate:reparse-quantities`, image : `node dist/scripts/reparseQuantities.js`) : recalcule le conditionnement de `items_raw` avec le parseur actuel ; `--all` = tous les relevés, **à relancer après tout changement de parseur qui refuse ce qu'il acceptait** (sinon la règle « dernière valeur non nulle » garde l'ancienne valeur), sans = relevés jamais migrés ; ne réécrit que ce qui change, `--dry-run` compte
 - `src/scripts/spikeJsonLd.ts` — harnais de mesure de la couverture d'identité, n'écrit rien en base
 - `src/infrastructure/persistence/mongodb/MongoProductRepository.ts` — upserts products by URL + day
 - `src/infrastructure/persistence/mongodb/MongoKeywordRepository.ts` — CRUD for keywords
-- `src/infrastructure/persistence/mongodb/MongoConnection.ts` — singleton `MongoClient`
+- `src/infrastructure/persistence/mongodb/MongoConnection.ts` — `MongoClient` + unique indexes; `MongoConnection.fromEnv()` for entry points (`main.ts`, scripts)
 
 ### Pipeline — price history + deal scoring
 
