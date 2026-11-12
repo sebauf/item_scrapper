@@ -52,6 +52,7 @@ export function AddItemModal({ action, title, hint, field, submitLabel, onClose 
           </div>
           <button
             onClick={onClose}
+            aria-label="Fermer"
             className="text-faint hover:text-muted transition-colors p-1 -mr-1 -mt-1"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

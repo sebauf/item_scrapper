@@ -28,6 +28,16 @@ describe('AddKeywordModal', () => {
     expect(screen.getByRole('textbox')).toHaveFocus();
   });
 
+  it('se ferme avec le bouton « Fermer », annoncé comme tel', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<AddKeywordModal onClose={onClose} />);
+
+    await user.click(screen.getByRole('button', { name: 'Fermer' }));
+
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it('soumet le mot-clé saisi', async () => {
     const user = userEvent.setup();
     render(<AddKeywordModal onClose={vi.fn()} />);
