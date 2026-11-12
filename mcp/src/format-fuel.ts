@@ -6,6 +6,8 @@ import type {
   FuelPrice,
   FuelStation,
   FuelStationSearchResult,
+  RestockChanceLevel,
+  ShortageRiskLevel,
 } from './backend/client.js';
 
 /**
@@ -56,13 +58,13 @@ export function fuelLabel(code: FuelCode): string {
   return FUEL_LABELS[code];
 }
 
-const SHORTAGE_LEVELS: Record<'low' | 'elevated' | 'likely', string> = {
+const SHORTAGE_LEVELS: Record<ShortageRiskLevel, string> = {
   low: 'faible',
   elevated: 'élevé',
   likely: 'probable',
 };
 
-const RESTOCK_LEVELS: Record<'unlikely' | 'possible' | 'likely', string> = {
+const RESTOCK_LEVELS: Record<RestockChanceLevel, string> = {
   unlikely: 'peu probable',
   possible: 'possible',
   likely: 'probable',
@@ -87,19 +89,12 @@ export function formatFuelPrice(fuel: FuelPrice): string {
   return `${label} : ${price} (${stale}déclaré ${formatParisDateTime(fuel.updatedAt)})`;
 }
 
-function roadLabel(roadType: 'R' | 'A' | null): string | null {
+function roadLabel(roadType: FuelStation['roadType']): string | null {
   if (roadType === 'A') return 'autoroute';
   return null;
 }
 
-interface StationIdentity {
-  brand: string | null;
-  name: string | null;
-  address: string;
-  postcode: string;
-  city: string;
-  roadType: 'R' | 'A' | null;
-}
+type StationIdentity = Pick<FuelStation, 'brand' | 'name' | 'address' | 'postcode' | 'city' | 'roadType'>;
 
 /** « TotalEnergies — 12 avenue Félix Faure, 69003 Lyon » (le nom OSM ne sert que sans enseigne). */
 function stationTitle(station: StationIdentity): string {

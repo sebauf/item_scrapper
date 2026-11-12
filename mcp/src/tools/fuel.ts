@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { BackendClient } from '../backend/client.js';
+import { FUEL_CODES, FUEL_STATION_SORTS } from '../backend/contract.js';
 import { formatFavoriteStations, formatFuelStationSearch } from '../format-fuel.js';
 import { runTool, text } from './tool-result.js';
 
@@ -11,8 +12,6 @@ import { runTool, text } from './tool-result.js';
  * Les bornes reprennent celles du backend (`fuel/domain/station-search.ts`) :
  * un argument hors bornes est refusé par le schéma, avant tout appel réseau.
  */
-
-const FUEL_CODES = ['gazole', 'e10', 'sp98', 'sp95', 'e85', 'gplc'] as const;
 
 /** Défaut et plafond du backend (`DEFAULT_RADIUS_KM`, `MAX_RADIUS_KM`). */
 const DEFAULT_RADIUS_KM = 10;
@@ -56,7 +55,7 @@ export function registerFuelTools(server: McpServer, backend: BackendClient): vo
           .optional()
           .describe('Ne garder que les stations qui vendent ce carburant (e10 = SP95-E10)'),
         sort: z
-          .enum(['distance', 'price'])
+          .enum(FUEL_STATION_SORTS)
           .optional()
           .describe('Tri : distance (défaut) ou price (exige fuel)'),
         brand: z.string().min(1).max(60).optional().describe('Enseigne, libellé exact (ex. TotalEnergies)'),
