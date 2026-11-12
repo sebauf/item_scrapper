@@ -9,6 +9,7 @@ import type {
   RestockChanceLevel,
   ShortageRiskLevel,
 } from './backend/client.js';
+import { formatParisDateTime } from './format-time.js';
 
 /**
  * Mise en forme des réponses carburant pour un lecteur qui est un modèle.
@@ -17,33 +18,8 @@ import type {
  * backend, en gardant toujours l'identifiant officiel de la station — c'est la
  * clé de add_favorite_station / remove_favorite_station.
  *
- * Les dates sont rendues en **heure de Paris** : le flux officiel est français,
- * et « rupture probable avant 14:30 » n'a de sens pour l'utilisateur que dans
- * son fuseau. Le backend, lui, renvoie de l'UTC.
+ * Les dates sont rendues en **heure de Paris** (cf. `format-time.ts`).
  */
-
-const TIME_ZONE = 'Europe/Paris';
-
-const PARIS_FORMAT = new Intl.DateTimeFormat('fr-FR', {
-  timeZone: TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-});
-
-/** ISO 8601 (UTC) → `2026-11-08 14:30`, heure de Paris. */
-export function formatParisDateTime(iso: string | null): string {
-  if (iso === null) return 'date inconnue';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return 'date inconnue';
-  const parts = Object.fromEntries(
-    PARIS_FORMAT.formatToParts(date).map((part) => [part.type, part.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
-}
 
 const FUEL_LABELS: Record<FuelCode, string> = {
   gazole: 'Gazole',
