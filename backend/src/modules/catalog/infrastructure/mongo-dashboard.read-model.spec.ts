@@ -5,7 +5,8 @@ import {
 } from 'src/modules/keyword/application/ports/keyword-summary.read-model';
 import { TrackedUrlSummaryReadModel } from 'src/modules/product-tracking/application/ports/tracked-url-summary.read-model';
 import { UserId } from 'src/shared/domain/user-id';
-import { MongoDashboardReadModel } from './mongo-dashboard.read-model';
+import { aProductSummary } from '../testing/fakes';
+import { MongoDashboardReadModel, keywordDealBlocks } from './mongo-dashboard.read-model';
 
 const alice = UserId.create('alice@example.com');
 
@@ -124,5 +125,56 @@ describe('MongoDashboardReadModel', () => {
     };
     expect(capture.countFilter).toMatchObject(scope);
     expect(capture.dealsMatch).toMatchObject(scope);
+  });
+});
+
+describe('keywordDealBlocks', () => {
+  const deal = (keyword: string | null, url: string) => aProductSummary({ keyword, url });
+
+  it('ne garde que les mots-clés suivis qui ont des produits au dernier passage', () => {
+    const blocks = keywordDealBlocks(
+      ['lessive', 'café'],
+      [
+        { keyword: 'lessive', productCount: 4 },
+        { keyword: 'retire', productCount: 9 },
+      ],
+      [deal('retire', 'u1')],
+    );
+
+    expect(blocks.map((block) => block.keyword)).toEqual(['lessive']);
+    expect(blocks[0]).toMatchObject({ productCount: 4, totalDeals: 0, deals: [] });
+  });
+
+  it('montre les trois meilleures affaires, dans leur ordre, et compte les autres', () => {
+    const deals = ['u1', 'u2', 'u3', 'u4'].map((url) => deal('lessive', url));
+
+    const [block] = keywordDealBlocks(['lessive'], [{ keyword: 'lessive', productCount: 9 }], deals);
+
+    expect(block.totalDeals).toBe(4);
+    expect(block.deals.map((d) => d.url)).toEqual(['u1', 'u2', 'u3']);
+  });
+
+  it('classe les blocs par nombre d’affaires, puis par nom dans l’ordre français', () => {
+    const blocks = keywordDealBlocks(
+      ['zeste', 'éponge', 'café'],
+      [
+        { keyword: 'zeste', productCount: 1 },
+        { keyword: 'éponge', productCount: 1 },
+        { keyword: 'café', productCount: 1 },
+      ],
+      [deal('zeste', 'u1')],
+    );
+
+    expect(blocks.map((block) => block.keyword)).toEqual(['zeste', 'café', 'éponge']);
+  });
+
+  it('ignore les affaires sans mot-clé (URL suivie à l’unité)', () => {
+    const [block] = keywordDealBlocks(
+      ['lessive'],
+      [{ keyword: 'lessive', productCount: 2 }],
+      [deal(null, 'u1'), deal('lessive', 'u2')],
+    );
+
+    expect(block.deals.map((d) => d.url)).toEqual(['u2']);
   });
 });
