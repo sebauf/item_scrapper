@@ -54,7 +54,6 @@ from pymongo.collection import Collection
 from pymongo.database import Database
 
 from src.clock import naive_utc_now
-from src.fuel.brands import fetch_osm_stations
 from src.fuel.fuels import FUELS
 
 DATASET_URL = (
@@ -333,46 +332,10 @@ def import_stations(
 
 
 if __name__ == "__main__":
-    import os
+    # Point d'entrée du DAG `fuel_prices`, gardé ici pour que l'image du
+    # pipeline et celle d'Airflow n'aient pas à être déployées ensemble. La
+    # tâche elle-même est dans import_job, qui importe ce module : d'où
+    # l'import tardif.
+    from src.fuel.import_job import main
 
-    from src.database import open_database
-    from src.fuel.alerts import FuelAlertConfig, alert_fuel_events
-    from src.fuel.restock_forecast.forecasts import publish_restock_forecasts
-    from src.fuel.shortage_forecast import episodes
-    from src.fuel.shortage_forecast.forecasts import publish_forecasts
-
-    records = fetch_records()
-    try:
-        brands = fetch_osm_stations()
-    except (OSError, ValueError) as error:
-        print(f"brands: OSM export unavailable ({error}), keeping known brands")
-        brands = None
-
-    restock = FuelAlertConfig.from_env(os.environ)
-
-    imported_at = naive_utc_now()
-    with open_database() as db:
-        count = import_stations(db, records, brands, now=imported_at)
-        branded = db["fuel_stations"].count_documents({"brand": {"$ne": None}})
-        print(f"fuel_stations: {count} stations imported ({len(records)} records received)")
-        print(f"brands: {branded}/{count} stations matched to a brand")
-
-        # L'historique des ruptures sert à la prévision : tenu à jour même sans
-        # alerte configurée, pour qu'un modèle activé plus tard ait son passé.
-        try:
-            opened, closed = episodes.record_live(db, imported_at)
-            print(f"fuel_shortages: {opened} rupture(s) en cours, {closed} close(s) à cet import")
-        except Exception as error:  # noqa: BLE001 — les prix sont importés, c'est l'essentiel
-            print(f"fuel_shortages: mise à jour impossible ({error!r})")
-
-        # Risque de rupture à 24 h des stations favorites : publié pour la page
-        # « Mes stations », même sans alerte configurée, puis relu par l'alerte.
-        # Après `record_live` : la prévision lit les ruptures de cet import.
-        risks = publish_forecasts(db, imported_at)
-        # Et, pour les carburants en rupture de ces stations, la chance qu'ils
-        # reviennent dans les 24 h (page « Mes stations » seulement).
-        publish_restock_forecasts(db, imported_at)
-
-        if restock:
-            alert_fuel_events(db, restock, imported_at,
-                              risks if restock.risk_threshold is not None else None)
+    main()
