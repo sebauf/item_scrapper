@@ -29,6 +29,8 @@ from datetime import datetime
 from pymongo import ReplaceOne
 from pymongo.database import Database
 
+from src.fuel.favorites import favorite_station_fuels
+
 COLLECTION = "fuel_shortage_forecasts"
 HORIZON_HOURS = 24
 
@@ -39,19 +41,12 @@ def forecast_id(station_id: str, fuel: str) -> str:
 
 def favorite_pairs(db: Database) -> list[tuple[str, str]]:
     """(station, carburant disponible) des stations favorites d'au moins un
-    utilisateur. Une favorite historique sans `userId` n'appartient à personne
-    (cf. legacy-ownership côté backend) : elle n'est pas prévue."""
-    station_ids = sorted({
-        doc["stationId"]
-        for doc in db["favorite_stations"].find({"userId": {"$exists": True}}, {"stationId": 1})
-        if doc.get("stationId")
+    utilisateur."""
+    return sorted({
+        (station_id, fuel["code"])
+        for station_id, fuel in favorite_station_fuels(db)
+        if fuel.get("available")
     })
-    pairs = set()
-    for station in db["fuel_stations"].find({"_id": {"$in": station_ids}}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            if fuel.get("available"):
-                pairs.add((station["_id"], fuel["code"]))
-    return sorted(pairs)
 
 
 def write_forecasts(
@@ -93,7 +88,9 @@ def publish_forecasts(db: Database, now: datetime) -> dict[tuple[str, str], floa
     des alertes de rupture et de réapprovisionnement, qui n'en dépendent pas.
     """
     try:
-        from src.fuel.shortage_forecast.model import load_model
+        # Importés ici, dans le try : un scikit-learn absent ou cassé ne doit
+        # pas, lui non plus, faire échouer l'import des prix.
+        from src.fuel.shortage_forecast.model import REPORT_THRESHOLD, load_model
         from src.fuel.shortage_forecast.predict import predict_risks
 
         model = load_model(db, now)
@@ -103,10 +100,10 @@ def publish_forecasts(db: Database, now: datetime) -> dict[tuple[str, str], floa
             return None
         risks = predict_risks(db, model, favorite_pairs(db), now)
         write_forecasts(db, risks, now)
-        high = sum(1 for p in risks.values() if p >= 0.5)
+        high = sum(1 for p in risks.values() if p >= REPORT_THRESHOLD)
         print(f"shortage-risk: {len(risks)} couple(s) station favorite × carburant prévu(s), "
-              f"{high} à 50 % ou plus")
+              f"{high} à {REPORT_THRESHOLD * 100:.0f} % ou plus")
         return risks
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001 — une prévision ratée ne prive ni des prix ni des alertes
         print(f"shortage-risk: prévision impossible ({error!r}), prévisions publiées inchangées")
         return None

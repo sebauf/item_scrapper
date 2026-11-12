@@ -29,8 +29,6 @@ export class MongoDashboardReadModel extends DashboardReadModel {
   }
 
   /**
-   * Portage de frontend/src/lib/queries.ts:fetchDashboardData.
-   *
    * Tous les compteurs sont comptés sur le **dernier passage du scrapper**, et
    * pas sur l'historique : afficher « 1300 produits » alors que les grilles
    * n'en montrent que les 900 encore en ligne serait un écart inexplicable
@@ -61,100 +59,12 @@ export class MongoDashboardReadModel extends DashboardReadModel {
       $or: [{ keyword: { $in: trackedKeywords } }, { url: { $in: trackedUrls } }],
     };
 
-    const [productCount, lastUpdateDoc, productCountsRaw, dealsRaw] =
-      await Promise.all([
-        // `items_raw` est unique par (url, jour) : sur une seule journée, un
-        // document = un produit, et countDocuments suffit.
-        this.db
-          .collection('items_raw')
-          .countDocuments(
-            onlyLastScrape({ title: { $ne: '' }, price: { $ne: null }, ...scope }, lastScrapeDay),
-          ),
-        this.db
-          .collection('price_history')
-          .findOne({}, { sort: { updatedAt: -1 }, projection: { updatedAt: 1 } }),
-        this.db
-          .collection('items_raw')
-          .aggregate<{ keyword: string; productCount: number }>([
-            {
-              $match: onlyLastScrape(
-                {
-                  keyword: { $in: trackedKeywords },
-                  title: { $ne: '' },
-                  price: { $ne: null },
-                },
-                lastScrapeDay,
-              ),
-            },
-            { $group: { _id: '$keyword', productCount: { $sum: 1 } } },
-            { $project: { keyword: '$_id', productCount: 1 } },
-          ])
-          .toArray(),
-        // Toutes les bonnes affaires du périmètre, y compris celles des URLs
-        // suivies à l'unité, qui comptent dans le compteur. Le regroupement
-        // par mot-clé, lui, ne garde plus bas que les mots-clés suivis.
-        this.db
-          .collection('items_raw')
-          .aggregate([
-            ...latestPerUrlStages(scope, lastScrapeDay),
-            {
-              $lookup: {
-                from: 'deal_scores',
-                localField: 'url',
-                foreignField: '_id',
-                as: 'score',
-              },
-            },
-            // Jointure interne assumée : seules les bonnes affaires nous
-            // intéressent ici, un produit sans score n'a rien à y faire.
-            { $unwind: '$score' },
-            { $match: { 'score.score': { $gte: DEAL_SCORE_THRESHOLD } } },
-            {
-              $addFields: {
-                dealScore: '$score.score',
-                predictedPrice: '$score.predictedPrice',
-                trendDirection: '$score.trendDirection',
-              },
-            },
-            { $project: { score: 0 } },
-            { $sort: { dealScore: -1 } },
-          ])
-          .toArray(),
-      ]);
-
-    const productCountByKeyword = new Map(
-      productCountsRaw.map((row) => [row.keyword, row.productCount]),
-    );
-
-    const dealsByKeywordMap = new Map<string, ProductSummary[]>();
-    for (const doc of dealsRaw as Document[]) {
-      if (doc.keyword === null || doc.keyword === undefined) continue;
-      const keyword = String(doc.keyword);
-      const bucket = dealsByKeywordMap.get(keyword) ?? [];
-      bucket.push(toProductSummary(doc));
-      dealsByKeywordMap.set(keyword, bucket);
-    }
-
-    // On part des mots-clés ayant des produits — un mot-clé sans bonne affaire
-    // doit apparaître (bloc « aucune affaire aujourd'hui »), pas disparaître.
-    //
-    // Filtré sur les mots-clés suivis, car `items_raw` en sait trop : une URL
-    // suivie à l'unité peut avoir été relevée sous le mot-clé d'un autre
-    // utilisateur, et ce mot-clé n'a pas à avoir de bloc ici. Le compteur ci-dessous et ces blocs viennent
-    // désormais du même ensemble, impossible qu'ils se contredisent.
-    const tracked = new Set(trackedKeywords);
-    const dealsByKeyword: KeywordDeals[] = Array.from(productCountByKeyword.keys())
-      .filter((keyword) => tracked.has(keyword))
-      .map((keyword) => {
-        const deals = dealsByKeywordMap.get(keyword) ?? [];
-        return {
-          keyword,
-          productCount: productCountByKeyword.get(keyword) ?? 0,
-          totalDeals: deals.length,
-          deals: deals.slice(0, DEALS_SHOWN_PER_KEYWORD),
-        };
-      })
-      .sort((a, b) => b.totalDeals - a.totalDeals || a.keyword.localeCompare(b.keyword, 'fr'));
+    const [productCount, lastUpdate, productCounts, deals] = await Promise.all([
+      this.countProducts(scope, lastScrapeDay),
+      this.findLastUpdate(),
+      this.countProductsByKeyword(trackedKeywords, lastScrapeDay),
+      this.findDeals(scope, lastScrapeDay),
+    ]);
 
     return {
       keywordCount: trackedKeywords.length,
@@ -163,9 +73,134 @@ export class MongoDashboardReadModel extends DashboardReadModel {
       // pipeline peut garder le score d'un produit disparu depuis (il ne
       // repasse qu'après le scrape), et ce score ne doit pas gonfler un
       // compteur dont les grilles ne montrent aucune contrepartie.
-      dealCount: dealsRaw.length,
-      lastUpdate: lastUpdateDoc?.updatedAt ? toIso(lastUpdateDoc.updatedAt) : null,
-      dealsByKeyword,
+      dealCount: deals.length,
+      lastUpdate,
+      dealsByKeyword: keywordDealBlocks(trackedKeywords, productCounts, deals),
     };
   }
+
+  /**
+   * `items_raw` est unique par (url, jour) : sur une seule journée, un
+   * document = un produit, et countDocuments suffit.
+   */
+  private countProducts(scope: Document, lastScrapeDay: Date | null): Promise<number> {
+    return this.db
+      .collection('items_raw')
+      .countDocuments(
+        onlyLastScrape({ title: { $ne: '' }, price: { $ne: null }, ...scope }, lastScrapeDay),
+      );
+  }
+
+  /** Dernière exécution du pipeline. */
+  private async findLastUpdate(): Promise<string | null> {
+    const doc = await this.db
+      .collection('price_history')
+      .findOne({}, { sort: { updatedAt: -1 }, projection: { updatedAt: 1 } });
+    return doc?.updatedAt ? toIso(doc.updatedAt) : null;
+  }
+
+  private countProductsByKeyword(
+    trackedKeywords: string[],
+    lastScrapeDay: Date | null,
+  ): Promise<KeywordProductCount[]> {
+    return this.db
+      .collection('items_raw')
+      .aggregate<KeywordProductCount>([
+        {
+          $match: onlyLastScrape(
+            {
+              keyword: { $in: trackedKeywords },
+              title: { $ne: '' },
+              price: { $ne: null },
+            },
+            lastScrapeDay,
+          ),
+        },
+        { $group: { _id: '$keyword', productCount: { $sum: 1 } } },
+        { $project: { keyword: '$_id', productCount: 1 } },
+      ])
+      .toArray();
+  }
+
+  /**
+   * Toutes les bonnes affaires du périmètre, y compris celles des URLs suivies
+   * à l'unité, qui comptent dans le compteur ; de la meilleure à la moins
+   * bonne. Le regroupement par mot-clé, lui, ne garde que les mots-clés suivis.
+   */
+  private async findDeals(scope: Document, lastScrapeDay: Date | null): Promise<ProductSummary[]> {
+    const docs = await this.db
+      .collection('items_raw')
+      .aggregate([
+        ...latestPerUrlStages(scope, lastScrapeDay),
+        {
+          $lookup: {
+            from: 'deal_scores',
+            localField: 'url',
+            foreignField: '_id',
+            as: 'score',
+          },
+        },
+        // Jointure interne assumée : seules les bonnes affaires nous
+        // intéressent ici, un produit sans score n'a rien à y faire.
+        { $unwind: '$score' },
+        { $match: { 'score.score': { $gte: DEAL_SCORE_THRESHOLD } } },
+        {
+          $addFields: {
+            dealScore: '$score.score',
+            predictedPrice: '$score.predictedPrice',
+            trendDirection: '$score.trendDirection',
+          },
+        },
+        { $project: { score: 0 } },
+        { $sort: { dealScore: -1 } },
+      ])
+      .toArray();
+    return docs.map(toProductSummary);
+  }
+}
+
+interface KeywordProductCount {
+  keyword: string;
+  productCount: number;
+}
+
+/**
+ * Les blocs « bonnes affaires » du tableau de bord : un par mot-clé suivi qui
+ * a des produits au dernier passage, ses `DEALS_SHOWN_PER_KEYWORD` meilleures
+ * affaires, les blocs les plus fournis d'abord.
+ *
+ * On part des mots-clés ayant des produits — un mot-clé sans bonne affaire
+ * doit apparaître (bloc « aucune affaire aujourd'hui »), pas disparaître.
+ *
+ * Filtré sur les mots-clés suivis, car `items_raw` en sait trop : une URL
+ * suivie à l'unité peut avoir été relevée sous le mot-clé d'un autre
+ * utilisateur, et ce mot-clé n'a pas à avoir de bloc ici. Le compteur et ces
+ * blocs viennent du même ensemble : impossible qu'ils se contredisent.
+ *
+ * @param deals bonnes affaires, de la meilleure à la moins bonne
+ */
+export function keywordDealBlocks(
+  trackedKeywords: readonly string[],
+  productCounts: readonly KeywordProductCount[],
+  deals: readonly ProductSummary[],
+): KeywordDeals[] {
+  const tracked = new Set(trackedKeywords);
+  const dealsByKeyword = new Map<string, ProductSummary[]>();
+  for (const deal of deals) {
+    if (deal.keyword === null) continue;
+    dealsByKeyword.set(deal.keyword, [...(dealsByKeyword.get(deal.keyword) ?? []), deal]);
+  }
+
+  return productCounts
+    .filter(({ keyword }) => tracked.has(keyword))
+    .map(({ keyword, productCount }) => {
+      const keywordDeals = dealsByKeyword.get(keyword) ?? [];
+      return {
+        keyword,
+        productCount,
+        totalDeals: keywordDeals.length,
+        deals: keywordDeals.slice(0, DEALS_SHOWN_PER_KEYWORD),
+      };
+    })
+    .sort((a, b) => b.totalDeals - a.totalDeals || a.keyword.localeCompare(b.keyword, 'fr'));
 }

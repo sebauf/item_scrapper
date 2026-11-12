@@ -3,7 +3,7 @@ import { useState, useMemo, useTransition } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import type { TrackedUrlSummary } from '@/lib/api';
-import { formatPrice } from '@/lib/format';
+import { formatDate, formatPrice } from '@/lib/format';
 import { deleteTrackedUrl } from '@/app/actions';
 import { AddTrackedUrlModal } from './AddTrackedUrlModal';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -127,7 +127,7 @@ export function TrackedUrlDashboard({ trackedUrls }: { trackedUrls: TrackedUrlSu
                     {t.price && <span className="shrink-0 text-ghost text-xs">·</span>}
                     <p className="text-xs text-faint truncate">
                       {t.lastScrape
-                        ? `Relevé le ${new Date(t.lastScrape).toLocaleDateString('fr-FR')}`
+                        ? `Relevé le ${formatDate(t.lastScrape)}`
                         : 'En attente du prochain scrape'}
                     </p>
                   </div>

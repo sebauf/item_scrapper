@@ -26,6 +26,7 @@ from src.fuel.shortage_forecast.archive import Archive
 from src.fuel.shortage_forecast.features import (
     DAY,
     HORIZON_SECONDS,
+    LONGEST_WINDOW_DAYS,
     History,
     compute_features,
     is_active,
@@ -34,7 +35,15 @@ from src.fuel.shortage_forecast.features import (
 )
 
 DEFAULT_NEGATIVE_RATE = 0.05
+# Couples traités par lot : borne la mémoire du tirage (un tableau par jour
+# et par couple), sans effet sur le résultat.
 _CHUNK = 4000
+
+# Fenêtre des instantanés : chacun doit avoir ses 180 jours de passé dans
+# l'archive, et 400 jours d'instantanés demandent l'année précédente entière
+# plus l'année en cours. Partagée par les deux modèles.
+LOOKBACK_DAYS = LONGEST_WINDOW_DAYS
+TRAINING_DAYS = 400
 
 
 # Un couple dont le prix a bougé dans ce délai est encore vendu à la fin de
@@ -71,6 +80,14 @@ def history_from_archive(archive: Archive) -> History:
     )
 
 
+def training_start(history: History) -> pd.Timestamp:
+    """Premier instant tiré : après `LOOKBACK_DAYS` d'archive, au plus
+    `TRAINING_DAYS` avant sa fin."""
+    covered_from = history.sold["first_at"].min()
+    return max(covered_from + pd.Timedelta(days=LOOKBACK_DAYS),
+               history.as_of - pd.Timedelta(days=TRAINING_DAYS))
+
+
 @dataclass
 class Dataset:
     X: pd.DataFrame
@@ -103,18 +120,10 @@ def sample_snapshots(
 
     kept = []
     for lo in range(0, len(sold), _CHUNK):
-        rows = slice(lo, lo + _CHUNK)
-        b, e = begin[rows], stop[rows]
-        n_days = np.maximum((e - first_day) // DAY - (b - first_day) // DAY + 1, 0)
-        n_days = np.where(e >= b, n_days, 0)
-        if n_days.sum() == 0:
+        rows, t = daily_random_instants(begin[lo:lo + _CHUNK], stop[lo:lo + _CHUNK], first_day, rng)
+        if len(rows) == 0:
             continue
-        idx = np.repeat(np.arange(lo, lo + len(b)), n_days)
-        day0 = first_day + ((b - first_day) // DAY) * DAY
-        offsets = np.concatenate([np.arange(n) for n in n_days])
-        t = np.repeat(day0, n_days) + offsets * DAY + rng.integers(0, DAY, size=len(idx))
-        inside = (t >= np.repeat(b, n_days)) & (t <= np.repeat(e, n_days))
-        idx, t = idx[inside], t[inside]
+        idx = rows + lo
         q = pd.DataFrame({
             "station": sold["station"].to_numpy()[idx],
             "fuel": sold["fuel"].to_numpy()[idx],
@@ -127,6 +136,28 @@ def sample_snapshots(
     if not kept:
         return pd.DataFrame(columns=["station", "fuel", "t", "y"])
     return pd.concat(kept, ignore_index=True)
+
+
+def daily_random_instants(
+    begin: np.ndarray, stop: np.ndarray, first_day: int, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray]:
+    """Un instant au hasard dans chaque journée de chaque intervalle
+    [begin_i, stop_i] (secondes Unix) — la règle de tirage des deux modèles.
+
+    Renvoie (indices i, instants). Les journées partent de `first_day`
+    (minuit UTC) ; un tirage tombé hors de l'intervalle, dans une journée
+    entamée, est écarté : le temps couvert reste échantillonné uniformément.
+    """
+    n_days = np.maximum((stop - first_day) // DAY - (begin - first_day) // DAY + 1, 0)
+    n_days = np.where(stop >= begin, n_days, 0)
+    if n_days.sum() == 0:
+        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)
+    idx = np.repeat(np.arange(len(begin)), n_days)
+    day0 = first_day + ((begin - first_day) // DAY) * DAY
+    offsets = np.concatenate([np.arange(n) for n in n_days])
+    t = np.repeat(day0, n_days) + offsets * DAY + rng.integers(0, DAY, size=len(idx))
+    inside = (t >= begin[idx]) & (t <= stop[idx])
+    return idx[inside], t[inside]
 
 
 def build_dataset(

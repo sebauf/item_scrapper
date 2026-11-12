@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useActionState } from 'react';
-import { saveProfileAction, type ProfileFormState } from '@/app/actions';
+import { saveProfileAction, type FormState } from '@/app/actions';
 import type { FuelAlertRequirement, Profile } from '@/lib/api';
 import { FUEL_CODES, FUEL_LABELS } from '@/lib/fuel';
 
@@ -27,7 +27,7 @@ const MISSING_LABELS: Record<FuelAlertRequirement, string> = {
  * l'alerte recalculé).
  */
 export function ProfileForm({ profile }: { profile: Profile }) {
-  const [state, action, pending] = useActionState<ProfileFormState, FormData>(saveProfileAction, {});
+  const [state, action, pending] = useActionState<FormState, FormData>(saveProfileAction, {});
   const { active, missing } = profile.fuelAlerts;
   const stations = profile.favoriteStationCount;
 

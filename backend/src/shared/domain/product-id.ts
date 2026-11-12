@@ -1,4 +1,4 @@
-import { InvalidProductId } from './catalog.errors';
+import { InvalidInputError } from './domain-error';
 
 const MAX_ENCODED_LENGTH = 2048;
 const BASE64URL_ALPHABET = /^[A-Za-z0-9_-]+$/;
@@ -57,5 +57,13 @@ export class ProductId {
 
   equals(other: ProductId): boolean {
     return this.url === other.url;
+  }
+}
+
+export class InvalidProductId extends InvalidInputError {
+  readonly code = 'INVALID_PRODUCT_ID';
+
+  constructor(reason: string) {
+    super(`Identifiant produit invalide : ${reason}`);
   }
 }

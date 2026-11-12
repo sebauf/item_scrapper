@@ -13,6 +13,7 @@ Dans l'archive, un couple est « vendu » entre son premier et son dernier
 changement de prix ; ici, il l'est s'il figure dans le dernier import. C'est
 la même définition vue à l'instant présent.
 """
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -20,14 +21,17 @@ from pymongo.database import Database
 
 from src.fuel.shortage_forecast import episodes
 from src.fuel.shortage_forecast.archive import department
-from src.fuel.shortage_forecast.features import History, compute_features
+from src.fuel.shortage_forecast.features import LONGEST_WINDOW_DAYS, History, compute_features
 from src.fuel.shortage_forecast.model import ShortageModel
 
-_LOOKBACK_DAYS = 181
+# Plus longue fenêtre des variables, et un jour de marge.
+_LOOKBACK_DAYS = LONGEST_WINDOW_DAYS + 1
 _EPOCH = pd.Timestamp("1970-01-01")
 
 
 def history_from_mongo(db: Database, now: datetime) -> History:
+    """L'historique vu par la prévision en direct : la même forme que
+    `dataset.history_from_archive`, lue dans `fuel_stations` et `fuel_shortages`."""
     sold_rows, price_rows = [], []
     projection = {"fuels.code": 1, "fuels.updatedAt": 1, "postcode": 1, "roadType": 1}
     for station in db["fuel_stations"].find({}, projection):
@@ -59,9 +63,21 @@ def predict_risks(
     db: Database, model: ShortageModel, pairs: list[tuple[str, str]], now: datetime
 ) -> dict[tuple[str, str], float]:
     """Probabilité de rupture dans les 24 h de chaque (station, carburant)."""
+    return predict_pairs(db, model, pairs, now, compute_features)
+
+
+def predict_pairs(
+    db: Database,
+    model: ShortageModel,
+    pairs: list[tuple[str, str]],
+    now: datetime,
+    features: Callable[[History, pd.DataFrame], pd.DataFrame],
+) -> dict[tuple[str, str], float]:
+    """Probabilité prévue par `model` pour chaque couple, à partir des
+    variables que calcule `features` sur l'historique en base."""
     if not pairs:
         return {}
     history = history_from_mongo(db, now)
     queries = pd.DataFrame(pairs, columns=["station", "fuel"]).assign(t=pd.Timestamp(now))
-    risks = model.predict(compute_features(history, queries))
-    return {pair: float(p) for pair, p in zip(pairs, risks)}
+    probabilities = model.predict(features(history, queries))
+    return {pair: float(p) for pair, p in zip(pairs, probabilities)}

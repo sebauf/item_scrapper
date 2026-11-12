@@ -41,7 +41,7 @@ import pandas as pd
 ARCHIVE_URL = "https://donnees.roulez-eco.fr/opendata/annee/{year}"
 REQUEST_TIMEOUT_SECONDS = 300
 
-# Libellés de l'archive → codes de fuel_stations (cf. import_stations.FUELS).
+# Libellés de l'archive → codes de `src.fuel.fuels`.
 FUEL_CODES = {
     "Gazole": "gazole",
     "E10": "e10",
@@ -121,6 +121,35 @@ def paris_to_utc(values: pd.Series) -> pd.Series:
 
 def parse_archive(source) -> Archive:
     """Lit un XML d'archive (chemin ou objet fichier binaire)."""
+    station_rows, shortage_rows, price_rows = _read_rows(source)
+
+    stations = pd.DataFrame(station_rows, columns=["station", "dept", "pop"])
+    stations["pop"] = stations["pop"].where(stations["pop"].isin(["R", "A"]), None)
+
+    prices = pd.DataFrame(price_rows, columns=["station", "fuel", "at"])
+    prices["at"] = paris_to_utc(prices["at"])
+    prices = prices.dropna(subset=["at"])
+
+    shortages = _shortages_frame(shortage_rows)
+    # La période couverte : du premier au dernier changement de prix lu.
+    covered_from = prices["at"].min() if len(prices) else pd.Timestamp.max
+    generated_at = max(
+        prices["at"].max() if len(prices) else pd.Timestamp.min,
+        shortages["start"].max() if len(shortages) else pd.Timestamp.min,
+    )
+    shortages = _stock_shortages_only(shortages, covered_from)
+
+    return Archive(
+        stations=stations.drop_duplicates("station").reset_index(drop=True),
+        shortages=shortages.drop_duplicates(["station", "fuel", "start"]).reset_index(drop=True),
+        prices=prices.reset_index(drop=True),
+        generated_at=pd.Timestamp(generated_at).to_pydatetime(),
+    )
+
+
+def _read_rows(source) -> tuple[list[tuple], list[tuple], list[tuple]]:
+    """Lignes brutes (texte) des stations, ruptures temporaires et
+    changements de prix, lues en flux."""
     station_rows, shortage_rows, price_rows = [], [], []
     for _, element in ET.iterparse(source, events=("end",)):
         if element.tag != "pdv":
@@ -131,51 +160,39 @@ def parse_archive(source) -> Archive:
             fuel = FUEL_CODES.get(child.get("nom") or "")
             if fuel is None:
                 continue
-            if child.tag == "prix":
-                if child.get("maj"):
-                    price_rows.append((station, fuel, child.get("maj")))
-            elif child.tag == "rupture":
-                if (child.get("type") or "temporaire") == "temporaire" and child.get("debut"):
-                    shortage_rows.append((station, fuel, child.get("debut"), child.get("fin") or ""))
+            if child.tag == "prix" and child.get("maj"):
+                price_rows.append((station, fuel, child.get("maj")))
+            elif child.tag == "rupture" and _is_temporary(child) and child.get("debut"):
+                shortage_rows.append((station, fuel, child.get("debut"), child.get("fin") or ""))
         element.clear()
+    return station_rows, shortage_rows, price_rows
 
-    stations = pd.DataFrame(station_rows, columns=["station", "dept", "pop"])
-    stations["pop"] = stations["pop"].where(stations["pop"].isin(["R", "A"]), None)
 
-    prices = pd.DataFrame(price_rows, columns=["station", "fuel", "at"])
-    prices["at"] = paris_to_utc(prices["at"])
-    prices = prices.dropna(subset=["at"])
+def _is_temporary(shortage: ET.Element) -> bool:
+    """Type vide (archives antérieures à 2025) : lu comme temporaire."""
+    return (shortage.get("type") or "temporaire") == "temporaire"
 
-    shortages = pd.DataFrame(shortage_rows, columns=["station", "fuel", "start", "end"])
+
+def _shortages_frame(rows: list[tuple]) -> pd.DataFrame:
+    shortages = pd.DataFrame(rows, columns=["station", "fuel", "start", "end"])
     shortages["start"] = paris_to_utc(shortages["start"])
     shortages["end"] = paris_to_utc(shortages["end"])
     shortages = shortages.dropna(subset=["start"])
-
     # Une fin antérieure au début est une saisie erronée : la rupture reste
     # comptée, mais comme non close.
     shortages.loc[shortages["end"] < shortages["start"], "end"] = pd.NaT
+    return shortages
 
-    # La période couverte : du premier au dernier changement de prix lu.
-    covered_from = prices["at"].min() if len(prices) else pd.Timestamp.max
-    generated_at = max(
-        prices["at"].max() if len(prices) else pd.Timestamp.min,
-        shortages["start"].max() if len(shortages) else pd.Timestamp.min,
-    )
-    # Une rupture de stock dure des heures ou des jours. Au-delà d'un mois,
-    # c'est un retrait de la vente qui ne dit pas son nom (archives sans type)
-    # ou une rupture jamais close par la station : ni l'un ni l'autre ne
-    # renseigne sur le prochain réapprovisionnement.
+
+def _stock_shortages_only(shortages: pd.DataFrame, covered_from: pd.Timestamp) -> pd.DataFrame:
+    """Une rupture de stock dure des heures ou des jours. Au-delà d'un mois,
+    c'est un retrait de la vente qui ne dit pas son nom (archives sans type)
+    ou une rupture jamais close par la station : ni l'un ni l'autre ne
+    renseigne sur le prochain réapprovisionnement."""
     longest = pd.Timedelta(days=MAX_SHORTAGE_DAYS)
     too_long = (shortages["end"] - shortages["start"]) > longest
     stale_open = shortages["end"].isna() & (shortages["start"] < covered_from - longest)
-    shortages = shortages[~too_long & ~stale_open]
-
-    return Archive(
-        stations=stations.drop_duplicates("station").reset_index(drop=True),
-        shortages=shortages.drop_duplicates(["station", "fuel", "start"]).reset_index(drop=True),
-        prices=prices.reset_index(drop=True),
-        generated_at=pd.Timestamp(generated_at).to_pydatetime(),
-    )
+    return shortages[~too_long & ~stale_open]
 
 
 def download_archive(year: int, directory: Path) -> Path:

@@ -23,10 +23,11 @@ prévision échoue (le backend écarte de lui-même ce qui a plus de 2 h).
 """
 from datetime import datetime, timedelta
 
-import pandas as pd
 from pymongo.database import Database
 
+from src.fuel.favorites import favorite_station_fuels
 from src.fuel.restock_forecast.dataset import MAX_SHORTAGE_AGE_SECONDS
+from src.fuel.restock_forecast.features import compute_features
 from src.fuel.shortage_forecast.forecasts import HORIZON_HOURS, write_forecasts
 
 COLLECTION = "fuel_restock_forecasts"
@@ -34,22 +35,20 @@ FIELD = "probability"
 
 
 def shortage_pairs(db: Database, now: datetime) -> list[tuple[str, str]]:
-    """(station, carburant en rupture récente) des stations favorites d'au
-    moins un utilisateur (une favorite historique sans `userId` n'appartient
-    à personne, comme pour la rupture)."""
-    station_ids = sorted({
-        doc["stationId"]
-        for doc in db["favorite_stations"].find({"userId": {"$exists": True}}, {"stationId": 1})
-        if doc.get("stationId")
-    })
+    """(station, carburant en rupture depuis moins de 7 jours) des stations
+    favorites d'au moins un utilisateur."""
     oldest = now - timedelta(seconds=MAX_SHORTAGE_AGE_SECONDS)
-    pairs = set()
-    for station in db["fuel_stations"].find({"_id": {"$in": station_ids}}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            since = fuel.get("shortageSince")
-            if not fuel.get("available") and since is not None and since >= oldest:
-                pairs.add((station["_id"], fuel["code"]))
-    return sorted(pairs)
+    return sorted({
+        (station_id, fuel["code"])
+        for station_id, fuel in favorite_station_fuels(db)
+        if _in_recent_shortage(fuel, oldest)
+    })
+
+
+def _in_recent_shortage(fuel: dict, oldest: datetime) -> bool:
+    """En rupture, depuis une date connue postérieure à `oldest`."""
+    since = fuel.get("shortageSince")
+    return not fuel.get("available") and since is not None and since >= oldest
 
 
 def predict_chances(db: Database, model, pairs: list[tuple[str, str]], now: datetime) -> dict[tuple[str, str], float]:
@@ -59,15 +58,10 @@ def predict_chances(db: Database, model, pairs: list[tuple[str, str]], now: date
     rupture (`history_from_mongo`), après `episodes.record_live` : la rupture
     en cours y figure, ouverte, avec son début déclaré.
     """
-    from src.fuel.restock_forecast.features import compute_features
-    from src.fuel.shortage_forecast.predict import history_from_mongo
+    # Import tardif, pour la même raison que dans `publish_restock_forecasts`.
+    from src.fuel.shortage_forecast.predict import predict_pairs
 
-    if not pairs:
-        return {}
-    history = history_from_mongo(db, now)
-    queries = pd.DataFrame(pairs, columns=["station", "fuel"]).assign(t=pd.Timestamp(now))
-    chances = model.predict(compute_features(history, queries))
-    return {pair: float(p) for pair, p in zip(pairs, chances)}
+    return predict_pairs(db, model, pairs, now, compute_features)
 
 
 def publish_restock_forecasts(db: Database, now: datetime) -> dict[tuple[str, str], float] | None:
@@ -78,8 +72,10 @@ def publish_restock_forecasts(db: Database, now: datetime) -> dict[tuple[str, st
     dépendent pas.
     """
     try:
+        # Importés ici, dans le try : un scikit-learn absent ou cassé ne doit
+        # pas, lui non plus, faire échouer l'import des prix.
         from src.fuel.restock_forecast.model import RESTOCK
-        from src.fuel.shortage_forecast.model import load_model
+        from src.fuel.shortage_forecast.model import REPORT_THRESHOLD, load_model
 
         model = load_model(db, now, RESTOCK)
         if model is None:
@@ -88,10 +84,10 @@ def publish_restock_forecasts(db: Database, now: datetime) -> dict[tuple[str, st
             return None
         chances = predict_chances(db, model, shortage_pairs(db, now), now)
         write_forecasts(db, chances, now, COLLECTION, FIELD)
-        likely = sum(1 for p in chances.values() if p >= 0.5)
+        likely = sum(1 for p in chances.values() if p >= REPORT_THRESHOLD)
         print(f"restock-chance: {len(chances)} rupture(s) de station favorite prévue(s), "
-              f"{likely} à 50 % ou plus de finir dans les {HORIZON_HOURS} h")
+              f"{likely} à {REPORT_THRESHOLD * 100:.0f} % ou plus de finir dans les {HORIZON_HOURS} h")
         return chances
-    except Exception as error:  # noqa: BLE001
+    except Exception as error:  # noqa: BLE001 — une prévision ratée ne prive ni des prix ni des alertes
         print(f"restock-chance: prévision impossible ({error!r}), prévisions publiées inchangées")
         return None

@@ -11,8 +11,6 @@ import { ProductReadModel, ProductSearchResult } from '../ports/product.read-mod
  *
  * Un mot-clé inconnu n'est pas une erreur : le résultat vaut alors 0 partout, et
  * c'est au client de décider quoi en faire (le frontend affiche une 404).
- *
- * Remplace frontend/src/lib/queries.ts:fetchProductsPage.
  */
 @Injectable()
 export class SearchProductsQuery {

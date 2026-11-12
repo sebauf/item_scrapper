@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { BackendClient } from '../backend/client.js';
+import { PRODUCT_SORTS } from '../backend/contract.js';
 import { formatDashboard, formatProductDetail, formatSearchResult } from '../format.js';
 import { runTool, text } from './tool-result.js';
 
@@ -42,7 +43,7 @@ export function registerCatalogTools(server: McpServer, backend: BackendClient):
         minPrice: z.number().nonnegative().optional().describe('Prix minimum'),
         maxPrice: z.number().nonnegative().optional().describe('Prix maximum'),
         sort: z
-          .enum(['deals', 'price_asc', 'price_desc', 'discount'])
+          .enum(PRODUCT_SORTS)
           .optional()
           .describe('Tri : deals (défaut), price_asc, price_desc, discount'),
         page: z.number().int().min(1).optional().describe('Page, à partir de 1'),

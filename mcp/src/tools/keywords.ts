@@ -5,11 +5,11 @@ import { formatKeywordSummaries } from '../format.js';
 import { runTool, text } from './tool-result.js';
 
 /**
- * Outils du contexte Keyword — le seul endroit où l'agent écrit.
+ * Outils du contexte Keyword : lister, suivre et retirer des mots-clés.
  *
- * Les annotations le disent explicitement : `readOnlyHint: false` et, pour le
- * retrait, `destructiveHint: true`. Un client MCP s'en sert pour demander une
- * confirmation avant d'exécuter l'appel.
+ * Les outils d'écriture le disent dans leurs annotations : `readOnlyHint:
+ * false` et, pour le retrait, `destructiveHint: true`. Un client MCP s'en sert
+ * pour demander une confirmation avant d'exécuter l'appel.
  */
 export function registerKeywordTools(server: McpServer, backend: BackendClient): void {
   server.registerTool(

@@ -79,7 +79,7 @@ export class UserProfile {
    * Règle d'activation des alertes de réapprovisionnement : un numéro où les
    * envoyer, au moins un carburant et au moins une station favorite. Liste
    * vide ⇔ l'alerte est active. Même règle que le pipeline
-   * (pipeline/src/fuel/restock_alerts.py, `subscribers`), qui l'applique
+   * (pipeline/src/fuel/alerts/subscribers.py, `load_subscribers`), qui l'applique
    * pour de bon.
    */
   missingForFuelAlerts(favoriteStationCount: number): FuelAlertRequirement[] {

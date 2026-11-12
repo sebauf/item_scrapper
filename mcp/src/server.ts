@@ -28,10 +28,11 @@ Les mots-clés, favoris et URLs suivies sont personnels : tous les outils lisent
 et modifient ceux d'un seul compte utilisateur, fixé par la configuration du
 serveur. Retirer un mot-clé ne le retire pas aux autres utilisateurs.
 
-Le score compare le prix du jour à la moyenne glissante 30 jours *du même
-produit* : un score positif signifie « moins cher que d'habitude ». Il n'y a
-aucune comparaison entre produits différents. Un produit avec moins de
-5 relevés n'a pas de score (dealScore null).
+Le score compare le prix du jour au prix habituel *du même produit* sur les
+30 derniers jours, relevés aberrants écartés : un score positif signifie
+« moins cher que d'habitude ». Il n'y a aucune comparaison entre produits
+différents. Un produit dont l'historique récent est encore trop court n'a pas
+de score (dealScore null).
 
 « BONNE AFFAIRE » est un verdict déjà appliqué par le serveur, il n'y a pas de
 seuil à réinterpréter.

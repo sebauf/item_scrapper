@@ -1,4 +1,4 @@
-import type { components } from './api-types.js';
+import type { components, operations } from './api-types.js';
 
 /**
  * Client HTTP de l'API backend.
@@ -28,6 +28,14 @@ export type FuelStationSearchResult = Schemas['FuelStationSearchResponse'];
 export type FavoriteFuel = Schemas['FavoriteFuelResponse'];
 export type FavoriteStationDetails = Schemas['FavoriteStationDetailsResponse'];
 export type FavoriteStationDetailsList = Schemas['FavoriteStationDetailsListResponse'];
+export type ShortageRiskLevel = NonNullable<FavoriteFuel['shortageOutlook']>['level'];
+export type RestockChanceLevel = NonNullable<FavoriteFuel['restockOutlook']>['level'];
+
+type QueryOf<Operation extends keyof operations> = NonNullable<
+  operations[Operation]['parameters']['query']
+>;
+export type ProductSort = NonNullable<QueryOf<'KeywordProductsController_search'>['sort']>;
+export type FuelStationSort = NonNullable<QueryOf<'FuelStationController_search'>['sort']>;
 
 /** Filtres de `/keywords/{keyword}/products`, déjà normalisés par l'outil MCP. */
 export interface ProductSearchParams {
@@ -35,7 +43,7 @@ export interface ProductSearchParams {
   dealsOnly?: boolean;
   minPrice?: number;
   maxPrice?: number;
-  sort?: 'deals' | 'price_asc' | 'price_desc' | 'discount';
+  sort?: ProductSort;
   page?: number;
 }
 
@@ -45,7 +53,7 @@ export interface FuelStationSearchParams {
   longitude: number;
   radiusKm?: number;
   fuel?: FuelCode;
-  sort?: 'distance' | 'price';
+  sort?: FuelStationSort;
   brand?: string;
 }
 
@@ -79,6 +87,7 @@ export interface BackendClientOptions {
 }
 
 export class BackendClient {
+  private readonly baseUrl: string;
   private readonly api: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
@@ -86,7 +95,8 @@ export class BackendClient {
 
   constructor({ baseUrl, timeoutMs, fetchImpl, authorization }: BackendClientOptions) {
     this.authorization = authorization;
-    this.api = `${baseUrl.replace(/\/+$/, '')}/api/v1`;
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.api = `${this.baseUrl}/api/v1`;
     this.timeoutMs = timeoutMs;
     this.fetchImpl = fetchImpl ?? fetch;
   }
@@ -100,11 +110,7 @@ export class BackendClient {
   }
 
   async trackKeyword(keyword: string): Promise<void> {
-    await this.request<void>('/keywords', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ keyword }),
-    });
+    await this.postJson('/keywords', { keyword });
   }
 
   async untrackKeyword(keyword: string): Promise<void> {
@@ -126,11 +132,7 @@ export class BackendClient {
   }
 
   async trackProductUrl(url: string): Promise<void> {
-    await this.request<void>('/product-urls', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url }),
-    });
+    await this.postJson('/product-urls', { url });
   }
 
   async untrackProductUrl(id: string): Promise<void> {
@@ -142,11 +144,7 @@ export class BackendClient {
   }
 
   async addFavorite(id: string): Promise<void> {
-    await this.request<void>('/favorites', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id }),
-    });
+    await this.postJson('/favorites', { id });
   }
 
   async removeFavorite(id: string): Promise<void> {
@@ -179,11 +177,19 @@ export class BackendClient {
   /** Sonde de disponibilité utilisée par `/health/ready`. */
   async isBackendReady(): Promise<boolean> {
     try {
-      const response = await this.fetchWithTimeout(`${this.api.replace(/\/api\/v1$/, '')}/health/ready`);
+      const response = await this.fetchWithTimeout(`${this.baseUrl}/health/ready`);
       return response.ok;
     } catch {
       return false;
     }
+  }
+
+  private async postJson(path: string, body: unknown): Promise<void> {
+    await this.request<void>(path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {

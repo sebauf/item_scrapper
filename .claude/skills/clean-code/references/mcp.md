@@ -8,8 +8,10 @@ Source de vérité : `mcp/README.md` (catalogue des outils, modèle de sécurit�
 src/config.ts        McpConfig — variables d'environnement validées au démarrage
 src/http.ts          façade HTTP : /mcp, /health/live, /health/ready
 src/server.ts        fabrique du serveur MCP + instructions envoyées au modèle
-src/format*.ts       DTO du backend → texte compact pour le modèle
-src/backend/         client HTTP typé + api-types.ts (généré)
+src/format*.ts       DTO du backend → texte compact pour le modèle ; format-time.ts
+                     pour toute date (heure de Paris)
+src/backend/         client HTTP typé + api-types.ts (généré) + contract.ts (valeurs
+                     admises par le backend, vérifiées contre le contrat)
 src/tools/           définitions d'outils, un fichier par contexte métier
 ```
 
@@ -41,9 +43,18 @@ src/tools/           définitions d'outils, un fichier par contexte métier
   reflètent l'effet réel. Les clients s'en servent pour demander confirmation ;
   une annotation fausse retire ce garde-fou.
 - Schémas d'entrée `zod` avec bornes explicites (`min`, `max`, valeurs par
-  défaut) alignées sur celles du backend.
-- Dates en heure de Paris, prévisions formulées « avant <fin de l'horizon> »
-  (`format-fuel.ts`) — jamais une date de rupture inventée.
+  défaut) alignées sur celles du backend. Une liste de valeurs (carburants,
+  tris) vient de `backend/contract.ts`, où `everyValueOf<Union>()` la confronte
+  au contrat généré : jamais un `z.enum([...])` recopié à la main. Les types
+  de niveaux, de tris ou de champs se dérivent d'`api-types.ts`, ils ne se
+  réécrivent pas.
+- Le texte envoyé au modèle (instructions, descriptions) explique le sens
+  d'une règle du backend ou du pipeline, sans en recopier les seuils : un
+  chiffre recopié diverge sans que rien ne le signale.
+- Dates en heure de Paris, toujours via `format-time.ts` (`formatParisDay`,
+  `formatParisDateTime`) — jamais un `iso.slice(0, 10)`, qui donne le jour
+  UTC. Prévisions formulées « avant <fin de l'horizon> » (`format-fuel.ts`) —
+  jamais une date de rupture inventée.
 
 ## Exceptions assumées propres au MCP
 

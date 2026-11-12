@@ -26,26 +26,33 @@ Une rupture close en moins d'une heure est supprimée, comme elle est écartée
 de l'entraînement (cf. features.MIN_SHORTAGE_SECONDS) : les deux côtés du
 modèle doivent voir le même historique.
 """
+from collections.abc import Iterator
 from datetime import datetime, timedelta
 
 import pandas as pd
 from pymongo import DeleteOne, ReplaceOne, UpdateOne
 from pymongo.database import Database
 
+from src.fuel.import_stations import fuels_by_pair
 from src.fuel.shortage_forecast.archive import Archive
 from src.fuel.shortage_forecast.features import MIN_SHORTAGE_SECONDS
 
 COLLECTION = "fuel_shortages"
 
-# La plus longue fenêtre des variables est de 180 jours.
+# Couvre la plus longue fenêtre des variables (`features.LONGEST_WINDOW_DAYS`),
+# avec de la marge.
 RETENTION_DAYS = 200
+
+# Taille des lots d'écriture et de suppression de la resynchronisation : une
+# archive annuelle compte des dizaines de milliers d'épisodes.
+BATCH_SIZE = 10_000
 
 
 def episode_id(station_id: str, fuel: str, start: datetime) -> str:
     return f"{station_id}:{fuel}:{start:%Y-%m-%dT%H:%M:%S}"
 
 
-def ensure_indexes(db: Database):
+def ensure_indexes(db: Database) -> None:
     db[COLLECTION].create_index([("start", 1)], name="start")
     db[COLLECTION].create_index([("end", 1)], name="end")
 
@@ -58,10 +65,7 @@ def record_live(db: Database, imported_at: datetime) -> tuple[int, int]:
     """
     collection = db[COLLECTION]
     ensure_indexes(db)  # sans effet s'ils existent déjà
-    current: dict[tuple[str, str], dict] = {}
-    for station in db["fuel_stations"].find({}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            current[(station["_id"], fuel["code"])] = fuel
+    current = fuels_by_pair(db)
 
     ops, opened = [], 0
     for (station_id, code), fuel in current.items():
@@ -101,37 +105,51 @@ def sync_from_archive(db: Database, archive: Archive, now: datetime) -> int:
     """
     collection = db[COLLECTION]
     since = now - timedelta(days=RETENTION_DAYS)
-    shortages = archive.shortages[archive.shortages["start"] >= pd.Timestamp(since)]
-    duration = shortages["end"] - shortages["start"]
-    shortages = shortages[shortages["end"].isna() | (duration >= pd.Timedelta(seconds=MIN_SHORTAGE_SECONDS))]
-
     known_ends = {
         doc["_id"]: doc["end"]
         for doc in collection.find({"end": {"$ne": None}}, {"end": 1})
     }
-    ops, ids = [], set()
+    episodes = _archive_episodes(archive, since, known_ends)
+    for batch in _batches(list(episodes.items())):
+        collection.bulk_write(
+            [ReplaceOne({"_id": _id}, doc, upsert=True) for _id, doc in batch], ordered=False
+        )
+
+    stale = [
+        doc["_id"]
+        for doc in collection.find({"start": {"$lte": archive.generated_at}}, {"_id": 1})
+        if doc["_id"] not in episodes
+    ]
+    for batch in _batches(stale):
+        collection.delete_many({"_id": {"$in": batch}})
+    collection.delete_many({"start": {"$lt": since}})
+    return len(episodes)
+
+
+def _archive_episodes(
+    archive: Archive, since: datetime, known_ends: dict[str, datetime]
+) -> dict[str, dict]:
+    """Épisodes de l'archive depuis `since`, sans les ruptures closes trop
+    courtes : `_id` → document."""
+    shortages = archive.shortages[archive.shortages["start"] >= pd.Timestamp(since)]
+    duration = shortages["end"] - shortages["start"]
+    shortages = shortages[shortages["end"].isna() | (duration >= pd.Timedelta(seconds=MIN_SHORTAGE_SECONDS))]
+
+    episodes: dict[str, dict] = {}
     for row in shortages.itertuples(index=False):
         start = row.start.to_pydatetime()
         _id = episode_id(row.station, row.fuel, start)
-        ids.add(_id)
         end = None if pd.isna(row.end) else row.end.to_pydatetime()
-        if end is None:
-            end = known_ends.get(_id)
-        ops.append(ReplaceOne(
-            {"_id": _id},
-            {"stationId": row.station, "fuel": row.fuel, "start": start, "end": end, "source": "archive"},
-            upsert=True,
-        ))
-    for lo in range(0, len(ops), 10_000):
-        collection.bulk_write(ops[lo:lo + 10_000], ordered=False)
+        episodes[_id] = {
+            "stationId": row.station,
+            "fuel": row.fuel,
+            "start": start,
+            "end": end if end is not None else known_ends.get(_id),
+            "source": "archive",
+        }
+    return episodes
 
-    covered_until = archive.generated_at
-    stale = [
-        doc["_id"]
-        for doc in collection.find({"start": {"$lte": covered_until}}, {"_id": 1})
-        if doc["_id"] not in ids
-    ]
-    for lo in range(0, len(stale), 10_000):
-        collection.delete_many({"_id": {"$in": stale[lo:lo + 10_000]}})
-    collection.delete_many({"start": {"$lt": since}})
-    return len(ids)
+
+def _batches(items: list) -> Iterator[list]:
+    for lo in range(0, len(items), BATCH_SIZE):
+        yield items[lo:lo + BATCH_SIZE]

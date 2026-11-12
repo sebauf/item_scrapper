@@ -1,7 +1,7 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
 import { ProductReadModel } from '../../catalog/application/ports/product.read-model';
-import { ProductId } from '../../catalog/domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { aProductDetail, FakeProductReadModel } from '../../catalog/testing/fakes';
 import { TrackProductUrlCommand } from '../../product-tracking/application/commands/track-product-url.command';
 import { TrackedUrlQuota } from '../../product-tracking/domain/tracked-url-quota';

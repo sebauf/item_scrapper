@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatDashboard,
+  formatDay,
   formatFavorites,
   formatHistory,
   formatKeywordSummaries,
@@ -176,5 +177,15 @@ describe('formatDashboard', () => {
 
     assert.match(text, /Aucune bonne affaire à signaler/);
     assert.match(text, /Dernière mise à jour du pipeline : jamais/);
+  });
+});
+
+describe('formatDay', () => {
+  it('date un relevé du jour de Paris, même passé minuit à Paris et pas en UTC', () => {
+    assert.equal(formatDay('2026-08-07T22:30:00.000Z'), '2026-08-08');
+  });
+
+  it('dit « jamais » faute de date', () => {
+    assert.equal(formatDay(null), 'jamais');
   });
 });

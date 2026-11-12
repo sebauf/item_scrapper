@@ -1,6 +1,6 @@
 import { NestFastifyApplication } from '@nestjs/platform-fastify';
 import { ALICE, BOB, authAs, closeApp, createTestApp, jsonOf } from 'src/testing/http';
-import { ProductId } from '../../catalog/domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { TrackProductUrlCommand } from '../application/commands/track-product-url.command';
 import { UntrackProductUrlCommand } from '../application/commands/untrack-product-url.command';
 import { ListTrackedUrlSummariesQuery } from '../application/queries/list-tracked-url-summaries.query';

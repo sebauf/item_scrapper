@@ -37,9 +37,13 @@ from __future__ import annotations
 import argparse
 import json
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from typing import Literal
 
 from pymongo.database import Database
+
+from src.database import open_database
 
 FIELDS = (
     "keyword",
@@ -60,22 +64,28 @@ FIELDS = (
 MIN_DETAILS_READ_PCT = 50.0
 # Pas de jugement sur la lecture avec moins de fiches diagnostiquées.
 MIN_DIAGNOSED_PAGES = 10
-TOP_LABELS = 20
+MAX_TOP_LABELS = 20
 
 # Taux strict sous cette fraction du plus petit plafond (EAN ou lot) : le
 # facteur limitant n'est plus une moitié de la clé mais leur croisement.
 CROSSING_RATIO = 0.8
 
-STRICT_RESOLVED = 60.0
-STRICT_PARTIAL = 25.0
-MAX_EXAMPLES = 5
+# Grille de `docs/spike-jsonld-amazon.md` §5, appliquée à la clé stricte (cf.
+# la docstring du module).
+STRICT_RESOLVED_PCT = 60.0
+STRICT_PARTIAL_PCT = 25.0
+MAX_SHARED_EAN_EXAMPLES = 5
 TRACKED_URL_LABEL = "(URL suivie)"
 
+# `fresh` : seules les offres relues au dernier passage, comme à l'écran ;
+# `all` : y compris celles que le dernier passage n'a pas revues.
+Scope = Literal["fresh", "all"]
 
-def load_offers(db: Database, shop: str = "amazon", fresh_only: bool = True) -> list[dict]:
+
+def load_offers(db: Database, shop: str = "amazon", scope: Scope = "fresh") -> list[dict]:
     """Offres de `shop` encore en vente.
 
-    `fresh_only` applique la règle de fraîcheur des écrans : seules comptent
+    `scope="fresh"` applique la règle de fraîcheur des écrans : seules comptent
     les offres relues au dernier passage du scrapper pour cette boutique. Une
     fiche que le dernier passage n'a pas revue n'est pas visible dans
     l'application ; la compter fausserait la mesure de ce qui sera comparable.
@@ -84,7 +94,7 @@ def load_offers(db: Database, shop: str = "amazon", fresh_only: bool = True) -> 
     projection = {name: 1 for name in FIELDS}
     collection = db["price_history"]
 
-    if fresh_only:
+    if scope == "fresh":
         latest = collection.find_one(match, sort=[("lastSeen", -1)], projection={"lastSeen": 1})
         if latest is None or latest.get("lastSeen") is None:
             return []
@@ -154,10 +164,11 @@ def limiting_factor(rates: dict[str, float]) -> str:
     conditionnement — « Nombre d'articles », ou la clé (EAN, contenu total).
     """
     ean, pack = rates["ean"], rates["packSize"]
-    if ean < STRICT_PARTIAL and pack < STRICT_PARTIAL:
+    ean_is_limiting = f"l'EAN ({ean:.1f} % des offres) ; le nombre d'unités est établi pour {pack:.1f} %"
+    if ean < STRICT_PARTIAL_PCT and pack < STRICT_PARTIAL_PCT:
         return f"EAN ({ean:.1f} %) et nombre d'unités ({pack:.1f} %) manquent tous deux"
-    if ean < STRICT_PARTIAL:
-        return f"l'EAN ({ean:.1f} % des offres) ; le nombre d'unités est établi pour {pack:.1f} %"
+    if ean < STRICT_PARTIAL_PCT:
+        return ean_is_limiting
     # Chaque moitié plafonne le taux strict. S'il reste nettement sous les deux
     # plafonds, c'est que l'EAN et le lot tombent rarement sur les mêmes offres.
     if rates["strict"] < CROSSING_RATIO * min(ean, pack):
@@ -167,22 +178,22 @@ def limiting_factor(rates: dict[str, float]) -> str:
             f"le nombre d'unités ({pack:.1f} %) ; {rates['ean_without_pack']:.1f} % des offres ont "
             "un EAN sans lot établi"
         )
-    return f"l'EAN ({ean:.1f} % des offres) ; le nombre d'unités est établi pour {pack:.1f} %"
+    return ean_is_limiting
 
 
 def _verdict(rates: dict[str, float], total: int) -> str:
     if total == 0:
         return "aucune offre — rien à mesurer"
     strict = rates["strict"]
-    if strict >= STRICT_RESOLVED:
+    if strict >= STRICT_RESOLVED_PCT:
         return "résolu : comparaison stricte sur EAN + lot pour l'essentiel du catalogue"
     factor = limiting_factor(rates)
-    if strict >= STRICT_PARTIAL:
+    if strict >= STRICT_PARTIAL_PCT:
         return (
             "partiel : cascade complète nécessaire (EAN + lot, puis attributs validés) — "
             f"facteur limitant : {factor}"
         )
-    if rates["ean"] < STRICT_PARTIAL:
+    if rates["ean"] < STRICT_PARTIAL_PCT:
         # Seul cas où la conclusion historique tient : l'EAN lui-même manque.
         return (
             f"insuffisant, faute d'EAN — facteur limitant : {factor}. L'identité devra venir "
@@ -202,14 +213,9 @@ def _shared_ean_groups(offers: list[dict]) -> tuple[dict[str, int], list[SharedE
     deux fiches Amazon portent le même EAN avec des nombres d'unités
     différents, une comparaison sur l'EAN seul se tromperait déjà ici.
     """
-    by_ean: dict[str, list[dict]] = defaultdict(list)
-    for offer in offers:
-        if _has(offer, "ean"):
-            by_ean[offer["ean"]].append(offer)
-
     groups = {"total": 0, "lots_differents": 0, "lot_inconnu": 0, "meme_lot": 0}
     examples: list[SharedEanExample] = []
-    for ean, members in sorted(by_ean.items()):
+    for ean, members in sorted(_offers_by_ean(offers).items()):
         if len(members) < 2:
             continue
         groups["total"] += 1
@@ -218,28 +224,50 @@ def _shared_ean_groups(offers: list[dict]) -> tuple[dict[str, int], list[SharedE
             groups["lot_inconnu"] += 1
         elif len(set(packs)) > 1:
             groups["lots_differents"] += 1
-            if len(examples) < MAX_EXAMPLES:
-                examples.append(
-                    SharedEanExample(
-                        ean=ean,
-                        offers=[
-                            {
-                                "url": member["_id"],
-                                "title": member.get("title"),
-                                "packSize": member.get("packSize"),
-                            }
-                            for member in members
-                        ],
-                    )
-                )
+            if len(examples) < MAX_SHARED_EAN_EXAMPLES:
+                examples.append(_shared_ean_example(ean, members))
         else:
             groups["meme_lot"] += 1
     return groups, examples
 
 
+def _offers_by_ean(offers: list[dict]) -> dict[str, list[dict]]:
+    by_ean: dict[str, list[dict]] = defaultdict(list)
+    for offer in offers:
+        if _has(offer, "ean"):
+            by_ean[offer["ean"]].append(offer)
+    return by_ean
+
+
+def _shared_ean_example(ean: str, members: list[dict]) -> SharedEanExample:
+    return SharedEanExample(
+        ean=ean,
+        offers=[
+            {"url": member["_id"], "title": member.get("title"), "packSize": member.get("packSize")}
+            for member in members
+        ],
+    )
+
+
 def summarize(offers: list[dict]) -> CoverageSummary:
     total = len(offers)
-    count = lambda predicate: sum(1 for offer in offers if predicate(offer))  # noqa: E731
+    counts = _identity_counts(offers)
+    rates = {name: _pct(value, total) for name, value in counts.items()}
+    groups, examples = _shared_ean_groups(offers)
+    return CoverageSummary(
+        offers=total,
+        counts=counts,
+        rates=rates,
+        verdict=_verdict(rates, total),
+        by_keyword=_coverage_by_keyword(offers),
+        shared_ean_groups=groups,
+        shared_ean_examples=examples,
+    )
+
+
+def _identity_counts(offers: list[dict]) -> dict[str, int]:
+    def count(predicate: Callable[[dict], bool]) -> int:
+        return sum(1 for offer in offers if predicate(offer))
 
     counts = {
         "ean": count(lambda o: _has(o, "ean")),
@@ -254,13 +282,16 @@ def summarize(offers: list[dict]) -> CoverageSummary:
         "ean_without_pack": count(lambda o: _has(o, "ean") and not _has(o, "packSize")),
         "by_attributes": count(_by_attributes),
     }
-    counts["not_comparable"] = total - counts["strict"] - counts["by_attributes"]
-    rates = {name: _pct(value, total) for name, value in counts.items()}
+    counts["not_comparable"] = len(offers) - counts["strict"] - counts["by_attributes"]
+    return counts
 
+
+def _coverage_by_keyword(offers: list[dict]) -> list[KeywordCoverage]:
+    """Du mot-clé le plus fourni au moins fourni."""
     per_keyword: dict[str, list[dict]] = defaultdict(list)
     for offer in offers:
         per_keyword[offer.get("keyword") or TRACKED_URL_LABEL].append(offer)
-    by_keyword = [
+    return [
         KeywordCoverage(
             keyword=keyword,
             offers=len(members),
@@ -269,17 +300,6 @@ def summarize(offers: list[dict]) -> CoverageSummary:
         )
         for keyword, members in sorted(per_keyword.items(), key=lambda item: -len(item[1]))
     ]
-
-    groups, examples = _shared_ean_groups(offers)
-    return CoverageSummary(
-        offers=total,
-        counts=counts,
-        rates=rates,
-        verdict=_verdict(rates, total),
-        by_keyword=by_keyword,
-        shared_ean_groups=groups,
-        shared_ean_examples=examples,
-    )
 
 
 def load_scrape_diagnostics(db: Database, shop: str = "amazon") -> list[dict]:
@@ -332,7 +352,7 @@ def summarize_diagnostics(rows: list[dict]) -> ExtractionDiagnostics:
         declared_pack=sum(1 for t in traces if t.get("declaredPackSize") is not None),
         pack_issues=dict(issues),
         containers=dict(containers.most_common()),
-        top_labels=labels.most_common(TOP_LABELS),
+        top_labels=labels.most_common(MAX_TOP_LABELS),
     )
 
 
@@ -348,51 +368,53 @@ class Report:
 def assess(coverage: CoverageSummary, diagnostics: ExtractionDiagnostics) -> Report:
     """Verdict final : celui de la grille, sauf si les données le rendent faux.
 
-    Chaque avertissement nomme une cause et son remède. Les deux premiers
+    Chaque avertissement nomme une cause et son remède. Ceux sur la lecture
     rendent le verdict non concluant : ils disent que la mesure porte sur un
     défaut de collecte, pas sur l'enseigne.
     """
-    warnings: list[str] = []
-    conclusive = coverage.offers > 0
+    extraction_warning = _extraction_warning(diagnostics)
+    unit_measure_warning = _unit_measure_warning(coverage)
+    conclusive = coverage.offers > 0 and extraction_warning is None
+    return Report(
+        coverage=coverage,
+        diagnostics=diagnostics,
+        verdict=coverage.verdict if conclusive else "non concluant — voir les avertissements",
+        conclusive=conclusive,
+        warnings=[w for w in (extraction_warning, unit_measure_warning) if w is not None],
+    )
 
+
+def _extraction_warning(diagnostics: ExtractionDiagnostics) -> str | None:
+    """La lecture des fiches est-elle trop en panne pour juger l'enseigne ?"""
     if diagnostics.pages > 0 and diagnostics.diagnosed == 0:
-        conclusive = False
-        warnings.append(
+        return (
             "Aucune trace d'extraction au dernier passage : le scrapper déployé est antérieur "
             "au diagnostic. Impossible de dire si une identité manquante est absente de la "
             "fiche ou non lue. Attendre un passage du scrapper à jour."
         )
-    elif diagnostics.diagnosed >= MIN_DIAGNOSED_PAGES:
-        read_pct = _pct(diagnostics.details_read, diagnostics.diagnosed)
-        if read_pct < MIN_DETAILS_READ_PCT:
-            conclusive = False
-            warnings.append(
-                f"Caractéristiques lues sur {read_pct:.1f} % des fiches seulement : la couverture "
-                "d'EAN mesure la panne de lecture, pas ce qu'Amazon publie. "
-                f"{diagnostics.unread_but_ean_visible} fiche(s) affichaient « EAN » sans qu'il soit "
-                "lu (sélecteurs à corriger) ; "
-                f"{diagnostics.unread_no_known_container} n'avaient aucun conteneur connu "
-                "(mise en page inconnue)."
-            )
+    if diagnostics.diagnosed < MIN_DIAGNOSED_PAGES:
+        return None
+    read_pct = _pct(diagnostics.details_read, diagnostics.diagnosed)
+    if read_pct >= MIN_DETAILS_READ_PCT:
+        return None
+    return (
+        f"Caractéristiques lues sur {read_pct:.1f} % des fiches seulement : la couverture "
+        "d'EAN mesure la panne de lecture, pas ce qu'Amazon publie. "
+        f"{diagnostics.unread_but_ean_visible} fiche(s) affichaient « EAN » sans qu'il soit "
+        "lu (sélecteurs à corriger) ; "
+        f"{diagnostics.unread_no_known_container} n'avaient aucun conteneur connu "
+        "(mise en page inconnue)."
+    )
 
-    if (
-        coverage.offers > 0
-        and coverage.counts["unitQuantity"] == 0
-        and coverage.counts["unitDoses"] == 0
-    ):
-        warnings.append(
-            "Aucune contenance ni dose par unité : les relevés sont antérieurs à la séparation "
-            "unité / total. Lancer la migration reparseQuantities puis le refine, ou attendre "
-            "le passage suivant du scrapper à jour."
-        )
 
-    verdict = coverage.verdict if conclusive else "non concluant — voir les avertissements"
-    return Report(
-        coverage=coverage,
-        diagnostics=diagnostics,
-        verdict=verdict,
-        conclusive=conclusive,
-        warnings=warnings,
+def _unit_measure_warning(coverage: CoverageSummary) -> str | None:
+    """Des relevés antérieurs à la séparation unité / total faussent les mesures unitaires."""
+    if coverage.offers == 0 or coverage.counts["unitQuantity"] or coverage.counts["unitDoses"]:
+        return None
+    return (
+        "Aucune contenance ni dose par unité : les relevés sont antérieurs à la séparation "
+        "unité / total. Lancer la migration reparseQuantities puis le refine, ou attendre "
+        "le passage suivant du scrapper à jour."
     )
 
 
@@ -425,19 +447,36 @@ def _format_diagnostics(d: ExtractionDiagnostics) -> list[str]:
     return lines
 
 
-def format_report(report: Report, shop: str, fresh_only: bool) -> str:
+def format_report(report: Report, shop: str, scope: Scope) -> str:
     summary = report.coverage
-    n = summary.offers
-    scope = "relues au dernier passage" if fresh_only else "toutes, relues ou non"
-    lines = [f"=== Couverture d'identité — {shop}, offres en vente {scope} : {n} ===", ""]
-    if n == 0:
+    scope_label = "relues au dernier passage" if scope == "fresh" else "toutes, relues ou non"
+    lines = [f"=== Couverture d'identité — {shop}, offres en vente {scope_label} : {summary.offers} ===", ""]
+    if summary.offers == 0:
         lines.append("Aucune offre : base vide, ou boutique inconnue.")
         return "\n".join(lines)
 
+    lines += [
+        *_format_identity_counts(summary),
+        "",
+        f"Verdict (clé stricte) : {report.verdict}",
+        "② = charge de validation humaine à prévoir ; jamais affiché sans elle.",
+        "",
+        *_format_by_keyword(summary),
+        "",
+        *_format_shared_eans(summary, shop),
+        "",
+        *_format_diagnostics(report.diagnostics),
+    ]
+    for warning in report.warnings:
+        lines += ["", f"⚠ {warning}"]
+    return "\n".join(lines)
+
+
+def _format_identity_counts(summary: CoverageSummary) -> list[str]:
     def row(label: str, key: str) -> str:
         return f"{label:<52}{summary.counts[key]:>6}   {summary.rates[key]:>5.1f} %"
 
-    lines += [
+    return [
         row("EAN vérifié", "ean"),
         row("Marque", "brand"),
         row("Référence fabricant", "mpn"),
@@ -451,21 +490,21 @@ def format_report(report: Report, shop: str, fresh_only: bool) -> str:
         row("   EAN mais lot non établi — perdu pour le strict", "ean_without_pack"),
         row("② Sans EAN : marque + lot + mesure unitaire", "by_attributes"),
         row("③ Non comparable", "not_comparable"),
-        "",
-        f"Verdict (clé stricte) : {report.verdict}",
-        "② = charge de validation humaine à prévoir ; jamais affiché sans elle.",
-        "",
-        "Par mot-clé :",
-        f"  {'mot-clé':<34}{'offres':>7}{'EAN':>9}{'strict':>9}",
     ]
+
+
+def _format_by_keyword(summary: CoverageSummary) -> list[str]:
+    lines = ["Par mot-clé :", f"  {'mot-clé':<34}{'offres':>7}{'EAN':>9}{'strict':>9}"]
     for item in summary.by_keyword:
         lines.append(
             f"  {item.keyword[:34]:<34}{item.offers:>7}{item.ean_pct:>8.1f}%{item.strict_pct:>8.1f}%"
         )
+    return lines
 
+
+def _format_shared_eans(summary: CoverageSummary, shop: str) -> list[str]:
     groups = summary.shared_ean_groups
-    lines += [
-        "",
+    lines = [
         f"EAN portés par plusieurs offres de {shop} : {groups.get('total', 0)}",
         f"  même nombre d'unités        : {groups.get('meme_lot', 0)}",
         f"  nombres d'unités différents : {groups.get('lots_differents', 0)}"
@@ -476,11 +515,7 @@ def format_report(report: Report, shop: str, fresh_only: bool) -> str:
         lines.append(f"  EAN {example.ean}")
         for offer in example.offers:
             lines.append(f"    ×{offer['packSize']}  {(offer['title'] or '')[:70]}  {offer['url']}")
-
-    lines += ["", *_format_diagnostics(report.diagnostics)]
-    for warning in report.warnings:
-        lines += ["", f"⚠ {warning}"]
-    return "\n".join(lines)
+    return lines
 
 
 def main() -> None:
@@ -490,23 +525,16 @@ def main() -> None:
     parser.add_argument("--json", action="store_true", help="sortie JSON")
     args = parser.parse_args()
 
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-
-    client = MongoClient(MONGODB_URI)
-    try:
-        db = client[DB_NAME]
-        offers = load_offers(db, shop=args.shop, fresh_only=not args.all)
+    scope: Scope = "all" if args.all else "fresh"
+    with open_database() as db:
+        offers = load_offers(db, shop=args.shop, scope=scope)
         traces = load_scrape_diagnostics(db, shop=args.shop)
-    finally:
-        client.close()
 
     report = assess(summarize(offers), summarize_diagnostics(traces))
     if args.json:
         print(json.dumps(asdict(report), ensure_ascii=False, indent=2, default=str))
     else:
-        print(format_report(report, shop=args.shop, fresh_only=not args.all))
+        print(format_report(report, shop=args.shop, scope=scope))
 
 
 if __name__ == "__main__":

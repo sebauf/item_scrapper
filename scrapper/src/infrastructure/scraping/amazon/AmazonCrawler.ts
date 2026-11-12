@@ -3,14 +3,33 @@ import type { IProductRepository } from '../../../domain/product/IProductReposit
 import type { IShopScraper } from '../../../application/ports/IShopScraper.js';
 import type { Keyword } from '../../../domain/keyword/Keyword.js';
 import type { TrackedUrl } from '../../../domain/trackedUrl/TrackedUrl.js';
-import { amazonSearchHandler } from './AmazonSearchHandler.js';
+import { SEARCH_LABEL, amazonSearchHandler, searchUrl } from './AmazonSearchHandler.js';
 import { createAmazonProductHandler } from './AmazonProductHandler.js';
-import { AMAZON_BROWSER_POOL_OPTIONS, requestFrenchPages } from './AmazonBrowserLocale.js';
+import { AMAZON_CRAWLER_OPTIONS } from './AmazonCrawlerOptions.js';
 
+/**
+ * Budget de pages d'une exécution, et plafond des relectures d'un mot-clé.
+ *
+ * Les deux voyagent avec la règle de fraîcheur du backend
+ * (backend/src/shared/infrastructure/mongo/last-scrape.ts) : les écrans
+ * masquent ce que le dernier passage n'a pas relu. Le budget doit donc
+ * couvrir tout le catalogue à chaque exécution, et un mot-clé de plus de
+ * `KNOWN_PRODUCTS_LIMIT_PER_KEYWORD` produits verrait disparaître ceux qui ne
+ * sont pas relus. Les quotas par utilisateur du backend
+ * (`MAX_KEYWORDS_PER_USER`, ~155 requêtes par mot-clé au pire : ce plafond +
+ * 5 pages de recherche) se calculent sur le budget.
+ */
+export const DEFAULT_MAX_REQUESTS_PER_CRAWL = 1000;
 const KNOWN_PRODUCTS_LIMIT_PER_KEYWORD = 150;
 
+/** Deux onglets à la fois au plus, avec l'allure de `AMAZON_CRAWLER_OPTIONS`. */
+const MAX_CONCURRENCY = 2;
+
 export class AmazonCrawler implements IShopScraper {
-  constructor(private readonly productRepository: IProductRepository) {}
+  constructor(
+    private readonly productRepository: IProductRepository,
+    private readonly maxRequestsPerCrawl: number = DEFAULT_MAX_REQUESTS_PER_CRAWL,
+  ) {}
 
   async scrape(keywords: readonly Keyword[], trackedUrls: readonly TrackedUrl[]): Promise<void> {
     const crawler = this.buildCrawler();
@@ -24,56 +43,28 @@ export class AmazonCrawler implements IShopScraper {
 
   private buildCrawler(): PlaywrightCrawler {
     const router = createPlaywrightRouter();
-    router.addHandler('SEARCH', amazonSearchHandler);
+    router.addHandler(SEARCH_LABEL, amazonSearchHandler);
+    // Toutes les fiches : résultats de recherche, produits connus, URLs
+    // suivies et déclinaisons.
     router.addDefaultHandler(createAmazonProductHandler(this.productRepository));
 
     return new PlaywrightCrawler({
-      // Le budget doit couvrir tout le catalogue à chaque exécution : les
-      // écrans masquent désormais les produits que le dernier passage n'a pas
-      // rafraîchis (cf. backend/src/shared/infrastructure/mongo/last-scrape.ts).
-      // Un budget trop court ferait disparaître des fiches bien vivantes,
-      // simplement pas relues ce jour-là.
-      maxRequestsPerCrawl: parseInt(process.env.MAX_REQUESTS_PER_CRAWL ?? '1000', 10),
-      maxConcurrency: 2,
-      maxRequestsPerMinute: 10,
+      ...AMAZON_CRAWLER_OPTIONS,
+      maxRequestsPerCrawl: this.maxRequestsPerCrawl,
+      maxConcurrency: MAX_CONCURRENCY,
       requestHandler: router,
-      useSessionPool: true,
-      sessionPoolOptions: {
-        maxPoolSize: 10,
-        sessionOptions: { maxUsageCount: 50, maxErrorScore: 3 },
-      },
-      // Fiches en français : sans cela, amazon.fr sert de l'anglais à
-      // l'empreinte en-US par défaut de Crawlee (cf. AmazonBrowserLocale).
-      browserPoolOptions: AMAZON_BROWSER_POOL_OPTIONS,
-      preNavigationHooks: [
-        requestFrenchPages,
-        async ({ page }) => {
-          await page.addInitScript(() => {
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-          });
-        },
-      ],
-      launchContext: {
-        launchOptions: {
-          headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-blink-features=AutomationControlled',
-          ],
-        },
-      },
     });
   }
 
   private buildSearchRequests(keywords: readonly Keyword[]) {
     return keywords.map((keyword) => ({
-      url: `https://www.amazon.fr/s?k=${encodeURIComponent(keyword)}`,
-      label: 'SEARCH',
+      url: searchUrl(keyword),
+      label: SEARCH_LABEL,
       userData: { keyword },
     }));
   }
 
+  /** Produits déjà connus du mot-clé, les moins récemment relus d'abord. */
   private async buildKnownProductRequests(keywords: readonly Keyword[]) {
     const perKeyword = await Promise.all(
       keywords.map(async (keyword) => {

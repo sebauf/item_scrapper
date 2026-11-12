@@ -9,6 +9,7 @@ import type {
   ShortageOutlook,
   ShortageRiskLevel,
 } from './api';
+import { DISPLAY_TIME_ZONE } from './format';
 
 /**
  * Logique d'affichage de la carte des carburants — tout ce qui se teste sans
@@ -262,13 +263,6 @@ export function priceTiers(
 }
 
 // --- Prévision de rupture (page « Mes stations ») --------------------------------
-
-/**
- * Fuseau des dates affichées. Explicite : la page est rendue côté serveur, dans
- * un Pod réglé en UTC — sans lui, « avant 11 h 30 » voudrait dire 12 h 30 à
- * Paris en hiver.
- */
-const DISPLAY_TIME_ZONE = 'Europe/Paris';
 
 const dayKey = new Intl.DateTimeFormat('fr-FR', {
   timeZone: DISPLAY_TIME_ZONE,

@@ -6,7 +6,10 @@ import type {
   FuelPrice,
   FuelStation,
   FuelStationSearchResult,
+  RestockChanceLevel,
+  ShortageRiskLevel,
 } from './backend/client.js';
+import { formatParisDateTime, formatParisDay } from './format-time.js';
 
 /**
  * Mise en forme des réponses carburant pour un lecteur qui est un modèle.
@@ -15,33 +18,8 @@ import type {
  * backend, en gardant toujours l'identifiant officiel de la station — c'est la
  * clé de add_favorite_station / remove_favorite_station.
  *
- * Les dates sont rendues en **heure de Paris** : le flux officiel est français,
- * et « rupture probable avant 14:30 » n'a de sens pour l'utilisateur que dans
- * son fuseau. Le backend, lui, renvoie de l'UTC.
+ * Les dates sont rendues en **heure de Paris** (cf. `format-time.ts`).
  */
-
-const TIME_ZONE = 'Europe/Paris';
-
-const PARIS_FORMAT = new Intl.DateTimeFormat('fr-FR', {
-  timeZone: TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-});
-
-/** ISO 8601 (UTC) → `2026-11-08 14:30`, heure de Paris. */
-export function formatParisDateTime(iso: string | null): string {
-  if (iso === null) return 'date inconnue';
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return 'date inconnue';
-  const parts = Object.fromEntries(
-    PARIS_FORMAT.formatToParts(date).map((part) => [part.type, part.value]),
-  );
-  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
-}
 
 const FUEL_LABELS: Record<FuelCode, string> = {
   gazole: 'Gazole',
@@ -56,13 +34,13 @@ export function fuelLabel(code: FuelCode): string {
   return FUEL_LABELS[code];
 }
 
-const SHORTAGE_LEVELS: Record<'low' | 'elevated' | 'likely', string> = {
+const SHORTAGE_LEVELS: Record<ShortageRiskLevel, string> = {
   low: 'faible',
   elevated: 'élevé',
   likely: 'probable',
 };
 
-const RESTOCK_LEVELS: Record<'unlikely' | 'possible' | 'likely', string> = {
+const RESTOCK_LEVELS: Record<RestockChanceLevel, string> = {
   unlikely: 'peu probable',
   possible: 'possible',
   likely: 'probable',
@@ -87,19 +65,12 @@ export function formatFuelPrice(fuel: FuelPrice): string {
   return `${label} : ${price} (${stale}déclaré ${formatParisDateTime(fuel.updatedAt)})`;
 }
 
-function roadLabel(roadType: 'R' | 'A' | null): string | null {
+function roadLabel(roadType: FuelStation['roadType']): string | null {
   if (roadType === 'A') return 'autoroute';
   return null;
 }
 
-interface StationIdentity {
-  brand: string | null;
-  name: string | null;
-  address: string;
-  postcode: string;
-  city: string;
-  roadType: 'R' | 'A' | null;
-}
+type StationIdentity = Pick<FuelStation, 'brand' | 'name' | 'address' | 'postcode' | 'city' | 'roadType'>;
 
 /** « TotalEnergies — 12 avenue Félix Faure, 69003 Lyon » (le nom OSM ne sert que sans enseigne). */
 function stationTitle(station: StationIdentity): string {
@@ -181,7 +152,7 @@ export function formatFavoriteFuel(fuel: FavoriteFuel): string {
 }
 
 function formatFavoriteStation(favorite: FavoriteStationDetails): string {
-  const added = `ajoutée le ${formatParisDateTime(favorite.addedAt).slice(0, 10)}`;
+  const added = `ajoutée le ${formatParisDay(favorite.addedAt)}`;
   if (favorite.station === null) {
     return [
       `- Station ${favorite.id} — absente du flux officiel actuellement (${added})`,

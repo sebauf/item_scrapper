@@ -1,13 +1,5 @@
 import { InvalidInputError, ResourceNotFoundError } from 'src/shared/domain/domain-error';
 
-export class InvalidProductId extends InvalidInputError {
-  readonly code = 'INVALID_PRODUCT_ID';
-
-  constructor(reason: string) {
-    super(`Identifiant produit invalide : ${reason}`);
-  }
-}
-
 export class InvalidProductQuery extends InvalidInputError {
   readonly code = 'INVALID_PRODUCT_QUERY';
 }

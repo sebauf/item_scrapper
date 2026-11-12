@@ -26,7 +26,8 @@ npm run start:dev           # http://localhost:3001, docs sur /docs
 src/
 ├── config/            AppConfig — variables d'env validées au démarrage
 ├── shared/
-│   ├── domain/        DomainError et ses 3 familles (400 / 409 / 404)
+│   ├── domain/        DomainError et ses 3 familles (400 / 409 / 404), UserId et
+│   │                  ProductId — objets-valeurs utilisés par plusieurs modules
 │   ├── infrastructure/mongo/   connexion partagée + index requis
 │   └── interface/http/         traduction erreur métier → réponse HTTP
 ├── health/            sondes /health/live et /health/ready
@@ -44,7 +45,7 @@ src/
     ├── fuel/          contexte « carburants » — lit fuel_stations, écrit favorite_stations
     ├── profile/       profil utilisateur — numéro (E.164) et carburants des alertes, écrit user_profiles
     └── catalog/       contexte « produits et prix » — lecture seule
-        ├── domain/            ProductId, ProductQuery (objets-valeurs),
+        ├── domain/            ProductQuery (objet-valeur),
         │                      DealPolicy (le seuil de bonne affaire)
         ├── application/       queries + ports de read model
         ├── infrastructure/    agrégations Mongo + mapper document → DTO

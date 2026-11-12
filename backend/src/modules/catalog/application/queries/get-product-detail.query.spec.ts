@@ -1,5 +1,6 @@
-import { InvalidProductId, ProductNotFound } from '../../domain/catalog.errors';
-import { ProductId } from '../../domain/product-id';
+import { InvalidProductId } from 'src/shared/domain/product-id';
+import { ProductNotFound } from '../../domain/catalog.errors';
+import { ProductId } from 'src/shared/domain/product-id';
 import { aProductDetail, FakeProductReadModel } from '../../testing/fakes';
 import { GetProductDetailQuery } from './get-product-detail.query';
 

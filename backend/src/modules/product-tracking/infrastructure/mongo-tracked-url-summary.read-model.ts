@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Db } from 'mongodb';
 import { UserId } from 'src/shared/domain/user-id';
 import { MONGO_DB } from 'src/shared/infrastructure/mongo/mongo.tokens';
-import { ProductId } from '../../catalog/domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import {
   TrackedUrlSummary,
   TrackedUrlSummaryReadModel,

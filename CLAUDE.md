@@ -158,27 +158,33 @@ Data flow: `main.ts` → seed default keywords → `ScrapeProductsUseCase` → `
 - `src/main.ts` — entry point: MongoDB connection, use-case wiring, default keywords
 - `src/application/ScrapeProductsUseCase.ts` — fetches enabled keywords, delegates to scraper
 - `src/application/SeedKeywordsUseCase.ts` — seeds missing keywords into DB
-- `src/infrastructure/scraping/amazon/AmazonCrawler.ts` — configures `PlaywrightCrawler`, routes search vs product pages
+- `src/infrastructure/scraping/amazon/AmazonCrawler.ts` — builds the request queue (search, known products, tracked URLs), routes search vs product pages; owns `DEFAULT_MAX_REQUESTS_PER_CRAWL` and `KNOWN_PRODUCTS_LIMIT_PER_KEYWORD`
+- `src/infrastructure/scraping/amazon/AmazonCrawlerOptions.ts` — pace, session pool, anti-detection, French pages: `AMAZON_CRAWLER_OPTIONS`, shared by the crawler **and the scripts** (a spike crawled differently would measure block pages)
+- `src/infrastructure/scraping/amazon/AmazonUrl.ts` — URL rules (pur) : ASIN, canonical product URL, block pages, dead-product redirect, variant URLs
 - `src/infrastructure/scraping/amazon/AmazonSearchHandler.ts` — enqueues product URLs from search results
-- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — extracts title, price, images from a product page; checks availability **before** the price
+- `src/infrastructure/scraping/amazon/AmazonProductHandler.ts` — orchestrates a product page: dead redirect → title → availability **before** the price → record → variants
+- `src/infrastructure/scraping/amazon/AmazonProductPage.ts` — DOM side of a product page: named selectors, raw texts only
 - `src/infrastructure/scraping/amazon/AmazonOfferParser.ts` — offer rules (pur) : « Actuellement indisponible » → `markUnavailable`, no price recorded; price read **only** inside the product's own price blocks (`#apex_desktop`, `#corePriceDisplay_desktop_feature_div`…), never from a page-wide `.a-price` — on an unavailable page that is the price of a *replacement* article. Prices on the page but none in those blocks → saved with `price: null` and a warning (third-party sellers only, or selectors outdated by a redesign)
 - `src/infrastructure/scraping/amazon/PriceParser.ts` — normalises Amazon price strings
 - `src/infrastructure/scraping/amazon/AmazonIdentityParser.ts` — caractéristiques → `{ ean, brand, mpn, asin, packSize }` (pur), libellés **français et anglais** (« Number of items », « Brand Name », « Global Trade Identification Number »…)
 - `src/infrastructure/scraping/amazon/AmazonBrowserLocale.ts` — fiches demandées **en français** (empreinte `fr-FR` + `Accept-Language`), partagé par le crawler et les scripts : l'empreinte par défaut de Crawlee est `en-US`, et amazon.fr sert alors titres et caractéristiques en anglais
-- `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright + ordre de la cascade d'identité
+- `src/infrastructure/scraping/amazon/AmazonIdentityExtractor.ts` — sélecteurs Playwright de l'identité, rien d'autre
+- `src/infrastructure/scraping/amazon/AmazonIdentityCascade.ts` — ordre de la cascade d'identité (pur) : EAN du JSON-LD puis des caractéristiques, marque des caractéristiques puis du JSON-LD, traces de diagnostic
 - `src/infrastructure/scraping/shared/` — parseurs agnostiques de la boutique : `Gtin` (clé de contrôle GTIN), `JsonLdParser`, `QuantityParser` (contenance et doses du titre, par unité et totales), `PackReconciler` (nombre d'unités : titre croisé avec la fiche)
 - `src/scripts/reparseQuantities.ts` — migration (`npm run migrate:reparse-quantities`, image : `node dist/scripts/reparseQuantities.js`) : recalcule le conditionnement de `items_raw` avec le parseur actuel ; `--all` = tous les relevés, **à relancer après tout changement de parseur qui refuse ce qu'il acceptait** (sinon la règle « dernière valeur non nulle » garde l'ancienne valeur), sans = relevés jamais migrés ; ne réécrit que ce qui change, `--dry-run` compte
 - `src/scripts/spikeJsonLd.ts` — harnais de mesure de la couverture d'identité, n'écrit rien en base
 - `src/infrastructure/persistence/mongodb/MongoProductRepository.ts` — upserts products by URL + day
 - `src/infrastructure/persistence/mongodb/MongoKeywordRepository.ts` — CRUD for keywords
-- `src/infrastructure/persistence/mongodb/MongoConnection.ts` — singleton `MongoClient`
+- `src/infrastructure/persistence/mongodb/MongoConnection.ts` — `MongoClient` + unique indexes; `MongoConnection.fromEnv()` for entry points (`main.ts`, scripts)
 
 ### Pipeline — price history + deal scoring
 
 ```
 pipeline/src/
   pipeline.py               — entry point: runs purge, then refine, then score
-  config.py                 — MONGODB_URI + DB_NAME from .env
+  config.py                 — DB_NAME + mongodb_uri() (read on call, not on import)
+  database.py               — open_database(): the only place that opens a connection, for entry points; every function receives `db`
+  clock.py                  — naive_utc_now(): the DB's naive-UTC convention, only as a `now` default or in an entry point
   maintenance/purge_dead_products.py — deletes products the scrapper can no longer read
   refine/build_price_history.py  — aggregates items_raw → price_history
   scoring/features.py       — extracts per-product time-series rows (baseline_price_30d, n_inliers, usual_low_30d / usual_high_30d, n_observations)
@@ -261,13 +267,18 @@ src/modules/keyword/   write context: Keyword aggregate, KeywordName value objec
                        KeywordRepository port, TrackKeyword / UntrackKeyword commands
 src/modules/profile/   user profile: PhoneNumber value object (E.164), UserProfile
                        (phone + alertFuels), GET/PUT /profile — read by the restock alert
-src/modules/catalog/   read-only context: ProductId / ProductQuery value objects,
+src/modules/catalog/   read-only context: ProductQuery value object,
                        DealPolicy, read models over items_raw / price_history / deal_scores
-src/shared/            DomainError families (400/409/404), Mongo connection + required indexes
+src/shared/            DomainError families (400/409/404), UserId + ProductId (value objects
+                       used by several modules), Mongo connection + required indexes
 ```
 
 Dependency rule: `domain` imports nothing, `application` imports only `domain`,
-`infrastructure` and `interface` may import anything. No file under `domain/`
+`infrastructure` and `interface` may import anything. Between modules, one way
+only: a module's `domain` / `application` may use another's `domain` and
+`application` (favorite → catalog, product-tracking; profile → fuel; catalog's
+dashboard → the keyword / product-tracking read ports), never its
+`infrastructure`; what several modules share lives in `src/shared/`. No file under `domain/`
 imports `@nestjs/*` or `mongodb`.
 
 Write side goes through the aggregate (it protects invariants). Read side goes
@@ -381,6 +392,13 @@ declare every price change and shortage). Read through the Opendatasoft
 `exports/json` endpoint (whole dataset in one call; `records` caps at 10 000),
 with `timezone=UTC`.
 
+- `pipeline/src/fuel/import_job.py` — the 30-min task (`python -m
+  src.fuel.import_stations`, kept as the DAG entry point): fetch → import →
+  `episodes.record_live` → shortage then restock forecasts → alerts; only the
+  import itself may fail the task. `fuel/fuels.py` owns the fuel codes, labels
+  and order (the order is the models' encoding of `fuel`: append only, then
+  retrain); `fuel/favorites.py` owns « a favourite without `userId` belongs to
+  nobody ».
 - `pipeline/src/fuel/import_stations.py` — one `fuel_stations` doc per station,
   **replaced** on each import; stations absent from the feed are deleted, but only
   after a guard: an import yielding fewer than half the known stations raises
@@ -410,7 +428,8 @@ with `timezone=UTC`.
   truncated, the import keeps the brands already stored — prices still update.
   OSM data is **ODbL**: attribution is required wherever brands are shown (the
   map's attribution line covers it).
-- `pipeline/src/fuel/restock_alerts.py` — **fuel alerts, per user**: restock,
+- `pipeline/src/fuel/alerts/` — **fuel alerts, per user** (`config`,
+  `subscribers`, `detection` — pure —, `messages`, `webhook`, `notify`): restock,
   shortage and shortage *risk* (see below for the latter two); opt-in
   (off unless `FUEL_RESTOCK_WEBHOOK_URL` is set; `FUEL_RESTOCK_WEBHOOK_SECRET`
   is mandatory with it — unsigned, the route would text any number). A user is
@@ -591,6 +610,8 @@ with `timezone=UTC`.
 - `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
+- `src/lib/format.ts` — prices and **dates, always in Europe/Paris** (`DISPLAY_TIME_ZONE`, also used by `lib/fuel.ts`): pages render on a UTC server
+- `src/app/actions.ts` — Server Actions; `submitForm` relays a 4xx refusal's message and hides outages (Next masks thrown action errors in prod)
 
 The frontend owns no business rule: `isDeal` and the product `id` arrive
 already computed from the backend. Scoring fields are `null` when absent (never
@@ -603,8 +624,11 @@ src/config.ts     McpConfig — env vars validated at startup (same idea as back
 src/http.ts       HTTP facade: /mcp (Streamable HTTP, stateless), /health/live, /health/ready
 src/server.ts     MCP server factory + the instructions sent to the model on initialize
 src/format.ts     backend DTOs → compact text for the model (never raw JSON)
-src/format-fuel.ts  fuel DTOs → text (Paris times, forecasts as « before <horizon end> »)
-src/backend/      typed HTTP client over the API + api-types.ts (**generated**, do not edit)
+src/format-fuel.ts  fuel DTOs → text (forecasts as « before <horizon end> »)
+src/format-time.ts  every date shown to the model, in Paris time (the backend speaks UTC)
+src/backend/      typed HTTP client over the API + api-types.ts (**generated**, do not edit);
+                  contract.ts — backend values used by the zod schemas (fuel codes, sorts),
+                  each checked at typecheck to cover the generated union exactly
 src/tools/        tool definitions, split by bounded context (catalog / keywords / product-tracking / favorites / fuel)
 ```
 
@@ -647,7 +671,7 @@ keywords, favourites, tracked URLs and favourite stations, and nothing else.
 - `favorites` — one doc per (user, product); `userId`, `url`, `addedAt`; unique index `userId_url` (partial on `userId` existing). Written by the backend; `url` read by the purge
 - `favorite_stations` — one doc per (user, station); `userId`, `stationId` (official id), `addedAt`; unique index `userId_stationId`. Legacy docs keep `_id` = station id. Written only by the backend (star on the fuel map), read by the pipeline's restock alert (each user's own stations). Not purged when a station leaves the feed (it becomes useful again if the station comes back)
 - `user_profiles` — one doc per user, `_id` = user id (email); `phone` (E.164 or null), `alertFuels[]` (fuel codes), `updatedAt`. Written only by the backend (profile page, `PUT /api/v1/profile`), read by the restock alert (recipient + fuels)
-- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`restock_alerts.py`), after each import
+- `fuel_watch_state` — last known state of each (user × favourite station × watched fuel), keyed by `_id = "<userId>:<stationId>:<fuel>"`; fields: `userId`, `stationId`, `fuel`, `available`, `shortageSince`, `riskAlertedAt` (last risk alert, 24 h cooldown), `seenAt`. Written only by the fuel alerts (`pipeline/src/fuel/alerts/`), after each import
 - `fuel_shortages` — shortage history, one doc per episode, `_id = "<stationId>:<fuel>:<start ISO>"`; fields: `stationId`, `fuel`, `start`, `end` (null while ongoing), `source` (`live` | `archive`). Opened/closed by every fuel import (`episodes.record_live`, independent of the alert config), realigned nightly on the official archive (`sync_from_archive`: the archive wins over the period it covers, live episodes it doesn't know there are deleted), 200-day retention. Read by the risk forecast
 - `fuel_shortage_forecasts` — published 24 h shortage risk, one doc per (favourite station × available fuel), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `risk` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`shortage_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)
 - `fuel_restock_forecasts` — published 24 h restock chance, one doc per (favourite station × fuel in shortage for < 7 days), `_id = "<stationId>:<fuel>"`; fields: `stationId`, `fuel`, `probability` (0..1, 3 decimals), `computedAt`, `horizonHours` (24). Replaced after every fuel import (`restock_forecast/forecasts.py`), emptied when no model is in service. Read by the backend (« Mes stations »)

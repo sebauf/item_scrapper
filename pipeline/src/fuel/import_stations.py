@@ -53,18 +53,16 @@ from pymongo import ReplaceOne
 from pymongo.collection import Collection
 from pymongo.database import Database
 
-from src.fuel.brands import fetch_osm_stations
+from src.clock import naive_utc_now
+from src.fuel.fuels import FUELS
 
 DATASET_URL = (
     "https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
     "prix-des-carburants-en-france-flux-instantane-v2/exports/json"
 )
 
-# Préfixe des colonnes de l'API → code exposé par le backend. L'ordre est celui
-# de l'affichage : du plus vendu au plus rare.
-FUELS = ("gazole", "e10", "sp98", "sp95", "e85", "gplc")
-
 STATION_FIELDS = ("id", "latitude", "longitude", "cp", "pop", "adresse", "ville")
+# Colonnes de chaque carburant dans l'API, préfixées par son code : `gazole_prix`…
 FUEL_SUFFIXES = ("prix", "maj", "rupture_debut", "rupture_type")
 
 # Les coordonnées du flux sont des degrés multipliés par 100 000
@@ -227,17 +225,8 @@ def presumed_shortages(db: Database, now: datetime) -> dict[str, dict[str, dict]
     la rajeunirait à chaque passage, elle ne s'éteindrait jamais.
     """
     oldest = now - timedelta(days=PRESUMED_SHORTAGE_MAX_DAYS)
-    declared: dict[tuple[str, str], datetime] = {}
-    for episode in db["fuel_shortages"].find(
-        {"end": None, "start": {"$gte": oldest}}, {"stationId": 1, "fuel": 1, "start": 1}
-    ):
-        key = (episode["stationId"], episode["fuel"])
-        declared[key] = max(episode["start"], declared.get(key, episode["start"]))
-
-    previous: dict[tuple[str, str], dict] = {}
-    for station in db["fuel_stations"].find({}, {"fuels": 1}):
-        for fuel in station.get("fuels", []):
-            previous[(station["_id"], fuel["code"])] = fuel
+    declared = _open_shortage_starts(db, oldest)
+    previous = fuels_by_pair(db)
 
     presumed: dict[str, dict[str, dict]] = {}
     for key in declared.keys() | previous.keys():
@@ -248,16 +237,41 @@ def presumed_shortages(db: Database, now: datetime) -> dict[str, dict[str, dict]
             since = now if before.get("available") else before.get("shortageSince")
         if since is None or since < oldest:
             continue
-        presumed.setdefault(station_id, {})[code] = {
-            "code": code,
-            "price": None,
-            # La dernière déclaration connue pour ce carburant : la fraîcheur
-            # reste celle de la station, jamais celle de notre import.
-            "updatedAt": (before or {}).get("updatedAt") or since,
-            "available": False,
-            "shortageSince": since,
-        }
+        presumed.setdefault(station_id, {})[code] = _presumed_fuel(code, since, before)
     return presumed
+
+
+def fuels_by_pair(db: Database) -> dict[tuple[str, str], dict]:
+    """Carburants du dernier import, par (station, code)."""
+    return {
+        (station["_id"], fuel["code"]): fuel
+        for station in db["fuel_stations"].find({}, {"fuels": 1})
+        for fuel in station.get("fuels", [])
+    }
+
+
+def _open_shortage_starts(db: Database, oldest: datetime) -> dict[tuple[str, str], datetime]:
+    """Début déclaré de la rupture ouverte de chaque (station, carburant) ; la
+    plus récente s'il y en a plusieurs."""
+    starts: dict[tuple[str, str], datetime] = {}
+    for episode in db["fuel_shortages"].find(
+        {"end": None, "start": {"$gte": oldest}}, {"stationId": 1, "fuel": 1, "start": 1}
+    ):
+        key = (episode["stationId"], episode["fuel"])
+        starts[key] = max(episode["start"], starts.get(key, episode["start"]))
+    return starts
+
+
+def _presumed_fuel(code: str, since: datetime, before: dict | None) -> dict:
+    return {
+        "code": code,
+        "price": None,
+        # La dernière déclaration connue pour ce carburant : la fraîcheur
+        # reste celle de la station, jamais celle de notre import.
+        "updatedAt": (before or {}).get("updatedAt") or since,
+        "available": False,
+        "shortageSince": since,
+    }
 
 
 class TruncatedFeedError(RuntimeError):
@@ -290,7 +304,7 @@ def import_stations(
     connues plutôt que de les effacer. Les prix, eux, sont mis à jour — une
     panne de data.gouv.fr ne doit pas bloquer l'essentiel.
     """
-    imported_at = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    imported_at = now or naive_utc_now()
     collection = db["fuel_stations"]
     if brands is None:
         brands = _known_brands(collection)
@@ -318,48 +332,10 @@ def import_stations(
 
 
 if __name__ == "__main__":
-    import os
+    # Point d'entrée du DAG `fuel_prices`, gardé ici pour que l'image du
+    # pipeline et celle d'Airflow n'aient pas à être déployées ensemble. La
+    # tâche elle-même est dans import_job, qui importe ce module : d'où
+    # l'import tardif.
+    from src.fuel.import_job import main
 
-    from pymongo import MongoClient
-
-    from src.config import DB_NAME, MONGODB_URI
-    from src.fuel.restock_alerts import RestockConfig, alert_fuel_events
-    from src.fuel.restock_forecast.forecasts import publish_restock_forecasts
-    from src.fuel.shortage_forecast import episodes
-    from src.fuel.shortage_forecast.forecasts import publish_forecasts
-
-    client = MongoClient(MONGODB_URI)
-    records = fetch_records()
-    try:
-        brands = fetch_osm_stations()
-    except (OSError, ValueError) as error:
-        print(f"brands: OSM export unavailable ({error}), keeping known brands")
-        brands = None
-
-    db = client[DB_NAME]
-    restock = RestockConfig.from_env(os.environ)
-
-    imported_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    count = import_stations(db, records, brands, now=imported_at)
-    branded = db["fuel_stations"].count_documents({"brand": {"$ne": None}})
-    print(f"fuel_stations: {count} stations imported ({len(records)} records received)")
-    print(f"brands: {branded}/{count} stations matched to a brand")
-
-    # L'historique des ruptures sert à la prévision : tenu à jour même sans
-    # alerte configurée, pour qu'un modèle activé plus tard ait son passé.
-    try:
-        opened, closed = episodes.record_live(db, imported_at)
-        print(f"fuel_shortages: {opened} rupture(s) en cours, {closed} close(s) à cet import")
-    except Exception as error:  # noqa: BLE001 — les prix sont importés, c'est l'essentiel
-        print(f"fuel_shortages: mise à jour impossible ({error!r})")
-
-    # Risque de rupture à 24 h des stations favorites : publié pour la page
-    # « Mes stations », même sans alerte configurée, puis relu par l'alerte.
-    # Après `record_live` : la prévision lit les ruptures de cet import.
-    risks = publish_forecasts(db, imported_at)
-    # Et, pour les carburants en rupture de ces stations, la chance qu'ils
-    # reviennent dans les 24 h (page « Mes stations » seulement).
-    publish_restock_forecasts(db, imported_at)
-
-    if restock:
-        alert_fuel_events(db, restock, imported_at, risks if restock.risk_threshold is not None else None)
+    main()

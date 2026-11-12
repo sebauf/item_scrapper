@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { getDashboard, type KeywordDeals } from '@/lib/api';
-import { timeAgo } from '@/lib/format';
+import { formatDate, timeAgo } from '@/lib/format';
 import { ProductCard } from '@/components/ProductCard';
 import { StatCard } from '@/components/StatCard';
 
@@ -87,7 +87,7 @@ export default async function DashboardPage() {
           accent={dealCount > 0 ? 'text-deal' : 'text-foreground'}
         />
         <StatCard
-          value={lastUpdate ? new Date(lastUpdate).toLocaleDateString('fr-FR') : '—'}
+          value={lastUpdate ? formatDate(lastUpdate) : '—'}
           label="Dernier pipeline"
           icon="🕐"
         />

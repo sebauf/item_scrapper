@@ -24,7 +24,7 @@ NAMESPACE = os.environ.get("AIRFLOW_K8S_NAMESPACE", "price-tracker")
 SECRET_NAME = os.environ.get("PIPELINE_SECRET_NAME", "price-tracker-secrets")
 
 # Variables optionnelles relayées telles quelles aux conteneurs Docker (alertes
-# carburant, cf. pipeline/src/fuel/restock_alerts.py). En Kubernetes, les Pods
+# carburant, cf. pipeline/src/fuel/alerts/). En Kubernetes, les Pods
 # lisent tout le Secret : rien à relayer.
 PASSTHROUGH_ENV = (
     "FUEL_RESTOCK_WEBHOOK_URL",

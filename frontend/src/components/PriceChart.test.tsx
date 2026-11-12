@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import type { PricePoint } from './PriceChart';
+import type { PricePoint } from '@/lib/price-history';
 
 /**
  * `ResponsiveContainer` mesure son parent : en jsdom il obtient 0×0 et ne rend

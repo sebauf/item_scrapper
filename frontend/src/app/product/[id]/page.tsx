@@ -4,8 +4,9 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { cache } from 'react';
 import { getProduct, isFavorite, type ProductDetail } from '@/lib/api';
-import { formatPrice } from '@/lib/format';
-import { PriceChart, type PricePoint } from '@/components/PriceChart';
+import { formatDate, formatPrice } from '@/lib/format';
+import { PriceChart } from '@/components/PriceChart';
+import { priceChartData } from '@/lib/price-history';
 import { TrendBadge } from '@/components/ProductCard';
 import { FavoriteButton } from '@/components/FavoriteButton';
 
@@ -66,7 +67,7 @@ function HistoryTable({ detail, currency }: { detail: ProductDetail; currency: s
             return (
               <tr key={entry.day} className="border-b border-border-subtle last:border-0">
                 <td className="py-2.5 pr-4 text-muted whitespace-nowrap">
-                  {new Date(entry.day).toLocaleDateString('fr-FR')}
+                  {formatDate(entry.day)}
                 </td>
                 <td className={`py-2.5 pr-4 font-semibold whitespace-nowrap ${i === 0 ? 'text-foreground' : 'text-muted'}`}>
                   {entry.price ? formatPrice(entry.price.amount, entry.price.currency) : '—'}
@@ -100,16 +101,11 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
   if (!detail) notFound();
   const favorite = await isFavorite(id);
 
-  const currency = detail.price?.currency ?? detail.history.find((e) => e.price)?.price?.currency ?? 'EUR';
+  const chart = priceChartData(detail);
+  const currency = chart.currency;
   const hasDeal = detail.isDeal;
   const stats = historyStats(detail);
 
-  const chartData: PricePoint[] = detail.history.map((entry) => ({
-    day: entry.day,
-    price: entry.price?.amount ?? null,
-    crossedOut: entry.crossedOutPrice?.amount ?? null,
-  }));
-  const chartablePoints = chartData.filter((d) => d.price !== null).length;
 
   return (
     <main className="max-w-6xl mx-auto px-4 py-6">
@@ -248,7 +244,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
           {detail.firstSeen && (
             <p className="text-xs text-faint">
-              Suivi depuis le {new Date(detail.firstSeen).toLocaleDateString('fr-FR')}
+              Suivi depuis le {formatDate(detail.firstSeen)}
               {stats && <> · {stats.count} relevé{stats.count > 1 ? 's' : ''}</>}
             </p>
           )}
@@ -258,9 +254,9 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
       {/* Price evolution chart */}
       <section className="bg-surface rounded-2xl border border-border p-5 mb-6">
         <h2 className="font-semibold text-foreground mb-4">Évolution du prix</h2>
-        {chartablePoints >= 2 ? (
+        {chart.chartable ? (
           <PriceChart
-            data={chartData}
+            data={chart.points}
             predictedPrice={detail.predictedPrice ?? undefined}
             currency={currency}
           />

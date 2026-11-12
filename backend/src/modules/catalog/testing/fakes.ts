@@ -6,7 +6,7 @@ import {
   ProductSearchResult,
   ProductSummary,
 } from '../application/ports/product.read-model';
-import { ProductId } from '../domain/product-id';
+import { ProductId } from 'src/shared/domain/product-id';
 import { ProductQuery } from '../domain/product-query';
 
 /**
