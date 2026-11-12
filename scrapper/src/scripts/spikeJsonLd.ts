@@ -3,13 +3,11 @@ import { writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { PlaywrightCrawler } from 'crawlee';
 import { MongoClient } from 'mongodb';
+import { extractAmazonIdentity } from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
 import {
-  EMPTY_DIAGNOSTICS,
-  extractAmazonIdentity,
+  EMPTY_EXTRACTED_IDENTITY,
   type ExtractedIdentity,
-} from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
-import { EMPTY_PARSED_QUANTITY } from '../infrastructure/scraping/shared/QuantityParser.js';
-import { EMPTY_PACK } from '../infrastructure/scraping/shared/PackReconciler.js';
+} from '../infrastructure/scraping/amazon/AmazonIdentityCascade.js';
 import {
   AMAZON_BROWSER_POOL_OPTIONS,
   requestFrenchPages,
@@ -249,22 +247,7 @@ async function main(): Promise<void> {
     },
     failedRequestHandler: ({ request, log }) => {
       log.warning(`Échec définitif : ${request.url}`);
-      observations.push(
-        toObservation(request.url, '', {
-          ean: null,
-          eanSource: null,
-          brand: null,
-          mpn: null,
-          asin: null,
-          ambiguousEan: false,
-          packSize: null,
-          jsonLd: null,
-          jsonLdScriptCount: 0,
-          quantity: EMPTY_PARSED_QUANTITY,
-          pack: EMPTY_PACK,
-          diagnostics: EMPTY_DIAGNOSTICS,
-        }),
-      );
+      observations.push(toObservation(request.url, '', EMPTY_EXTRACTED_IDENTITY));
     },
   });
 

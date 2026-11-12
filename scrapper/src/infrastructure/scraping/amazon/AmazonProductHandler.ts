@@ -2,7 +2,8 @@ import type { PlaywrightCrawlingContext } from 'crawlee';
 import type { IProductRepository } from '../../../domain/product/IProductRepository.js';
 import type { Product } from '../../../domain/product/Product.js';
 import { parsePrice, parseUnitPrice } from './PriceParser.js';
-import { extractAmazonIdentity, type ExtractedIdentity } from './AmazonIdentityExtractor.js';
+import { extractAmazonIdentity } from './AmazonIdentityExtractor.js';
+import type { ExtractedIdentity } from './AmazonIdentityCascade.js';
 import { isUnavailable } from './AmazonOfferParser.js';
 import { asinOf, isDeadProductRedirect } from './AmazonUrl.js';
 import {
