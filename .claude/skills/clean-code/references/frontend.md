@@ -32,7 +32,8 @@ MCP).
 | Mutation déclenchée par l'utilisateur | `src/app/actions.ts` (Server Action) |
 | Interactivité (état, effets, carte) | `src/components/*.tsx` avec `'use client'`, le plus bas possible dans l'arbre |
 | Analyse indulgente de l'URL du navigateur | `src/lib/search-params.ts` |
-| Mise en forme (prix, dates Europe/Paris) | `src/lib/format.ts` |
+| Mise en forme (prix, dates) — toute date passe par `formatDate` / `formatDateTime` / `formatDayMonth`, à l'heure de Paris (`DISPLAY_TIME_ZONE`), jamais par un `toLocaleDateString` sans fuseau | `src/lib/format.ts` |
+| Données du graphique de prix (points, devise, seuil de traçabilité) | `src/lib/price-history.ts` |
 | Règles d'affichage carburants (URL, Google Maps, marque par défaut) | `src/lib/fuel.ts` |
 | Règles d'authentification pures | `src/lib/auth-policy.ts` |
 
@@ -57,7 +58,7 @@ Signaux de mauvais placement :
 
 | Ce qu'on voit | Pourquoi ne pas le « corriger » |
 |---|---|
-| Server Actions qui renvoient `{ error }` / `{ success }` au lieu de lever | En production, Next.js masque le message d'une erreur levée dans une action : l'utilisateur ne verrait jamais « quota atteint ». Les erreurs 4xx du backend sont relayées telles quelles, les autres remplacées par un message générique et journalisées. |
+| Server Actions qui renvoient `{ error }` / `{ success }` (`FormState`) au lieu de lever | En production, Next.js masque le message d'une erreur levée dans une action : l'utilisateur ne verrait jamais « quota atteint ». Les erreurs 4xx du backend sont relayées telles quelles, les autres remplacées par un message générique et journalisées — une seule fois, dans `submitForm`. Les aides de `actions.ts` restent non exportées : dans un fichier `'use server'`, toute fonction exportée est une Server Action. |
 | Mise à jour optimiste avec retour arrière (`FavoriteStationButton`) | Voulue : réactivité de l'étoile ; le retour arrière sur échec est la partie à ne pas perdre. |
 | `internal-token.ts` dupliqué depuis le backend | Pas de paquet partagé entre services ; toute modification se reporte dans les trois copies. |
 

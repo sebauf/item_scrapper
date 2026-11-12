@@ -610,6 +610,8 @@ with `timezone=UTC`.
 - `src/lib/api.ts` — the single data access point: typed client over the backend API; adds `Authorization` (internal token for the session's email) to every call, redirects to `/login` without session
 - `src/lib/api-types.ts` — **generated** from `/openapi.json`, do not edit by hand
 - `src/lib/search-params.ts` — lenient parsing of the browser URL, then normalised into an API query string
+- `src/lib/format.ts` — prices and **dates, always in Europe/Paris** (`DISPLAY_TIME_ZONE`, also used by `lib/fuel.ts`): pages render on a UTC server
+- `src/app/actions.ts` — Server Actions; `submitForm` relays a 4xx refusal's message and hides outages (Next masks thrown action errors in prod)
 
 The frontend owns no business rule: `isDeal` and the product `id` arrive
 already computed from the backend. Scoring fields are `null` when absent (never
