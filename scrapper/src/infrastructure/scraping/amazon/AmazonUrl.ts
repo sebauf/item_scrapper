@@ -24,6 +24,21 @@ export function asinOf(url: string): string | null {
   return PRODUCT_PATH.exec(url)?.[1] ?? null;
 }
 
+/**
+ * Fiches des autres déclinaisons, dans l'ordre de la page : les ASIN annoncés
+ * (`data-asin`), puis ceux des liens (`data-dp-url`), sans doublon ni la fiche
+ * courante.
+ */
+export function variantUrls(dataAsins: readonly string[], dpUrls: readonly string[], currentAsin: string | null): string[] {
+  const asins = new Set(dataAsins.filter((asin) => asin.length > 0));
+  for (const url of dpUrls) {
+    const asin = asinOf(url);
+    if (asin) asins.add(asin);
+  }
+  if (currentAsin) asins.delete(currentAsin);
+  return [...asins].map(productUrl);
+}
+
 /** Un lien relatif de la page (`/s?k=…&page=2`) devient absolu. */
 export function absoluteUrl(href: string): string {
   return href.startsWith('http') ? href : `${AMAZON_ORIGIN}${href}`;

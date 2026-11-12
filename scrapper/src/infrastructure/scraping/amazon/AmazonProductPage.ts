@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import { toHighResImageUrls } from './ImageUrlParser.js';
 import { AVAILABILITY_SELECTOR, OWN_PRICE_SELECTORS } from './AmazonOfferParser.js';
-import { productUrl } from './AmazonUrl.js';
+import { variantUrls } from './AmazonUrl.js';
 
 /**
  * Côté DOM d'une fiche produit : sélecteurs et appels Playwright, rien
@@ -155,27 +155,13 @@ async function extractImages(page: Page): Promise<string[]> {
 
 /** URLs des autres déclinaisons de la fiche (`currentAsin` exclu). */
 export async function extractVariantUrls(page: Page, currentAsin: string | null): Promise<string[]> {
-  const asins = await page
-    .evaluate(
-      ({ selector, asin }) => {
-        const container = document.querySelector(selector);
-        if (!container) return [] as string[];
-
-        const found = new Set<string>();
-        container.querySelectorAll('[data-asin]').forEach((el) => {
-          const value = el.getAttribute('data-asin');
-          if (value) found.add(value);
-        });
-        container.querySelectorAll('[data-dp-url]').forEach((el) => {
-          const match = (el.getAttribute('data-dp-url') ?? '').match(/\/dp\/([A-Z0-9]{10})/);
-          if (match) found.add(match[1]);
-        });
-        if (asin) found.delete(asin);
-        return Array.from(found);
-      },
-      { selector: VARIANT_PICKER_SELECTOR, asin: currentAsin },
-    )
-    .catch(() => [] as string[]);
-
-  return asins.map(productUrl);
+  const { dataAsins, dpUrls } = await page
+    .evaluate((selector) => {
+      const container = document.querySelector(selector);
+      const attributes = (name: string) =>
+        Array.from(container?.querySelectorAll(`[${name}]`) ?? [], (el) => el.getAttribute(name) ?? '');
+      return { dataAsins: attributes('data-asin'), dpUrls: attributes('data-dp-url') };
+    }, VARIANT_PICKER_SELECTOR)
+    .catch(() => ({ dataAsins: [] as string[], dpUrls: [] as string[] }));
+  return variantUrls(dataAsins, dpUrls, currentAsin);
 }

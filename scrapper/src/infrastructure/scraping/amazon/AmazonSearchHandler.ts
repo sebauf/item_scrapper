@@ -1,5 +1,5 @@
 import type { PlaywrightCrawlingContext } from 'crawlee';
-import { AMAZON_ORIGIN, absoluteUrl, productUrl } from './AmazonUrl.js';
+import { AMAZON_ORIGIN, absoluteUrl, asinOf, productUrl } from './AmazonUrl.js';
 
 export const SEARCH_LABEL = 'SEARCH';
 
@@ -39,8 +39,8 @@ export async function amazonSearchHandler({
     label: PRODUCT_LABEL,
     userData: { keyword },
     transformRequestFunction: (req) => {
-      const match = req.url.match(/\/dp\/([A-Z0-9]{10})/);
-      if (match) req.url = productUrl(match[1]);
+      const asin = asinOf(req.url);
+      if (asin) req.url = productUrl(asin);
       return req;
     },
   });
