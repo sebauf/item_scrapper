@@ -13,6 +13,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Infrastructure** (`infra/`): MongoDB 7 in Docker with a named volume for persistence (local dev)
 - **Kubernetes** (`k8s/`): Kustomize manifests deploying the full stack (frontend, Airflow, MongoDB, Postgres) in a `price-tracker` namespace
 
+## Skills (`.claude/skills/`)
+
+- `clean-code` — review and refactoring against Uncle Bob's *Clean Code*
+  principles (`references/uncle-bob.md`, chapter by chapter, applied on every
+  review; functions over ~20 lines must be justified, not automatically
+  flagged) and this repo's own conventions (one reference file per component
+  in `references/`), including the
+  **deliberate exceptions** not to "fix" (`null` as a domain value, Server
+  Actions returning `{ error }`, MCP `isError` results, why-comments). Invoke
+  with `/clean-code`; versioned here so cloud sessions get it from the clone.
+  When a convention changes, update the skill along with this file.
+
 ## Commands
 
 ### Infrastructure (local dev)
