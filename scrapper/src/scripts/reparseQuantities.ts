@@ -59,13 +59,10 @@ type RawDoc = Partial<PackFields> & {
 const BATCH_SIZE = 500;
 
 async function main(): Promise<void> {
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) throw new Error('MONGODB_URI is not defined');
   const dryRun = process.argv.includes('--dry-run');
   const all = process.argv.includes('--all');
 
-  const connection = new MongoConnection();
-  await connection.connect(mongoUri);
+  const connection = await MongoConnection.fromEnv();
 
   try {
     const collection = connection.db.collection<RawDoc>('items_raw');

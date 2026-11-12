@@ -11,11 +11,8 @@ interface LegacyDoc {
 }
 
 async function main(): Promise<void> {
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) throw new Error('MONGODB_URI is not defined');
 
-  const connection = new MongoConnection();
-  await connection.connect(mongoUri);
+  const connection = await MongoConnection.fromEnv();
 
   try {
     const collection = connection.db.collection<LegacyDoc>('items_raw');

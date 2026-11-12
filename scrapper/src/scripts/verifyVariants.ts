@@ -11,11 +11,8 @@ import {
 const TARGET_URL = 'https://www.amazon.fr/dp/B0GNSHRHV2/';
 
 async function main(): Promise<void> {
-  const mongoUri = process.env.MONGODB_URI;
-  if (!mongoUri) throw new Error('MONGODB_URI is not defined');
 
-  const connection = new MongoConnection();
-  await connection.connect(mongoUri);
+  const connection = await MongoConnection.fromEnv();
 
   try {
     const productRepository = new MongoProductRepository(connection.db);

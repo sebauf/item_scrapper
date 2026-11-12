@@ -3,15 +3,15 @@ import { writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { PlaywrightCrawler } from 'crawlee';
 import { MongoClient } from 'mongodb';
+import { DB_NAME } from '../infrastructure/persistence/mongodb/MongoConnection.js';
+import { AMAZON_CRAWLER_OPTIONS } from '../infrastructure/scraping/amazon/AmazonCrawlerOptions.js';
+import { AMAZON_SHOP } from '../infrastructure/scraping/amazon/AmazonProductHandler.js';
+import { extractTitle, waitLikeAHuman } from '../infrastructure/scraping/amazon/AmazonProductPage.js';
 import { extractAmazonIdentity } from '../infrastructure/scraping/amazon/AmazonIdentityExtractor.js';
 import {
   EMPTY_EXTRACTED_IDENTITY,
   type ExtractedIdentity,
 } from '../infrastructure/scraping/amazon/AmazonIdentityCascade.js';
-import {
-  AMAZON_BROWSER_POOL_OPTIONS,
-  requestFrenchPages,
-} from '../infrastructure/scraping/amazon/AmazonBrowserLocale.js';
 
 /**
  * Harnais de mesure du spike « extraction d'identité Amazon ».
@@ -29,10 +29,10 @@ import {
  *   npm run spike:jsonld -- --urls=urls.txt   # une URL par ligne, sans Mongo
  *   npm run spike:jsonld -- --out=rapport.json
  *
- * Le crawler est volontairement recopié ici plutôt que réutilisé depuis
- * `AmazonCrawler` : celui-ci écrit en base, ce qu'un spike ne doit pas
- * faire. La configuration anti-détection est en revanche identique, sans
- * quoi la mesure porterait sur des pages de blocage.
+ * Le crawler est volontairement distinct d'`AmazonCrawler` : celui-ci écrit
+ * en base, ce qu'un spike ne doit pas faire. Ses réglages, en revanche, sont
+ * les mêmes (`AMAZON_CRAWLER_OPTIONS`), sans quoi la mesure porterait sur des
+ * pages de blocage.
  */
 
 const DEFAULT_LIMIT = 20;
@@ -93,10 +93,10 @@ async function loadUrls(limit: number): Promise<string[]> {
     // Échantillon aléatoire plutôt que les N premiers : les produits les plus
     // anciens ne sont pas représentatifs du catalogue suivi aujourd'hui.
     const docs = await client
-      .db('scrapper')
+      .db(DB_NAME)
       .collection<{ _id: string }>('price_history')
       .aggregate<{ _id: string }>([
-        { $match: { unavailable: { $ne: true }, shop: 'amazon' } },
+        { $match: { unavailable: { $ne: true }, shop: AMAZON_SHOP } },
         { $sample: { size: limit } },
         { $project: { _id: 1 } },
       ])
@@ -207,38 +207,12 @@ async function main(): Promise<void> {
   const observations: Observation[] = [];
 
   const crawler = new PlaywrightCrawler({
+    ...AMAZON_CRAWLER_OPTIONS,
     maxRequestsPerCrawl: urls.length,
     maxConcurrency: 1,
-    maxRequestsPerMinute: 10,
-    useSessionPool: true,
-    sessionPoolOptions: {
-      maxPoolSize: 10,
-      sessionOptions: { maxUsageCount: 50, maxErrorScore: 3 },
-    },
-    browserPoolOptions: AMAZON_BROWSER_POOL_OPTIONS,
-    preNavigationHooks: [
-      requestFrenchPages,
-      async ({ page }) => {
-        await page.addInitScript(() => {
-          Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        });
-      },
-    ],
-    launchContext: {
-      launchOptions: {
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-blink-features=AutomationControlled',
-        ],
-      },
-    },
     requestHandler: async ({ page, request, log }) => {
-      await page.waitForTimeout(800 + Math.random() * 600);
-      const title = await page
-        .$eval('#productTitle', (el) => el.textContent?.trim() ?? '')
-        .catch(() => '');
+      await waitLikeAHuman(page);
+      const title = await extractTitle(page);
       const identity = await extractAmazonIdentity(page, title);
       observations.push(toObservation(request.url, title, identity));
       log.info(
