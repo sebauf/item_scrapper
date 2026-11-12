@@ -5,6 +5,7 @@ import type { KeywordSummary } from '@/lib/api';
 import { deleteKeyword } from '@/app/actions';
 import { AddKeywordModal } from './AddKeywordModal';
 import { ConfirmDialog } from './ConfirmDialog';
+import { formatDate } from '@/lib/format';
 
 export function KeywordDashboard({ keywords }: { keywords: KeywordSummary[] }) {
   const [search, setSearch] = useState('');
@@ -108,7 +109,7 @@ export function KeywordDashboard({ keywords }: { keywords: KeywordSummary[] }) {
                     {k.productCount > 0 && k.lastScrape && <span className="text-ghost">·</span>}
                     {k.lastScrape && (
                       <span className="text-faint">
-                        {new Date(k.lastScrape).toLocaleDateString('fr-FR')}
+                        {formatDate(k.lastScrape)}
                       </span>
                     )}
                   </div>

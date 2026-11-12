@@ -9,14 +9,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { formatPrice } from '@/lib/format';
+import { formatDate, formatDayMonth, formatPrice } from '@/lib/format';
 import type { PricePoint } from '@/lib/price-history';
 
 function formatDay(day: string): string {
   const date = new Date(day);
   return Number.isNaN(date.getTime())
     ? day
-    : date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+    : formatDayMonth(day);
 }
 
 interface TooltipPayloadEntry {
@@ -43,7 +43,7 @@ function ChartTooltip({
   return (
     <div className="bg-surface border border-border rounded-xl shadow-lg px-3 py-2 text-xs">
       <p className="font-semibold text-foreground mb-1">
-        {label ? new Date(label).toLocaleDateString('fr-FR') : ''}
+        {label ? formatDate(String(label)) : ''}
       </p>
       {typeof price?.value === 'number' && (
         <p className="flex items-center gap-1.5 text-muted">

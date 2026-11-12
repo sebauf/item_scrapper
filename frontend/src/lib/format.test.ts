@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { formatPrice, timeAgo } from './format';
+import { formatDate, formatDateTime, formatDayMonth, formatPrice, timeAgo } from './format';
 
 /**
  * Deux fonctions d'affichage, deux pièges : une devise inconnue ne doit pas
@@ -60,5 +60,22 @@ describe('timeAgo', () => {
     vi.setSystemTime(now);
 
     expect(timeAgo(new Date(now.getTime() + 60_000).toISOString())).toBe("à l'instant");
+  });
+});
+
+describe('dates', () => {
+  it('affiche la date de Paris, pas celle du serveur réglé en UTC', () => {
+    // 23 h 30 UTC le 5 novembre : 0 h 30 le 6 à Paris (UTC+1 en hiver).
+    expect(formatDate('2026-11-05T23:30:00.000Z')).toBe('06/11/2026');
+    expect(formatDayMonth('2026-11-05T23:30:00.000Z')).toBe('06/11');
+  });
+
+  it('affiche l’heure de Paris, été comme hiver', () => {
+    expect(formatDateTime('2026-11-05T12:30:05.000Z')).toBe('05/11/2026 13:30:05');
+    expect(formatDateTime('2026-07-05T12:30:05.000Z')).toBe('05/07/2026 14:30:05');
+  });
+
+  it('garde le jour d’un relevé daté de minuit UTC', () => {
+    expect(formatDate('2026-08-08T00:00:00.000Z')).toBe('08/08/2026');
   });
 });

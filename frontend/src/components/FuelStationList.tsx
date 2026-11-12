@@ -1,5 +1,5 @@
 import type { FuelCode, FuelPrice, FuelStation } from '@/lib/api';
-import { timeAgo } from '@/lib/format';
+import { formatDateTime, timeAgo } from '@/lib/format';
 import {
   FUEL_LABELS,
   formatDistance,
@@ -33,7 +33,7 @@ export function FuelBadge({
     return (
       <span
         className="inline-flex items-center gap-1 rounded-lg border border-danger/30 bg-danger-soft px-2 py-0.5 text-xs text-danger"
-        title={fuel.shortageSince ? `Rupture depuis le ${new Date(fuel.shortageSince).toLocaleString('fr-FR')}` : 'Rupture déclarée'}
+        title={fuel.shortageSince ? `Rupture depuis le ${formatDateTime(fuel.shortageSince)}` : 'Rupture déclarée'}
       >
         <span className="font-medium">{label}</span>
         <span>rupture</span>

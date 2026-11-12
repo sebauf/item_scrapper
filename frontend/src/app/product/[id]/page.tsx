@@ -4,7 +4,7 @@ import { notFound } from 'next/navigation';
 import type { Metadata } from 'next';
 import { cache } from 'react';
 import { getProduct, isFavorite, type ProductDetail } from '@/lib/api';
-import { formatPrice } from '@/lib/format';
+import { formatDate, formatPrice } from '@/lib/format';
 import { PriceChart } from '@/components/PriceChart';
 import { priceChartData } from '@/lib/price-history';
 import { TrendBadge } from '@/components/ProductCard';
@@ -67,7 +67,7 @@ function HistoryTable({ detail, currency }: { detail: ProductDetail; currency: s
             return (
               <tr key={entry.day} className="border-b border-border-subtle last:border-0">
                 <td className="py-2.5 pr-4 text-muted whitespace-nowrap">
-                  {new Date(entry.day).toLocaleDateString('fr-FR')}
+                  {formatDate(entry.day)}
                 </td>
                 <td className={`py-2.5 pr-4 font-semibold whitespace-nowrap ${i === 0 ? 'text-foreground' : 'text-muted'}`}>
                   {entry.price ? formatPrice(entry.price.amount, entry.price.currency) : '—'}
@@ -244,7 +244,7 @@ export default async function ProductPage({ params }: { params: Promise<{ id: st
 
           {detail.firstSeen && (
             <p className="text-xs text-faint">
-              Suivi depuis le {new Date(detail.firstSeen).toLocaleDateString('fr-FR')}
+              Suivi depuis le {formatDate(detail.firstSeen)}
               {stats && <> · {stats.count} relevé{stats.count > 1 ? 's' : ''}</>}
             </p>
           )}
